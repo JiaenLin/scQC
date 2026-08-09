@@ -704,8 +704,11 @@ def build_parameter_table(payload, defects: list) -> dict:
                                     f"from, or read against, is the only thing that makes it "
                                     f"reviewable.")
         out.append({"name": _text(name), "value": _text(value), "defect": False,
-                    "class": cls_txt or f"{NOT_STATED}",
-                    "class_meaning": PARAM_CLASSES.get(cls_txt or "", ""),
+                    # `is None`, not `cls_txt or ...`: the class has already been validated
+                    # against PARAM_CLASSES above, so None is the one thing it can be that is
+                    # not a class, and truthiness is not how this file reads a value.
+                    "class": NOT_STATED if cls_txt is None else cls_txt,
+                    "class_meaning": "" if cls_txt is None else PARAM_CLASSES.get(cls_txt, ""),
                     "basis": _text(basis), "verbatim": _text(verbatim, ""),
                     "decided_by": _text(_get(p, "decided_by"), ""),
                     "decided_on": _text(_get(p, "decided_on"), "")})
@@ -1445,19 +1448,23 @@ def external_references(html_text: str) -> list:
             if tag in _EXTERNAL_TAGS:
                 found.append(f"<{tag}> element")
             for raw_name, value in attrs:
-                name = str(raw_name or "").lower()
-                if name == "style" and value:
+                # `_unknown`, not `x or ""`. The parser hands back None for a valueless
+                # attribute, and every `or` default in this file has been the same defect:
+                # it also swallows the values that ARE information.
+                name = ("" if _unknown(raw_name) else str(raw_name)).lower()
+                text = "" if _unknown(value) else str(value)
+                if name == "style" and text.strip():
                     found.extend(f"style attribute on <{tag}> contains {m}"
-                                 for m in _css_external(value))
+                                 for m in _css_external(text))
                     continue
-                if name == "http-equiv" and str(value or "").strip().lower() == "refresh":
+                if name == "http-equiv" and text.strip().lower() == "refresh":
                     found.append(f"<{tag} http-equiv=refresh> redirects the document")
                     continue
-                if name not in _URL_ATTRIBUTES or value is None:
+                if name not in _URL_ATTRIBUTES or _unknown(value):
                     continue
                 # srcset is a candidate list; `_srcset_urls` is why it is parsed rather than
                 # split on commas - a base64 data URI contains commas of its own.
-                refs = _srcset_urls(value) if name == "srcset" else [str(value).strip()]
+                refs = _srcset_urls(text) if name == "srcset" else [text.strip()]
                 for ref in refs:
                     if not _is_local_reference(ref):
                         found.append(f"{name}={ref[:60]!r} on <{tag}>")
@@ -1577,14 +1584,14 @@ def render_html(doc: dict, figure_uris: dict) -> str:
         for fig in s["figures"]:
             uri = figure_uris.get(fig["id"])
             parts.append("<figure>")
-            if uri:
+            if _stated(uri):
                 parts.append(f"<img alt='{_e(fig['id'])}' src='{_e(uri)}'>")
             else:
                 parts.append(f"<div class='defect'><strong>Figure {_e(fig['id'])} is not "
-                             f"here.</strong> {_e(fig['status'] or 'not rendered')}</div>")
+                             f"here.</strong> {_e(_text(fig['status'], 'not rendered'))}</div>")
             cap = (f"<strong>{_e(fig['id'])}</strong> <span class='q'>"
                    f"{_e(fig['question'])}</span>")
-            if fig["caption"]:
+            if _stated(fig["caption"]):
                 cap += f" — {_e(fig['caption'])}"
             if fig["source"]:
                 cap += f"<br><span class='src'>source: {_e(fig['source'])}</span>"

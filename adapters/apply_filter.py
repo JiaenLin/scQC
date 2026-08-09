@@ -35,17 +35,37 @@ ledger naming the wrong barcodes, and nothing downstream can detect that they di
 
 ORDER OF OPERATIONS, AND WHY IT IS THIS ORDER
 
-  validate -> reconcile -> approval gate -> ledger -> object -> read the ledger back
+  validate -> reconcile -> approval gate -> ledger -> object -> read both artifacts back
 
 Nothing touches the filesystem before the gate. After it, the ledger is written first: if the
 process dies between the two artifacts, what remains on disk is a ledger for a removal that never
 took effect, which the next run overwrites harmlessly. The reverse order leaves a filtered object
 whose removed observations are unnamed, and that state is indistinguishable from a correct one.
 
-The final step reads the ledger back off disk with `verify_recoverable()` and checks that the
-identifiers it names, plus the identifiers that were kept, are exactly the identifiers that went
-in. A recoverability claim that is never checked is the same class of defect as a regression test
-that was never run against the bug.
+The final steps read both artifacts back off disk. `verify_recoverable()` checks that the
+identifiers the ledger names, plus the identifiers that were kept, are exactly the identifiers
+that went in; and the written object's own observation identifiers are read back out of the .h5ad
+and compared, one by one and in order, against the identifiers this call meant to keep. A
+recoverability claim that is never checked is the same class of defect as a regression test that
+was never run against the bug.
+
+WRITING THE OBJECT: A LOSSLESS CAST, AND A TOKEN RATHER THAN A TIMESTAMP
+
+pandas gives a plain string index the `str`/`StringDtype` backing by default, and anndata refuses
+to write those unless `anndata.settings.allow_write_nullable_strings` is turned on - so on a
+current stack the deliverable could not be written at all. The setting is global and would change
+how every object in the process is stored, which is not a decision this adapter makes on a
+caller's behalf, so the labels are re-backed by object arrays instead, with
+`adapters/matrix.py::object_backed_labels()`. The cast is lossless - the same `str` objects, a
+different array behind them - and the claim is not taken on trust: the identifiers are captured
+BEFORE the cast, and after the write they are read back out of the file and compared element by
+element. A column carrying missing values is refused rather than given an invented label.
+
+Freshness of that write is established by the token `adapters/matrix.py::write_h5ad()` documents,
+stored in the object's `uns` and read back off disk - never by comparing mtimes. A time comparison
+needs a tolerance for clock and filesystem resolution, and a tolerance window is exactly where a
+restored artifact lands: a copy of a previous run's object back-dated by one second passed the
+mtime check that refused the same construction at two hours.
 
 WHAT RECOVERY MEANS HERE, AND WHAT IT DOES NOT
 
@@ -100,9 +120,11 @@ __all__ = [
     "coerce_approval",
     "criterion_summary",
     "h5ad_n_obs",
+    "h5ad_obs_identifiers",
     "ledger_columns",
     "ledger_row",
     "mask_to_bools",
+    "matrix_adapter",
     "normalise_identifier",
     "normalise_identifiers",
     "read_ledger",
@@ -125,15 +147,13 @@ RESERVED_COLUMNS = ("identifier", "n_criteria", "criteria")
 _APPLY_MODULE_KEY = "scqc_apply"
 _APPLY_ATTRS = ("apply_removal", "build_removal_record", "ApplyRefusal", "RemovalRecord")
 
-_EXAMPLES = 5  # how many identifiers a discrepancy message prints before it stops
+#: `adapters/matrix.py`, loaded the same way, for the two things this adapter needs from it: the
+#: lossless object-array cast that lets a current pandas index be written at all, and the write
+#: token that says which call produced a file.
+_MATRIX_MODULE_KEY = "scqc_matrix"
+_MATRIX_ATTRS = ("object_backed_labels", "new_write_token", "read_write_token", "WRITE_TOKEN_KEY")
 
-#: How far an output's mtime may sit BEFORE the moment its write started and still be accepted as
-#: this run's work. It is a clock and filesystem-resolution allowance, not a staleness budget: a
-#: compute node and a shared filesystem do not agree to the second, and some filesystems store
-#: mtime at two-second resolution. The primary proof that a file is this run's is that the path
-#: was removed and observed absent immediately before the write; this bound only stops a
-#: pathological case where the removal silently did not take.
-_MTIME_SLACK_S = 2.0
+_EXAMPLES = 5  # how many identifiers a discrepancy message prints before it stops
 
 
 # ------------------------------------------------------------------------------------------
@@ -174,12 +194,28 @@ def _clear_previous_output(path, context: str = "") -> float:
     return time.time()
 
 
-def _confirm_fresh_output(path, started: float, context: str = "") -> None:
-    """The output exists, is not empty, and was produced by THIS invocation. Silence is the pass.
+def _confirm_fresh_output(path, started: float, token: str, context: str = "") -> None:
+    """The output exists, is not empty, and carries THIS call's write token. Silence is the pass.
 
-    `started` is the value `_clear_previous_output()` returned, taken after the path was observed
-    absent. Existence alone would be satisfied by any file at that path; the mtime comparison is
-    the second, independent statement that the bytes there are the ones just written.
+    `token` was invented by `adapters/matrix.py::new_write_token()` after the path was observed
+    absent and handed to the writer to store inside the object; reading it back off disk is the
+    second, independent statement that the bytes there are the ones just written.
+
+    It replaces an mtime comparison, which could not make that statement. A clock allowance is
+    unavoidable when a compute node and a shared filesystem disagree to the second, and the
+    allowance is a window: a copy of a previous run's object back-dated by one second passed the
+    check that refused the same construction at two hours, and `os.utime` places a file's mtime
+    anywhere at all, so no width of window closes it.
+
+      Detects: a writer that returned without writing and left an earlier artifact standing; a
+      file restored, copied, renamed or hardlinked into this path with any mtime whatever; a file
+      written by any other producer, which carries no token.
+
+      Does not detect: anything about the contents beyond their provenance. That the object holds
+      the right observations is established separately, by reading its identifiers back and
+      comparing them with the ones this call meant to keep.
+
+    `started` is used only to describe the file in a refusal. It decides nothing.
     """
     path = Path(path)
     if not path.exists():
@@ -187,13 +223,25 @@ def _confirm_fresh_output(path, started: float, context: str = "") -> None:
     st = path.stat()
     if st.st_size == 0:
         raise TaskFailure(f"{path} is zero bytes after the write.{context}")
-    if st.st_mtime < started - _MTIME_SLACK_S:
+    mx = matrix_adapter()
+    stored = mx.read_write_token(path)
+    age = started - st.st_mtime
+    if stored is None:
         raise TaskFailure(
-            f"{path} was last modified {started - st.st_mtime:.1f}s before this write began, so "
-            f"it is not the file this run produced.\n"
-            f"  The path was deleted and observed absent immediately before the writer ran, so a "
-            f"file older than that means the write did not happen and something restored an "
-            f"earlier artifact. Its numbers describe different parameters.{context}")
+            f"{path} exists ({st.st_size:,} bytes, mtime {age:+.1f}s relative to the start of "
+            f"this write) but carries no {mx.WRITE_TOKEN_KEY} in its /uns, so it is not the file "
+            f"this run produced.\n"
+            f"  The path was deleted and observed absent immediately before the writer ran and "
+            f"the object it was handed carried the token. An .h5ad here without one was written "
+            f"by something else - a restored artifact, or another tool - and it does not describe "
+            f"this removal.{context}")
+    if stored != token:
+        raise TaskFailure(
+            f"{path} carries the write token {stored!r}, not this run's {token!r} "
+            f"({st.st_size:,} bytes, mtime {age:+.1f}s relative to the start of this write).\n"
+            f"  It is a different write's output standing at this path: the file was deleted and "
+            f"observed absent immediately before the writer ran, so what is here now was restored "
+            f"or copied rather than written. It describes a different removal.{context}")
 
 
 # ------------------------------------------------------------------------------------------
@@ -239,6 +287,54 @@ def apply_module():
             f"the module loaded as the approval gate does not expose {missing}.\n"
             f"  Expected modules/07_apply/apply.py. Removal stops here rather than proceeding "
             f"through whatever this module is.")
+    return mod
+
+
+def matrix_adapter():
+    """Load `adapters/matrix.py`, by ordinary import if that works and by path if it does not.
+
+    Two things are needed from it and neither is duplicated here. `object_backed_labels()` is the
+    lossless cast that lets a current pandas string index be written at all - re-implementing it
+    beside this one is how the two spellings drift until one of them invents a label for a missing
+    value. `new_write_token()` and `read_write_token()` are the identity a written file carries,
+    and an adapter that minted its own token in a different format could not read back a file the
+    other adapter wrote.
+
+    Loaded under a fixed key so both routes share one module object, and refused when the module
+    found does not expose all four names: a checkout whose matrix adapter predates the token would
+    otherwise be worked around silently, which is the freshness check quietly turning itself off.
+    """
+    mod = sys.modules.get(_MATRIX_MODULE_KEY)
+    if mod is None:
+        try:
+            from adapters import matrix as mod  # normal import when the repo root is importable
+        except ImportError:
+            path = repo_root() / "adapters" / "matrix.py"
+            if not path.exists():
+                raise TaskFailure(
+                    f"the matrix adapter is missing: {path}\n"
+                    f"  This adapter writes the filtered object through its lossless label cast "
+                    f"and verifies the result with its write token. Check out the full "
+                    f"repository, or run from a tree where that file exists.") from None
+            spec = importlib.util.spec_from_file_location(_MATRIX_MODULE_KEY, path)
+            if spec is None or spec.loader is None:
+                raise TaskFailure(f"could not build an import spec for the matrix adapter at "
+                                  f"{path}") from None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            try:
+                spec.loader.exec_module(mod)
+            except Exception as exc:  # noqa: BLE001 - the reason is reported, not swallowed
+                del sys.modules[spec.name]
+                raise TaskFailure(
+                    f"the matrix adapter at {path} failed to import: {exc!r}") from exc
+        sys.modules[_MATRIX_MODULE_KEY] = mod
+    missing = [a for a in _MATRIX_ATTRS if not hasattr(mod, a)]
+    if missing:
+        raise TaskFailure(
+            f"the module loaded as the matrix adapter does not expose {missing}.\n"
+            f"  Expected adapters/matrix.py. The write stops here rather than falling back to a "
+            f"weaker check or to a second copy of the label cast.")
     return mod
 
 
@@ -1276,6 +1372,140 @@ def written_n_obs(path) -> int:
             ) from second
 
 
+def _decode_h5_strings(values) -> list:
+    """An HDF5 string dataset as a list of `str`. bytes on some builds, str on others."""
+    out = []
+    for v in values:
+        out.append(v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else str(v))
+    return out
+
+
+def _h5py_obs_identifiers(path, obs_id_key=None) -> list:
+    """The observation identifiers in a written .h5ad, read with h5py and no matrix loaded.
+
+    Handles the modern group layout only - `/obs` a group whose `_index` attribute names the index
+    dataset, and a column stored either as a plain dataset or as a categorical `categories`/`codes`
+    pair, which is what anndata's writer produces for a string column. Anything else raises, and
+    `h5ad_obs_identifiers()` falls back to anndata's own reader rather than guessing.
+
+    A categorical code of -1 is a missing value and stops this: an observation whose identifier is
+    absent cannot be compared with the one it was supposed to be written under, and reading the
+    absence as a label would make the comparison pass on a file that lost an identifier.
+    """
+    import h5py
+
+    path = Path(path)
+    with h5py.File(str(path), "r") as f:
+        if "obs" not in f:
+            raise TaskFailure(f"{path} has no /obs; it is not an .h5ad this adapter can verify.")
+        obs = f["obs"]
+        if not isinstance(obs, h5py.Group):
+            raise TaskFailure(f"{path}: /obs is a {type(obs).__name__}, not a group; this adapter "
+                              f"reads identifiers only from the group layout.")
+        if obs_id_key is None:
+            key = obs.attrs.get("_index")
+            if key is None:
+                raise TaskFailure(
+                    f"{path} has an /obs group with no `_index` attribute, so which dataset holds "
+                    f"the observation names cannot be established.")
+            key = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+        else:
+            key = str(obs_id_key)
+        if key not in obs:
+            raise TaskFailure(f"{path}: /obs holds no {key!r}; present: "
+                              f"{', '.join(sorted(obs.keys()))}")
+        node = obs[key]
+        if isinstance(node, h5py.Group):
+            if "categories" not in node or "codes" not in node:
+                raise TaskFailure(f"{path}: /obs/{key} is a group without categories and codes; "
+                                  f"this adapter cannot read it as identifiers.")
+            cats = _decode_h5_strings(node["categories"][:])
+            codes = [int(c) for c in node["codes"][:]]
+            out = []
+            for i, c in enumerate(codes):
+                if c < 0 or c >= len(cats):
+                    raise TaskFailure(
+                        f"{path}: observation {i} has no value in /obs/{key} (category code "
+                        f"{c}).\n"
+                        f"  A missing identifier is not a label. The written object cannot be "
+                        f"checked against the identifiers this removal kept.")
+                out.append(cats[c])
+            return out
+        return _decode_h5_strings(node[:])
+
+
+def h5ad_obs_identifiers(path, obs_id_key=None) -> list:
+    """The observation identifiers a written .h5ad actually holds, in stored order.
+
+    `obs_id_key=None` reads the observation index; a key reads that column of `.obs`. This is the
+    read half of the round trip: what went to the writer is compared against what came back off
+    disk, so the lossless label cast the write needs is a checked claim rather than an asserted
+    one.
+
+    h5py first because it reads no matrix, anndata second because it necessarily understands any
+    layout anndata just wrote - a verification that fires on a correct write is a verification
+    somebody will delete. Both failing is reported with both reasons and never as a list.
+    """
+    path = Path(path)
+    try:
+        return _h5py_obs_identifiers(path, obs_id_key)
+    except Exception as first:  # noqa: BLE001 - re-raised below with the second attempt's reason
+        try:
+            import anndata
+
+            ad = anndata.read_h5ad(str(path), backed="r")
+            try:
+                if obs_id_key is None:
+                    return [str(x) for x in ad.obs_names]
+                if obs_id_key not in ad.obs.columns:
+                    raise TaskFailure(
+                        f"{path}: .obs has no column {obs_id_key!r}; it holds "
+                        f"{list(ad.obs.columns)[:10]}...")
+                col = ad.obs[obs_id_key]
+                if bool(col.isna().any()):
+                    raise TaskFailure(
+                        f"{path}: .obs[{obs_id_key!r}] contains missing values, so the written "
+                        f"object cannot be checked against the identifiers this removal kept.")
+                return [str(x) for x in col]
+            finally:
+                fh = getattr(ad, "file", None)
+                if fh is not None:
+                    try:
+                        fh.close()
+                    except Exception:  # noqa: BLE001 - closing a read handle is best effort
+                        pass
+        except Exception as second:  # noqa: BLE001
+            raise TaskFailure(
+                f"the identifiers of the object at {path} could not be read back.\n"
+                f"  h5py: {first!r}\n"
+                f"  anndata: {second!r}\n"
+                f"  The write is therefore unverified: nothing here can say the object names the "
+                f"observations this removal kept. Do not use it until it has been checked by "
+                f"hand.") from second
+
+
+def _require_same_identifiers(got, expected, path, what: str, context: str = "") -> None:
+    """Two lists of identifiers are equal, in order, or the run stops naming the first difference.
+
+    Compared element by element rather than as sets or by length: a written object holding the
+    right identifiers in the wrong order is a different object, and every count taken from it
+    still agrees with itself.
+    """
+    if len(got) != len(expected):
+        raise TaskFailure(
+            f"{path} holds {len(got):,} identifiers in {what} where {len(expected):,} were "
+            f"written.{context}")
+    for i, (a, b) in enumerate(zip(got, expected)):
+        if a != b:
+            raise TaskFailure(
+                f"{path} does not name the observations that were written to it: {what} entry "
+                f"{i} read back as {a!r} where {b!r} was written.\n"
+                f"  The identifiers were captured before the object was prepared for writing and "
+                f"compared against the file afterwards, so this says the write changed them. The "
+                f"ledger names what left by identifier; an object whose identifiers differ from "
+                f"it cannot be reconciled with it.{context}")
+
+
 def _module_version(mod, name: str) -> str:
     """The version of a library this run actually imported.
 
@@ -1347,18 +1577,32 @@ def apply_filter(adata, keep_mask, criteria, out_h5ad, ledger_path, action, appr
     compare; handing it one number twice would leave that comparison passing on anything.
 
     Both declared outputs are produced fresh, never inherited. The filtered object's path is
-    deleted and observed absent before anndata is called and its mtime is checked against the
-    moment the write began; the ledger is written to a temporary file, renamed into place and read
-    back. Either way a previous run's artifact cannot satisfy the check that this run wrote one -
-    which it would, silently, if the writer returned without writing and only existence were
-    asked. The deletion happens after the gate and after the ledger, so the ordering guarantee is
-    unchanged: nothing on disk is touched until the removal has been approved and recorded.
+    deleted and observed absent before anndata is called, and the object it is handed carries a
+    token invented after that moment, which is read back off disk afterwards; the ledger is
+    written to a temporary file, renamed into place and read back. Either way a previous run's
+    artifact cannot satisfy the check that this run wrote one - which it would, silently, if the
+    writer returned without writing and only existence were asked, and which it also would under
+    the mtime comparison this replaced, since a restored file back-dated by a second lands inside
+    any tolerance a clock allowance makes necessary. The deletion happens after the gate and after
+    the ledger, so the ordering guarantee is unchanged: nothing on disk is touched until the
+    removal has been approved and recorded.
+
+    The object's own observation identifiers are then read back out of the .h5ad and compared, in
+    order, with the ones captured before it was prepared for writing - which is what makes the
+    lossless label cast that write needs a checked claim. `.obs` and `.var` are re-backed by object
+    arrays first, because pandas gives string labels a dtype anndata refuses to write and the
+    alternative, `anndata.settings.allow_write_nullable_strings`, is a global that would change how
+    every other object in the process is stored.
 
     Returns `{"outputs": [...], "metrics": {...}, "versions": {...}}`. The counts - `n_in`,
     `n_kept`, `n_removed`, the per-criterion totals and the per-criterion SOLE totals - are in
     `metrics`, and `outputs` lists only files whose existence was checked after the write.
     """
     gate = apply_module()
+    # Loaded here, with the gate, rather than at the point of use: it supplies the cast without
+    # which the object cannot be written and the token by which the write is verified, so a tree
+    # missing it must stop before the approval is spent and the ledger is on disk.
+    mx = matrix_adapter()
     out_h5ad = Path(out_h5ad)
     ledger_path = Path(ledger_path)
     if not isinstance(action, str) or not action.strip():
@@ -1440,28 +1684,55 @@ def apply_filter(adata, keep_mask, criteria, out_h5ad, ledger_path, action, appr
         raise TaskFailure(
             f"subsetting produced {int(filtered.n_obs):,} observations where the mask keeps "
             f"{n_kept_mask:,}; the mask and the object are not aligned.")
+    kept_ids = [ids[i] for i in range(n_in) if keep[i]]
+
+    # Captured from the object as it stands, BEFORE it is prepared for writing. These are what the
+    # read-back is compared against, so the preparation below is a checked claim and not an
+    # asserted one: if the cast altered an identifier, or the writer did, the comparison says so.
+    expected_index = [str(x) for x in filtered.obs_names]
+    expected_key = None if obs_id_key is None else [str(x) for x in filtered.obs[obs_id_key]]
+
+    try:
+        # pandas gives a plain string index the `str`/StringDtype backing by default and anndata
+        # declines to write it, so on a current stack the deliverable could not be written at all.
+        # Re-backing the labels with object arrays is lossless - the same `str` objects, a
+        # different array behind them - and is preferred over
+        # `anndata.settings.allow_write_nullable_strings`, which is global: flipping it would
+        # change how every other object written anywhere in this process is stored, and would
+        # produce files anndata < 0.11 cannot read.
+        new_obs, new_var = mx.object_backed_labels(filtered, where="apply_filter")
+    except TaskFailure as exc:
+        raise TaskFailure(f"{exc}{after_ledger}") from exc
+    if new_obs is not None:
+        filtered.obs = new_obs
+    if new_var is not None:
+        filtered.var = new_var
+
     started = _clear_previous_output(out_h5ad, after_ledger)
+    # Invented after the path was observed absent, so nothing already on disk can be carrying it.
+    # `filtered` is this call's own copy, so stamping it changes nothing the caller handed in.
+    token = mx.new_write_token()
+    filtered.uns[mx.WRITE_TOKEN_KEY] = token
     try:
         filtered.write_h5ad(str(out_h5ad), compression=compression)
     except Exception as exc:  # noqa: BLE001 - reported with the state it leaves behind
         hint = ""
         if "allow_write_nullable_strings" in str(exc):
-            # pandas >= 3.0 gives string columns an arrow-backed dtype that anndata will not
-            # write unless the setting is opted into. It is reported rather than toggled here:
-            # the setting is global and would change how every object in the run is written,
-            # which is the caller's decision to make and to record, not this adapter's.
-            hint = ("\n  Cause: pandas >= 3.0 stores .obs strings as a nullable/arrow string "
-                    "array and anndata declines to write those by default. This adapter does not "
+            # The lossless cast above covers the labels and the string columns anndata declines.
+            # Reaching here anyway means something it does not cover, and the remedy is still not
+            # to flip the global setting on the caller's behalf.
+            hint = ("\n  Cause: a column or index anndata declines to write as a nullable/arrow "
+                    "string array survived `adapters/matrix.py::object_backed_labels()`, which "
+                    "this adapter applies to .obs and .var before writing. This adapter does not "
                     "flip `anndata.settings.allow_write_nullable_strings` for you - it is a "
-                    "global setting that changes how every object in the run is written. Either "
-                    "set it deliberately in the orchestrator and record that you did, or cast "
-                    "the offending .obs and .var columns to object dtype upstream - "
-                    "`adapters/matrix.py::object_backed_labels()` does exactly that cast, "
-                    "losslessly, and is what `adapters/matrix.py::write_h5ad()` applies.")
+                    "global setting that changes how every object in the run is written and "
+                    "produces files anndata < 0.11 cannot read. Cast the offending field to "
+                    "object dtype upstream, where the decision is recorded, or set the setting "
+                    "deliberately in the orchestrator and say that you did.")
         raise TaskFailure(
             f"the filtered object could not be written to {out_h5ad}: {type(exc).__name__}: "
             f"{exc}{after_ledger}{hint}") from exc
-    _confirm_fresh_output(out_h5ad, started, after_ledger)
+    _confirm_fresh_output(out_h5ad, started, token, after_ledger)
     n_written = written_n_obs(out_h5ad)
     if n_written != n_kept_mask:
         raise TaskFailure(
@@ -1469,7 +1740,29 @@ def apply_filter(adata, keep_mask, criteria, out_h5ad, ledger_path, action, appr
             f"  The ledger at {written_ledger} describes the intended removal, so what left is "
             f"still named; the object does not match it and must not be used.")
 
-    kept_ids = [ids[i] for i in range(n_in) if keep[i]]
+    # ---- the round trip. The count above says how many observations survived; these say WHICH,
+    # by reading them back out of the file and comparing them with what went to the writer. A
+    # count cannot tell a correct removal from one that kept the right number of the wrong rows.
+    written_index = h5ad_obs_identifiers(out_h5ad)
+    _require_same_identifiers(written_index, expected_index, out_h5ad, ".obs_names", after_ledger)
+    if obs_id_key is None:
+        written_raw = written_index
+    else:
+        written_raw = h5ad_obs_identifiers(out_h5ad, obs_id_key)
+        _require_same_identifiers(written_raw, expected_key, out_h5ad, f".obs[{obs_id_key!r}]",
+                                  after_ledger)
+    written_ids = normalise_identifiers(written_raw, "written identifier")
+    if written_ids != kept_ids:
+        differ = next((i for i, (a, b) in enumerate(zip(written_ids, kept_ids)) if a != b), None)
+        where = ("" if differ is None else
+                 f" First difference at position {differ}: the file names "
+                 f"{written_ids[differ]!r}, the removal kept {kept_ids[differ]!r}.")
+        raise TaskFailure(
+            f"{out_h5ad} does not name the observations this removal kept: {len(written_ids):,} "
+            f"identifiers on disk against {len(kept_ids):,} kept.{where}\n"
+            f"  The ledger at {written_ledger} names what left, by identifier, and it cannot be "
+            f"reconciled with an object naming anything else.{after_ledger}")
+
     verify_recoverable(written_ledger, ids, kept_ids)
 
     summary = criterion_summary(rows, names)
@@ -1503,6 +1796,11 @@ def apply_filter(adata, keep_mask, criteria, out_h5ad, ledger_path, action, appr
             "input_path": str(src) if src is not None else "in-memory AnnData",
             "obs_id_key": "obs_names" if obs_id_key is None else obs_id_key,
             "recoverability_verified": True,
+            # Both read back off disk, not asserted: the identifiers in the written object were
+            # compared one by one with the ones handed to the writer, and the token stored in it
+            # is this call's.
+            "identifiers_verified": True,
+            "write_token": token,
         },
         "versions": versions,
     }

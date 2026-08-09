@@ -59,6 +59,11 @@ directory and the fact is recorded in `metrics["path_resolution"]`, per path, ra
 quietly. `Path` is still used freely for local existence checks; what it must not do is decide
 the spelling of an argument.
 
+An UNKNOWN path is refused there, before any of that happens, because `str()` is where a
+sentinel stops being recognisable: `None`, `<NA>`, `nan` and `NaT` are all perfectly ordinary
+RELATIVE paths once spelled out, and resolving one hands the aligner a directory named after the
+sentinel. `command_path` therefore tests the VALUE, not its text.
+
 WHAT IS REPRODUCED, EXACTLY
 
 The reference cohort was processed with:

@@ -1133,7 +1133,7 @@ def _object_backed(labels, what: str, where: str):
     return labels.astype(object)
 
 
-def object_backed_labels(adata):
+def object_backed_labels(adata, where: str = "write_h5ad"):
     """`(obs, var)` re-backed by object arrays where anndata declines to write them.
 
     pandas 3.0 gives every string column and every string index a `StringDtype` by default, and
@@ -1155,6 +1155,10 @@ def object_backed_labels(adata):
         version can write and read.
 
     Returns `(None, None)` when nothing needs changing, so the common case touches nothing.
+
+    `where` names the caller in any refusal. It is not cosmetic: `adapters/apply_filter.py` also
+    applies this cast, and a message attributing its refusal to `write_h5ad` sends the reader to
+    the wrong function on the one path where the removal has already been approved and recorded.
     """
     # pandas is imported by `_nullable_string_dtype()` on the first dtype it is asked about, which
     # happens below for every frame - there is no path through here that reaches anndata's writer
@@ -1168,9 +1172,9 @@ def object_backed_labels(adata):
             continue
         out = frame.copy(deep=False)
         for c in cols:
-            out[c] = _object_backed(frame[c], f".{what}[{c!r}]", "write_h5ad")
+            out[c] = _object_backed(frame[c], f".{what}[{c!r}]", where)
         if index_needs:
-            out.index = _object_backed(frame.index, f".{what}_names", "write_h5ad")
+            out.index = _object_backed(frame.index, f".{what}_names", where)
         new[what] = out
     if not new:
         return None, None

@@ -278,16 +278,19 @@ def _align(task, pipeline, log):
     work = pipeline.work / f"{task.sample}_align"
     if proc == "celescope":
         from adapters import celescope as cs
+        # `threads`, not `thread`. The two adapters were called with keywords neither accepts,
+        # so this branch raised TypeError before any of its guards could run - the alignment
+        # path was dead and every check inside it unreachable.
         return cs.run_celescope(
             sample=task.sample, fastq_dir=row["fastq_r1"], genome_dir=row["reference"],
             chemistry=row.get("chemistry"), work_dir=work, log=log,
-            thread=task.cpus, env_bin=tools.get("celescope_bin"),
+            threads=task.cpus, env_bin=tools.get("celescope_bin"),
             exe=tools.get("celescope", "multi_rna"), executor=pipeline.executor)
     if proc == "cellranger":
         from adapters import cellranger as cr
         return cr.run_cellranger(
-            sample=task.sample, fastq_dir=row["fastq_r1"], transcriptome=row["reference"],
-            work_dir=work, log=log, localcores=task.cpus, localmem=task.memory_gb,
+            sample=task.sample, fastq_dirs=[row["fastq_r1"]], transcriptome=row["reference"],
+            work_dir=work, log=log, localcores=task.cpus, localmem_gb=task.memory_gb,
             exe=tools.get("cellranger", "cellranger"), executor=pipeline.executor)
     raise TaskFailure(
         f"{task.sample}: no processor for platform {row.get('platform')!r}. Step 0 decided this "
