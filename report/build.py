@@ -1310,10 +1310,70 @@ _URL_ATTRIBUTES = frozenset(("src", "srcset", "href", "data", "poster", "action"
 
 def _is_local_reference(value) -> bool:
     """True when a URL-valued attribute keeps the document inside itself."""
-    v = str(value or "").strip()
+    # `_unknown`, not `value or ""`: a NaN is truthy, so `or` would keep it and `str()` would
+    # then hand this the four characters `nan`, which is reported as an external reference to a
+    # host called nan. An absent value is an absent reference and fetches nothing.
+    v = "" if _unknown(value) else str(value).strip()
     if not v:
         return True
     return v.startswith("#") or v[:5].lower() == "data:"
+
+
+def _srcset_urls(value: str) -> list:
+    """The candidate URLs in a `srcset`, split the way the HTML parser splits them.
+
+    NOT `value.split(",")`. Every inline image in this report is a `data:` URI and every base64
+    `data:` URI CONTAINS a comma - `data:image/png;base64,iVBOR...` - so splitting on commas tore
+    one self-contained candidate into two, and the tail (`iVBOR...`) does not begin with `data:`
+    and was reported as a reference leaving the document. `assert_self_contained()` then refused a
+    page that was entirely self-contained, which is the failure docs/PRINCIPLES.md section 3 is
+    about: a gate that fires on correct behaviour is a gate somebody switches off.
+
+    The spec's rule is that a candidate's URL runs to the next WHITESPACE. A comma separates
+    candidates only after the descriptor, or where it trails the URL itself - so:
+
+        data:image/png;base64,AAA= 1x, data:image/png;base64,BBB= 2x
+
+    is two candidates, both inline, and
+
+        data:image/png;base64,AAA= 1x, https://cdn.example/x.png 2x
+
+    is two candidates of which the second still has to be found. Parsing rather than splitting is
+    what keeps both of those true at once: a comma inside a URL no longer hides the entry after
+    it, and no longer invents an entry that was never written.
+    """
+    s = "" if _unknown(value) else str(value)
+    out: list = []
+    i, n = 0, len(s)
+    while i < n:
+        while i < n and (s[i].isspace() or s[i] == ","):        # between candidates
+            i += 1
+        if i >= n:
+            break
+        start = i
+        while i < n and not s[i].isspace():                     # the URL: up to whitespace
+            i += 1
+        url = s[start:i]
+        if url.endswith(","):
+            # `url,` with no descriptor - the trailing commas are separators, not part of the URL.
+            url = url.rstrip(",")
+        else:
+            # Skip this candidate's descriptor, ending at the comma that starts the next one.
+            # Parenthesis depth is tracked because a descriptor may legally carry a `(1,2)`.
+            depth = 0
+            while i < n:
+                c = s[i]
+                if c == "(":
+                    depth += 1
+                elif c == ")" and depth:
+                    depth -= 1
+                elif c == "," and depth == 0:
+                    i += 1
+                    break
+                i += 1
+        if url:
+            out.append(url)
+    return out
 
 
 def _css_external(text: str) -> list:
@@ -1395,11 +1455,10 @@ def external_references(html_text: str) -> list:
                     continue
                 if name not in _URL_ATTRIBUTES or value is None:
                     continue
-                # srcset is a comma-separated candidate list, each entry `url [descriptor]`.
-                candidates = str(value).split(",") if name == "srcset" else [str(value)]
-                for candidate in candidates:
-                    parts = candidate.strip().split()
-                    ref = parts[0] if parts else ""
+                # srcset is a candidate list; `_srcset_urls` is why it is parsed rather than
+                # split on commas - a base64 data URI contains commas of its own.
+                refs = _srcset_urls(value) if name == "srcset" else [str(value).strip()]
+                for ref in refs:
                     if not _is_local_reference(ref):
                         found.append(f"{name}={ref[:60]!r} on <{tag}>")
 

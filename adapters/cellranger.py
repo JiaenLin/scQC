@@ -106,7 +106,33 @@ ID_FORBIDDEN = ("/", "\\", ",", " ", "\t", "\n")
 #: Type NAMES of the missing-value scalars that are neither None nor a float. Matched by name so
 #: that the check costs nothing, and works, when pandas and numpy are not installed - this module
 #: must stay importable on a bare clone, so neither may be imported at module scope.
-_MISSING_TYPE_NAMES = frozenset({"NAType", "NaTType", "MaskedConstant"})
+_MISSING_TYPE_NAMES = frozenset({"NAType", "NaTType", "MaskedConstant", "NullScalar"})
+
+
+def _is_null_arrow_scalar(value) -> bool:
+    """True for a pyarrow scalar that holds no value. Duck-typed; pyarrow is never imported.
+
+    A null Arrow scalar is not one type but one per Arrow type - `StringScalar`, `Int64Scalar`,
+    `TimestampScalar` - so the type NAME carries the TYPE and says nothing about the nullness,
+    and only the untyped `pyarrow.scalar(None)` is a `NullScalar`. Every other route in
+    `is_missing` misses it: it is not `None`, it is not a `str`, `x != x` is False for it, and
+    `pandas.isna` does not recognise it. What it DOES do is `str()` to the four characters
+    `None`, which is how it reached a command line as a directory named after itself.
+
+    It arrives whenever a samplesheet was read through Arrow directly rather than through a
+    pandas nullable dtype - pandas hands back `pandas.NA`, pyarrow hands back this - and it is
+    the shape the previous review of this predicate missed.
+
+    Asked about itself it answers plainly: `is_valid` is a `bool` and `as_py` is a method. BOTH
+    are required before the answer is trusted, so an unrelated object that happens to carry an
+    `is_valid` attribute is not read as an Arrow scalar. Duck-typed rather than imported for the
+    same reason as everything else here - a bare clone has no pyarrow, and importing one inside
+    a predicate that runs on every argument would cost the CLI its start-up time.
+    """
+    if getattr(type(value), "as_py", None) is None:
+        return False
+    valid = getattr(value, "is_valid", None)
+    return isinstance(valid, bool) and not valid
 
 
 def is_missing(value) -> bool:
@@ -121,12 +147,14 @@ def is_missing(value) -> bool:
     and did not exceed the cut. That reads as a PASS, which is why this predicate exists once per
     module and every "is this unknown?" question in the file goes through it.
 
-    Four routes, cheapest first:
+    Five routes, cheapest first:
 
       * identity against `None`;
       * blank and whitespace-only text, in `str` and in `bytes`;
       * the type NAME, which catches `pandas.NA`, `pandas.NaT` and `numpy.ma.masked` without
         importing anything;
+      * an Arrow scalar's own `is_valid`, which catches the pyarrow-backed nulls that have no
+        shared type name to match - see `_is_null_arrow_scalar`;
       * `value != value`, which catches `float('nan')`, `numpy.float64('nan')`,
         `numpy.float32('nan')` - not a `float` subclass - and `numpy.datetime64('NaT')`.
 
@@ -148,6 +176,8 @@ def is_missing(value) -> bool:
     if isinstance(value, bytes):
         return not value.decode("utf-8", "replace").strip()
     if type(value).__name__ in _MISSING_TYPE_NAMES:
+        return True
+    if _is_null_arrow_scalar(value):
         return True
     try:
         if bool(value != value):
@@ -181,6 +211,27 @@ def is_true(value, name: str = "flag") -> bool:
             f"the same as one set to False, and reading it as False here would record a decision "
             f"nobody made.")
     return bool(value)
+
+
+def _require_present(value, name: str, sample: str = "?"):
+    """Refuse an unknown BEFORE it reaches `Path()`. Returns the value unchanged.
+
+    `command_path` is where a path is spelled and where an unknown one is refused, but several
+    checks legitimately run before it - a reference directory has to be proven to exist before
+    the command is built - and each of those constructs a `Path` first. Two things happen there
+    that are not a refusal: `Path(None)` raises a `TypeError` naming neither the argument nor the
+    sample, and `Path("")` is the CURRENT DIRECTORY, so an unsupplied `work_dir` silently becomes
+    "run here" - which for Cell Ranger means writing a pipestance into it. This makes the refusal
+    arrive with the argument's name on it, at the top, either way.
+    """
+    if is_missing(value):
+        raise TaskFailure(
+            f"{sample}: {name} is {value!r}, which is not a path, and there is no default.\n"
+            f"  Unknown is not a value here. Spelled out it becomes a directory named after the "
+            f"sentinel\n  - `None`, `<NA>`, `nan`, `NaT` - and the failure then arrives as a "
+            f"missing file at a path\n  nobody wrote, several messages away from the argument "
+            f"that was never supplied.")
+    return value
 
 
 def _require_positive_int(value, name: str, sample: str = "?") -> int:
@@ -220,7 +271,12 @@ def _require_absolute(path, name: str) -> str:
     The value is returned as the TEXT it arrived as. Round-tripping through `Path` would rewrite
     `/refs/GRCh38` as `\\refs\\GRCh38` on a Windows orchestrator - a path the cluster cannot
     open, arriving as an error about missing input.
+
+    An unknown is refused before `str()` is taken of it. Left to the absoluteness test it would
+    be reported as "must be an absolute path, got 'None'", which reads as a caller who passed a
+    relative path rather than as one who passed nothing.
     """
+    _require_present(path, name)
     text = str(path)
     if not is_absolute_path(text):
         raise TaskFailure(
@@ -245,11 +301,27 @@ def command_path(value, name: str, sample: str = "?") -> tuple:
     it is resolved against this host's working directory, the only host that can do it, and `how`
     says so. The rewrite then appears in the run's recorded parameters instead of happening
     quietly.
+
+    AN UNKNOWN IS REFUSED BEFORE ANY OF THAT HAPPENS, and the order is the whole point. This
+    function used to take `str(value)` on its first line, which is where a sentinel stops being
+    recognisable: `None` becomes the four characters `None`, `pandas.NA` becomes `<NA>`,
+    `pandas.NaT` becomes `NaT`, and `float('nan')` becomes `nan`. Each is then a perfectly
+    ordinary RELATIVE path, so the function resolved it against this host's working directory and
+    handed back something like `<cwd>/None` with `how` reporting, accurately, that it had been
+    resolved. An unsupplied `--transcriptome` reached the aligner as a directory named after the
+    sentinel, and the run failed as a missing file at a path nobody had written - a message
+    pointing at the filesystem instead of at the argument that was never given.
+
+    Every argv element, `cwd` and recorded metric in this module comes through here, so this is
+    the one check that has to be made in the right order.
     """
+    _require_present(value, name, sample)
     text = str(value)
     if is_absolute_path(text):
         return text, "verbatim: absolute as supplied"
     if is_missing(text):
+        # Not dead: `value` can be a non-string object - a `Path(' ')`, a wrapper - that is not
+        # itself unknown but whose text is blank, and `Path('').resolve()` is the cwd.
         raise TaskFailure(f"{sample}: {name} is empty; a path has no default here")
     resolved = str(Path(text).resolve())
     return resolved, (f"resolved against the orchestrator's working directory "
@@ -287,7 +359,13 @@ def matching_fastqs(names, sample: str) -> dict:
     renamed public download usually has, and one Cell Ranger will not select. `other` is
     everything else in the directory, kept so a failure message can print what WAS there instead
     of only what was missing.
+
+    An unknown `sample` is refused rather than stringified: `str(None)` would select files named
+    `None_S1_L001_R1_001.fastq.gz`, find none, and report "no FASTQ matches --sample 'None'" -
+    a message about the directory's contents when the fault is that nothing was passed.
     """
+    if is_missing(sample):
+        raise TaskFailure(f"--sample is {sample!r}; it selects the input files and has no default")
     sample = str(sample)
     out = {"strict": [], "loose": [], "other": []}
     for raw in names:
@@ -307,7 +385,8 @@ def matching_fastqs(names, sample: str) -> dict:
 def scan_fastq_dirs(fastq_dirs, sample: str) -> dict:
     """`matching_fastqs` over every `--fastqs` directory, merged. Reads names only, not files."""
     merged = {"strict": [], "loose": [], "other": []}
-    for d in fastq_dirs:
+    for i, d in enumerate(fastq_dirs):
+        _require_present(d, f"--fastqs[{i}]", str(sample))
         path = Path(d)
         if not path.is_dir():
             raise TaskFailure(f"{sample}: --fastqs directory does not exist: {path}")
@@ -333,6 +412,10 @@ def build_command(run_id, transcriptome, fastqs, sample, localcores, localmem_gb
     on 8.0+, where the flag is mandatory, and `--no-bam` on 7.x and earlier, which does not know
     the newer one. The module does not detect the release, because detecting it would mean
     running the tool to decide how to run the tool.
+
+    `extra` is appended verbatim for flags this adapter does not model. Verbatim does not extend
+    to unknown: an element that is `None` or `pandas.NA` would be spelled onto the command line
+    as `None` or `<NA>` and read by the tool as a value, so it is refused with its position named.
     """
     rid = require_id(run_id, str(sample))
     if is_missing(sample):
@@ -372,6 +455,12 @@ def build_command(run_id, transcriptome, fastqs, sample, localcores, localmem_gb
     elif not create_bam:
         cmd += ["--no-bam"]
     cmd += ["--localcores", str(cores), "--localmem", str(mem)]
+    extra = list(extra)
+    for i, item in enumerate(extra):
+        if is_missing(item):
+            raise TaskFailure(
+                f"extra[{i}] is {item!r}, which is not a command-line argument. str() would place "
+                f"`{item!s}` on the argv and Cell Ranger would read it as a value.")
     return cmd + [str(x) for x in extra]
 
 
@@ -680,6 +769,15 @@ def run_cellranger(sample: str, fastq_dirs, transcriptome, work_dir, log,
     count_barcodes = is_true(check_barcode_count, "check_barcode_count")
     strict_names = is_true(require_strict_fastq_names, "require_strict_fastq_names")
 
+    # Every path argument is tested for unknown before it reaches `Path()`. `command_path` refuses
+    # these too, but it runs AFTER the existence checks below, and `Path(None)` raises a TypeError
+    # there that names neither the argument nor the sample while `Path("")` is the current
+    # directory - which for `work_dir` means writing a pipestance into wherever the orchestrator
+    # happens to be. The refusal has to carry the argument's name to be worth anything.
+    for _value, _name in ((transcriptome, "--transcriptome"), (work_dir, "work_dir"),
+                          (log, "log")):
+        _require_present(_value, _name, sample)
+
     ref = Path(transcriptome)
     if not ref.is_dir():
         raise TaskFailure(
@@ -690,7 +788,8 @@ def run_cellranger(sample: str, fastq_dirs, transcriptome, work_dir, log,
     if isinstance(fastq_dirs, (str, bytes, Path)):
         fastq_dirs = [fastq_dirs]
     dirs, dir_texts, dir_routes = [], [], {}
-    for d in fastq_dirs:
+    for i, d in enumerate(fastq_dirs):
+        _require_present(d, f"--fastqs[{i}]", sample)
         p = Path(d)
         if not p.is_dir():
             raise TaskFailure(f"{sample}: --fastqs directory does not exist: {p}")

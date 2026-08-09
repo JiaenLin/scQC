@@ -335,6 +335,108 @@ def cmd_selftest(a) -> int:
 # --------------------------------------------------------------------------------------------
 
 
+def cmd_run(a) -> int:
+    """Run the pipeline over a project, in two stages.
+
+    Stage one is ingest alone, because what it decides - accept this matrix, or rebuild it from
+    FASTQ - determines which tasks stage two contains. Building the whole graph first would put
+    an alignment in it that may not be needed, or omit one that is, and the manifest would record
+    both outcomes identically.
+
+    A refusal from any gate stops the run and is reported as a refusal, not as an error: it is a
+    correct outcome that needs reading, and collapsing it into a failure teaches a user to treat
+    it as flaky infrastructure. The report is written either way, because a run that stopped is
+    exactly the run whose reasons somebody needs.
+    """
+    sys.path.insert(0, str(ROOT))
+    from engine import graph
+    from engine.decisions import load as load_decisions
+    from engine.executor import make_executor
+    from engine.pipeline import Pipeline
+    from engine.task import Refusal, Status
+
+    # Argument contradictions are settled BEFORE any file is opened. Otherwise a misuse of the
+    # flags surfaces as a missing-file error about something else entirely, and the reader fixes
+    # the wrong thing.
+    if a.mode == "evidence" and a.decisions:
+        raise SystemExit(
+            "scqc run: --decisions is only read in apply mode.\n"
+            "       Evidence mode exists to produce the evidence those decisions are made\n"
+            "       against; supplying them here would mean they were chosen beforehand.")
+
+    project = Path(a.project).expanduser().resolve()
+    sheet = Path(a.samplesheet) if a.samplesheet else project / "samplesheet.csv"
+    rows = read_csv(sheet)
+
+    decisions = {}
+    if a.mode == "apply":
+        decisions = load_decisions(Path(a.decisions) if a.decisions
+                                   else project / "decisions.yml")
+
+    executor = make_executor(a.executor, **({"queue": a.queue, "project": a.pbs_project}
+                                            if a.executor == "pbs" else {}))
+    pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
+                    decisions=decisions, force=a.force)
+
+    tools = {k: v for k, v in {
+        "celescope": a.celescope, "cellranger": a.cellranger, "cellbender": a.cellbender,
+        "rscript": a.rscript, "device": ("cpu" if a.cpu else "cuda"),
+        "light_floor": a.light_floor, "seed": a.seed, "resolution": a.resolution,
+    }.items() if v is not None}
+    python_exe = a.python or sys.executable
+
+    print(f"project  : {project}")
+    print(f"mode     : {a.mode}      executor: {getattr(executor, 'name', '?')}")
+    print(f"samples  : {len(rows)}")
+    print()
+
+    def finish(code: int, stopped=None) -> int:
+        html = project / "results" / "reports" / "qc_report.html"
+        try:
+            from report.build import build_report
+            # The reason the run stopped is the single most useful line in the document, so it
+            # is passed rather than left None. A report that records a stop without its cause
+            # sends the reader to the logs for the one thing the report exists to tell them.
+            if stopped is None:
+                bad = [f"{k}: {r.status.value}" for k, r in sorted(pipe.results_by_key.items())
+                       if r.status.value in ("refused", "failed")]
+                stopped = "; ".join(bad) or None
+            build_report(pipe.report_payload(stopped=stopped), html,
+                         project / "results" / "reports" / "report.json")
+            print(f"\nreport   : {html}")
+        except Exception as e:                                        # noqa: BLE001
+            print(f"\nreport   : COULD NOT BE WRITTEN - {type(e).__name__}: {e}",
+                  file=sys.stderr)
+            print("           The run's own record is missing; treat its outcome as unrecorded.",
+                  file=sys.stderr)
+        return code
+
+    try:
+        print("stage 1 - ingest")
+        pipe.run(graph.ingest_stage(pipe, python_exe))
+        bad = {k: r for k, r in pipe.results_by_key.items() if not r.ok}
+        if bad:
+            for k, r in sorted(bad.items()):
+                print(f"  {r.status.value.upper():8s} {k}: {r.message.splitlines()[0][:110]}")
+            return finish(2)
+
+        ingest = {r.key.split("/", 1)[1]: r.metrics
+                  for r in pipe.results_by_key.values() if r.key.startswith("00_ingest/")}
+        print("\nstage 2 - everything decided by stage 1")
+        pipe.run(graph.main_stage(pipe, python_exe, tools, ingest))
+    except Refusal as e:
+        print(f"\nREFUSED\n{e}")
+        return finish(2)
+
+    refused = [k for k, r in pipe.results_by_key.items() if r.status is Status.REFUSED]
+    failed = [k for k, r in pipe.results_by_key.items() if r.status is Status.FAILED]
+    print()
+    for label, keys in (("refused", refused), ("failed", failed)):
+        if keys:
+            print(f"  {label}: {', '.join(sorted(keys))}")
+    return finish(2 if refused else (1 if failed else 0))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="scqc", formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -385,6 +487,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="CSV: sample,cluster,n[,median_umi,median_pct_mt,pct_doublet,FLAG,WATCH]")
     c.add_argument("--kept", type=int, required=True, help="cells that would survive the filter")
     c.add_argument("--json", action="store_true"); c.set_defaults(fn=cmd_cluster_preflight)
+
+    r2 = sub.add_parser("run", help="run the pipeline over a project")
+    r2.add_argument("--project", required=True)
+    r2.add_argument("--mode", choices=["evidence", "apply"], required=True)
+    r2.add_argument("--samplesheet")
+    r2.add_argument("--decisions", help="apply mode only; evidence mode refuses it")
+    r2.add_argument("--executor", choices=["local", "pbs"], default="local")
+    r2.add_argument("--queue"); r2.add_argument("--pbs-project", dest="pbs_project")
+    r2.add_argument("--python", help="interpreter that has scanpy/anndata")
+    r2.add_argument("--celescope"); r2.add_argument("--cellranger")
+    r2.add_argument("--cellbender"); r2.add_argument("--rscript")
+    r2.add_argument("--cpu", action="store_true", help="no GPU available")
+    r2.add_argument("--light-floor", dest="light_floor", type=int, default=200)
+    r2.add_argument("--resolution", type=float, default=1.0)
+    r2.add_argument("--seed", type=int, default=0)
+    r2.add_argument("--force", action="store_true", help="re-run every task, ignoring the manifest")
+    r2.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")
     s.add_argument("-v", "--verbose", action="store_true"); s.set_defaults(fn=cmd_selftest)

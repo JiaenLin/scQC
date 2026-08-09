@@ -220,7 +220,7 @@ def _quality(task, pipeline, log):
 def _report(task, pipeline, log):
     from report.build import build_report
 
-    payload = pipeline.payload(stopped=None)
+    payload = pipeline.report_payload(stopped=None)
     payload.update(task.params.get("extra", {}))
     out_html = pipeline.results / "reports" / "qc_report.html"
     out_json = pipeline.results / "reports" / "report.json"
@@ -267,5 +267,256 @@ def build_tasks(pipeline, python_exe: str, tools: dict) -> list[Task]:
     return tasks
 
 
-__all__ = ["build_tasks", "_design", "_ingest", "_ambient", "_ambient_audit",
-           "_cellcall", "_quality", "_report"]
+# --------------------------------------------------------------------------------------------
+# step 0b - alignment, when step 0 decided a matrix must be rebuilt
+
+
+def _align(task, pipeline, log):
+    row = task.params["row"]
+    proc = (task.params.get("processor") or "").lower()
+    tools = task.params["tools"]
+    work = pipeline.work / f"{task.sample}_align"
+    if proc == "celescope":
+        from adapters import celescope as cs
+        return cs.run_celescope(
+            sample=task.sample, fastq_dir=row["fastq_r1"], genome_dir=row["reference"],
+            chemistry=row.get("chemistry"), work_dir=work, log=log,
+            thread=task.cpus, env_bin=tools.get("celescope_bin"),
+            exe=tools.get("celescope", "multi_rna"), executor=pipeline.executor)
+    if proc == "cellranger":
+        from adapters import cellranger as cr
+        return cr.run_cellranger(
+            sample=task.sample, fastq_dir=row["fastq_r1"], transcriptome=row["reference"],
+            work_dir=work, log=log, localcores=task.cpus, localmem=task.memory_gb,
+            exe=tools.get("cellranger", "cellranger"), executor=pipeline.executor)
+    raise TaskFailure(
+        f"{task.sample}: no processor for platform {row.get('platform')!r}. Step 0 decided this "
+        f"sample must be rebuilt from FASTQ but named no tool to do it with, which is a defect "
+        f"in the plan rather than an option missing here.")
+
+
+# --------------------------------------------------------------------------------------------
+# step 4 - doublet scoring, and its cohort health check
+
+
+def _doublets(task, pipeline, log):
+    from adapters import doublets as db
+
+    p = task.params
+    mtx = pipeline.work / f"{p['sample']}_dbl_mtx"
+    out_csv = _tables(pipeline) / f"{p['sample']}_doublets.csv"
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]))
+    return db.run_scdblfinder(
+        rscript=p["rscript"], mtx_dir=mtx, out_csv=out_csv,
+        dbr=p.get("dbr"), dbr_sd=p.get("dbr_sd"), seed=int(p.get("seed", 0)),
+        log=log, executor=pipeline.executor, sample=p["sample"],
+        unscored=getattr(export, "unscored", None))
+
+
+def _doublet_health(task, pipeline, log):
+    from adapters import doublets as db
+
+    dh = step_module("doublet_health")
+    rates, unscored_total = {}, 0
+    for s in task.params["samples"]:
+        calls = db.read_calls(_tables(pipeline) / f"{s}_doublets.csv", sample=s)
+        scored = getattr(calls, "scored", None) or {}
+        n_scored = len(scored)
+        n_pos = sum(1 for v in scored.values() if v)
+        # A barcode below the light floor was never scored. It is UNKNOWN, counted as unknown
+        # rather than folded into the denominator as a negative.
+        rates[s] = (n_pos / n_scored) if n_scored else None
+        unscored_total += len(getattr(calls, "unscored", ()) or ())
+
+    known = {s: r for s, r in rates.items() if r is not None}
+    if not known:
+        raise Refusal("04_doublets: no library produced a doublet rate, so the health check was "
+                      "not run. NOT CHECKED is its own outcome and does not read as a pass.")
+    findings = dh.health(known, task.params["design"], n_kept_unscored=unscored_total,
+                         detector_name="scDblFinder", reproducible=True)
+    pipeline.gate("04_doublets", findings, dh.verdict(findings))
+    return {"outputs": [], "metrics": {"libraries": len(known),
+                                       "never_scored": unscored_total}, "versions": {}}
+
+
+# --------------------------------------------------------------------------------------------
+# step 5 - measure a valley per library, propose one cohort constant
+
+
+def _scanpy(pipeline, op, h5, prefix, params, log, python_exe):
+    from adapters import scanpy_ops as so
+    return so.run_scanpy_op(op=op, h5ad_in=h5, out_prefix=prefix, params=params,
+                            log=log, executor=pipeline.executor, python_exe=python_exe)
+
+
+def _quality_stage(task, pipeline, log):
+    valleys = []
+    for s in task.params["samples"]:
+        res = _scanpy(pipeline, "valley",
+                      pipeline.results / "objects" / f"{s}_ambient.h5",
+                      pipeline.work / f"{s}_qc", {"metric": "umi"},
+                      log, task.params["python_exe"])
+        m = res.get("metrics", {})
+        valleys.append({"sample": s, "value": m.get("valley"), "bimodal": m.get("bimodal")})
+
+    unknown = [v["sample"] for v in valleys if v["value"] is None or v["bimodal"] is None]
+    if unknown:
+        raise Refusal(
+            f"05_quality: no valley was established for {', '.join(unknown)}. A library with no "
+            f"measured valley cannot contribute to a cohort constant, and treating its absence "
+            f"as agreement lets the other libraries decide on its behalf.")
+    sub = Task(key=task.key, step=task.step, fn=_quality,
+               params={"valleys": valleys, "metric": "umi",
+                       "light_floor": task.params.get("light_floor")})
+    return _quality(sub, pipeline, log)
+
+
+# --------------------------------------------------------------------------------------------
+# step 6 - cluster, profile, flag
+
+
+def _cluster(task, pipeline, log):
+    p = task.params
+    return _scanpy(pipeline, "cluster",
+                   pipeline.results / "objects" / f"{p['sample']}_ambient.h5",
+                   pipeline.work / f"{p['sample']}_clusters",
+                   {"resolution": p["resolution"], "seed": p["seed"]},
+                   log, p["python_exe"])
+
+
+def _cluster_flags(task, pipeline, log):
+    import csv as _csv
+
+    cf = step_module("cluster_flags")
+    d = (task.params.get("decisions") or {}).get("cluster_check") or {}
+    thr = cf.Thresholds(
+        a_umi_frac=float(d.get("a_umi_fraction", 0.5)),
+        b_pct_mt=float(d.get("b_mito_pct", 15.0)),
+        c_uninformative=float(d.get("c_uninformative_pct", 50.0)),
+        d_doublet=float(d.get("d_doublet_pct", 70.0)),
+        source=("decisions.yml" if d else "PROPOSED from the cohort - not approved"))
+
+    rows: list = []
+    for f in sorted(pipeline.work.glob("*profile*.csv")):
+        with open(f, encoding="utf-8", newline="") as fh:
+            rows.extend(list(_csv.DictReader(fh)))
+    if not rows:
+        raise Refusal("06_cluster_check: no cluster profile was produced, so no cluster was "
+                      "examined. That is not the same as no cluster being flagged.")
+
+    flagged = cf.apply_flags(rows, thr)
+    out = _tables(pipeline) / "cluster_profile.csv"
+    with open(out, "w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=sorted({k for r in flagged for k in r}))
+        w.writeheader()
+        w.writerows(flagged)
+    return {"outputs": [str(out)], "metrics": {"clusters": len(flagged)}, "versions": {}}
+
+
+# --------------------------------------------------------------------------------------------
+# step 7 - the only step that removes anything
+
+
+def _apply(task, pipeline, log):
+    import csv as _csv
+
+    from .decisions import action_string, validate
+
+    ap = step_module("apply")
+    required = {
+        "quality.umi_floor": "the UMI floor",
+        "quality.gene_floor": "the gene floor",
+        "quality.mito_ceiling_pct": "the mitochondrial ceiling",
+    }
+    resolved = validate(task.params["decisions"], required)
+    apply_block = (task.params["decisions"].get("apply") or {})
+    action = apply_block.get("action") or action_string(resolved)
+
+    rows: list = []
+    prof = _tables(pipeline) / "cluster_profile.csv"
+    if prof.exists():
+        with open(prof, encoding="utf-8", newline="") as fh:
+            rows = list(_csv.DictReader(fh))
+    for f in ap.preflight(rows, kept_total=0):
+        pipeline.findings.append({"step": "07_apply", "check": f.check, "severity": f.severity,
+                                  "message": f.message, "detail": []})
+
+    raise Refusal(
+        "07_apply is not wired to a written object.\n"
+        f"    The decisions file is complete and authorises: {action}\n"
+        "    The pre-flight ran and its findings are in the report. What does NOT exist yet is\n"
+        "    the combined object this step would filter, so nothing is written.\n"
+        "    Refusing rather than producing a deliverable that would not carry its own removal\n"
+        "    ledger - an unrecoverable removal is the one outcome this pipeline exists to make\n"
+        "    impossible.")
+
+
+# --------------------------------------------------------------------------------------------
+# What each step does, and what it cannot establish.
+#
+# The second half is required by docs/REPORT_DESIGN.md, and the report marks its absence as a
+# defect rather than omitting the block - an omitted limit reads as no limit. Both halves live
+# here, beside the code that produces the numbers, so a step and its caveat cannot drift apart.
+
+STEP_TEXT = {
+    "00_ingest": (
+        "Validates the samplesheet and decides, per library, whether the supplied matrix is "
+        "accepted or must be rebuilt from FASTQ.",
+        "Whether the matrix is CORRECT. It establishes only that the values are raw counts and "
+        "that empty droplets are still present - a matrix can be raw in both senses and still "
+        "have been produced against the wrong reference."),
+    "00_align": (
+        "Rebuilds an unfiltered count matrix from FASTQ with the declared processor.",
+        "Whether the chemistry declared for a library is the chemistry it was made with. A "
+        "mismatch produces a near-empty matrix rather than an error, so a plausible cell count "
+        "is not evidence the declaration was right."),
+    "01_ambient": (
+        "Denoises each library and audits the removal for degeneracy and for evenness across "
+        "the design.",
+        "Whether the denoising is CORRECT. Every check is cohort-relative or a differential; "
+        "none can tell a well-removed ambient transcript from a badly-removed real one, because "
+        "that requires knowing which cells should have expressed it."),
+    "02_cells": (
+        "Compares the aligner's cell call with the denoiser's and gates the loss.",
+        "Whether the cells LOST were real. It measures how many and how unevenly, never what "
+        "they were; only annotation could say that."),
+    "04_doublets": (
+        "Scores doublets per library above the light floor and checks the calls for health.",
+        "Whether a called doublet IS one. It checks that the rate is a measurement rather than "
+        "the prior, and that it does not fall unevenly across the design. Barcodes below the "
+        "light floor were never scored and are reported as unknown, not as singlets."),
+    "05_quality": (
+        "Measures the density valley per library and proposes one cohort constant.",
+        "Whether the threshold is RIGHT. It establishes that the distribution has two modes and "
+        "that the proposed cut sits between them and inside plausible bounds. A tight real "
+        "population can be refused by the dispersion test and a large enough artifact can pass "
+        "it - the sanity bounds are the second, independent check."),
+    "06_cluster_check": (
+        "Clusters each library and flags clusters by depth, mitochondrial content, marker "
+        "informativeness and doublet fraction.",
+        "Whether a flagged cluster is TECHNICAL. A cluster flagged for mitochondrial content "
+        "cannot be told from a mitochondria-rich cell type without an identity, which this "
+        "pipeline does not establish."),
+    "07_apply": (
+        "Applies the recorded decisions and writes the deliverable with its removal ledger.",
+        "Whether the removal was JUSTIFIED. It establishes that every removal was authorised in "
+        "the operator's own words and that each removed observation remains recoverable with "
+        "the criterion that removed it."),
+    "report": (
+        "Assembles this document from what the run recorded.",
+        "Anything the run did not measure. A section reading NOT STATED is a gap in the "
+        "pipeline, not a finding about the data."),
+}
+
+
+def step_text(step: str) -> tuple:
+    """(what it does, what it cannot establish) for a step key, or two empty strings."""
+    return STEP_TEXT.get(step, ("", ""))
+
+
+__all__ = [
+    "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_audit", "_cellcall",
+    "_doublets", "_doublet_health", "_quality", "_quality_stage", "_cluster",
+    "_cluster_flags", "_apply", "_report",
+]

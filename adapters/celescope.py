@@ -155,7 +155,33 @@ FEATURE_NAMES = ("features.tsv.gz", "features.tsv", "genes.tsv.gz", "genes.tsv")
 #: Type NAMES of the missing-value scalars that are neither None nor a float. Matched by name so
 #: that the check costs nothing, and works, when pandas and numpy are not installed - the CLI has
 #: to stay importable on a bare clone, so neither may be imported at module scope.
-_MISSING_TYPE_NAMES = frozenset({"NAType", "NaTType", "MaskedConstant"})
+_MISSING_TYPE_NAMES = frozenset({"NAType", "NaTType", "MaskedConstant", "NullScalar"})
+
+
+def _is_null_arrow_scalar(value) -> bool:
+    """True for a pyarrow scalar that holds no value. Duck-typed; pyarrow is never imported.
+
+    A null Arrow scalar is not one type but one per Arrow type - `StringScalar`, `Int64Scalar`,
+    `TimestampScalar` - so the type NAME carries the TYPE and says nothing about the nullness,
+    and only the untyped `pyarrow.scalar(None)` is a `NullScalar`. Every other route in
+    `is_missing` misses it: it is not `None`, it is not a `str`, `x != x` is False for it, and
+    `pandas.isna` does not recognise it. What it DOES do is `str()` to the four characters
+    `None`, which is how it reached a command line as a directory named after itself.
+
+    It arrives whenever a samplesheet was read through Arrow directly rather than through a
+    pandas nullable dtype - pandas hands back `pandas.NA`, pyarrow hands back this - and it is
+    the shape the previous review of this predicate missed.
+
+    Asked about itself it answers plainly: `is_valid` is a `bool` and `as_py` is a method. BOTH
+    are required before the answer is trusted, so an unrelated object that happens to carry an
+    `is_valid` attribute is not read as an Arrow scalar. Duck-typed rather than imported for the
+    same reason as everything else here - a bare clone has no pyarrow, and importing one inside
+    a predicate that runs on every argument would cost the CLI its start-up time.
+    """
+    if getattr(type(value), "as_py", None) is None:
+        return False
+    valid = getattr(value, "is_valid", None)
+    return isinstance(valid, bool) and not valid
 
 
 def is_missing(value) -> bool:
@@ -170,12 +196,14 @@ def is_missing(value) -> bool:
     measured and did not exceed the cut. That reads as a PASS, which is why this predicate exists
     once per module and every "is this unknown?" question in the file goes through it.
 
-    Four routes, cheapest first:
+    Five routes, cheapest first:
 
       * identity against `None`;
       * blank and whitespace-only text, in `str` and in `bytes`;
       * the type NAME, which catches `pandas.NA`, `pandas.NaT` and `numpy.ma.masked` without
         importing anything;
+      * an Arrow scalar's own `is_valid`, which catches the pyarrow-backed nulls that have no
+        shared type name to match - see `_is_null_arrow_scalar`;
       * `value != value`, which catches `float('nan')`, `numpy.float64('nan')`,
         `numpy.float32('nan')` - not a `float` subclass - and `numpy.datetime64('NaT')`.
 
@@ -195,6 +223,8 @@ def is_missing(value) -> bool:
     if isinstance(value, bytes):
         return not value.decode("utf-8", "replace").strip()
     if type(value).__name__ in _MISSING_TYPE_NAMES:
+        return True
+    if _is_null_arrow_scalar(value):
         return True
     try:
         if bool(value != value):
@@ -228,6 +258,26 @@ def is_true(value, name: str = "flag") -> bool:
             f"the same as one that was set to False, and reading it as False here would record a "
             f"decision nobody made.")
     return bool(value)
+
+
+def _require_present(value, name: str, sample: str = "?"):
+    """Refuse an unknown BEFORE it reaches `Path()`. Returns the value unchanged.
+
+    `command_path` is where a path is spelled and where an unknown one is refused, but several
+    checks legitimately run before it - a directory has to be proven to exist before the command
+    is built - and each of those constructs a `Path` first. Two things happen there that are not
+    a refusal: `Path(None)` raises a `TypeError` naming neither the argument nor the sample, and
+    `Path("")` is the CURRENT DIRECTORY, so an unsupplied `work_dir` silently becomes "run here".
+    This makes the refusal arrive with the argument's name on it, at the top, either way.
+    """
+    if is_missing(value):
+        raise TaskFailure(
+            f"{sample}: {name} is {value!r}, which is not a path, and there is no default.\n"
+            f"  Unknown is not a value here. Spelled out it becomes a directory named after the "
+            f"sentinel\n  - `None`, `<NA>`, `nan`, `NaT` - and the failure then arrives as a "
+            f"missing file at a path\n  nobody wrote, several messages away from the argument "
+            f"that was never supplied.")
+    return value
 
 
 def require_chemistry(chemistry, sample: str = "?") -> str:
@@ -300,7 +350,12 @@ def _require_absolute(path, name: str) -> str:
     The value is returned as the TEXT it arrived as. Round-tripping it through `Path` would
     rewrite `/refs/mm39` as `\\refs\\mm39` when the orchestrator runs on Windows, which is a
     path no POSIX cluster can open and one no error message would explain.
+
+    An unknown is refused before `str()` is taken of it. Left to the absoluteness test it would
+    be reported as "must be an absolute path, got 'None'", which reads as a caller who passed a
+    relative path rather than as one who passed nothing.
     """
+    _require_present(path, name)
     text = str(path)
     if not is_absolute_path(text):
         raise TaskFailure(
@@ -324,11 +379,27 @@ def command_path(value, name: str, sample: str = "?") -> tuple:
     a relative argument resolves against THAT and quietly points somewhere else. It is resolved
     against this host's working directory - the only host that can - and `how` says so, so the
     rewrite appears in the run's recorded parameters instead of happening silently.
+
+    AN UNKNOWN IS REFUSED BEFORE ANY OF THAT HAPPENS, and the order is the whole point. This
+    function used to take `str(value)` on its first line, which is where a sentinel stops being
+    recognisable: `None` becomes the four characters `None`, `pandas.NA` becomes `<NA>`,
+    `pandas.NaT` becomes `NaT`, and `float('nan')` becomes `nan`. Each is then a perfectly
+    ordinary RELATIVE path, so the function resolved it against this host's working directory and
+    handed back something like `<cwd>/None` with `how` reporting, accurately, that it had been
+    resolved. An unsupplied `--genomeDir` reached the aligner as a directory named after the
+    sentinel, and the run failed hours later as a missing file at a path nobody had written -
+    a message pointing at the filesystem instead of at the argument that was never given.
+
+    Every argv element, mapfile column, `cwd` and recorded metric in this module comes through
+    here, so this is the one check that has to be made in the right order.
     """
+    _require_present(value, name, sample)
     text = str(value)
     if is_absolute_path(text):
         return text, "verbatim: absolute as supplied"
     if is_missing(text):
+        # Not dead: `value` can be a non-string object - a `Path(' ')`, a wrapper - that is not
+        # itself unknown but whose text is blank, and `Path('').resolve()` is the cwd.
         raise TaskFailure(f"{sample}: {name} is empty; a path has no default here")
     resolved = str(Path(text).resolve())
     return resolved, (f"resolved against the orchestrator's working directory "
@@ -379,6 +450,7 @@ def discover_fastq_prefix(fastq_dir, sample: str = "?") -> str:
     half the data - or the naming does not follow a convention this function recognises. Both
     are for the caller to settle by passing `fastq_prefix` explicitly.
     """
+    _require_present(fastq_dir, "fastq_dir", sample)
     d = Path(fastq_dir)
     if not d.is_dir():
         raise TaskFailure(f"{sample}: FASTQ directory does not exist: {d}")
@@ -412,7 +484,20 @@ def mapfile_line(fastq_prefix: str, fastq_dir, sample: str) -> str:
     Pure. The three fields are checked for tabs and newlines because either would shift every
     later field by one column, and a mapfile whose sample column holds a directory path is read
     without complaint.
+
+    Each field is tested for unknown BEFORE `str()` is taken of it, for the reason spelled out in
+    `command_path`: the blank test below sees `str(None)`, which is four non-blank characters and
+    passes it. A mapfile is a data file, not a command line - the sentinel would be written into
+    the column, CeleScope would resolve it as a directory name, and the run would report an empty
+    sample rather than a bad argument.
     """
+    for name, value in (("fastq_prefix", fastq_prefix), ("fastq_dir", fastq_dir),
+                        ("sample", sample)):
+        if is_missing(value):
+            raise TaskFailure(
+                f"mapfile {name} is {value!r}; a mapfile column has no default. Written out it "
+                f"would become a column reading `{value!s}`, which CeleScope reads as an ordinary "
+                f"value.")
     fields = {"fastq_prefix": str(fastq_prefix), "fastq_dir": str(fastq_dir),
               "sample": str(sample)}
     for name, value in fields.items():
@@ -444,6 +529,8 @@ def write_mapfile(sample: str, fastq_dir, out, fastq_prefix=None) -> Path:
     if is_missing(sample):
         raise TaskFailure("sample is required and has no default")
     sample = str(sample).strip()
+    _require_present(fastq_dir, "fastq_dir", sample)
+    _require_present(out, "out", sample)
     d = Path(fastq_dir)
     if not d.is_dir():
         raise TaskFailure(
@@ -489,7 +576,9 @@ def build_command(mapfile, genome_dir, chemistry, thread, sample: str = "?",
 
     `extra` is appended verbatim for flags this adapter does not model. Anything placed there is
     a departure from the reference invocation and belongs in the run's recorded parameters, not
-    only in the command line.
+    only in the command line. Verbatim does not extend to unknown: an element that is `None` or
+    `pandas.NA` would be spelled onto the command line as `None` or `<NA>` and read by the tool
+    as a value, so it is refused with its position named.
     """
     chem = require_chemistry(chemistry, sample)
     n = _require_positive_int(thread, "thread", sample)
@@ -500,6 +589,12 @@ def build_command(mapfile, genome_dir, chemistry, thread, sample: str = "?",
                         ("solo_cell_filter", solo_cell_filter), ("mod", mod), ("exe", exe)):
         if is_missing(value):
             raise TaskFailure(f"{sample}: {name} is required; it defines what the matrix IS")
+    extra = list(extra)
+    for i, item in enumerate(extra):
+        if is_missing(item):
+            raise TaskFailure(
+                f"{sample}: extra[{i}] is {item!r}, which is not a command-line argument. "
+                f"str() would place `{item!s}` on the argv and the tool would read it as a value.")
     return [str(exe),
             "--mapfile", mapfile,
             "--genomeDir", genome_dir,
@@ -567,7 +662,12 @@ def stage_log(log, stage: str) -> Path:
     Two commands run here and each gets its own captured log. Sharing one path would leave the
     planner's output overwritten by the aligner's, and the planner's output is where a mapfile
     that matched no sample is visible.
+
+    An unknown `log` is refused rather than turned into `None.plan` beside the working directory:
+    a log written somewhere nobody looks is the same as no log, and it is discovered only when
+    the run has already failed for a different reason.
     """
+    _require_present(log, "log")
     p = Path(log)
     return p.with_name(f"{p.stem}.{stage}{p.suffix}")
 
@@ -933,6 +1033,14 @@ def run_celescope(sample: str, fastq_dir, genome_dir, chemistry, work_dir, log,
     chem = require_chemistry(chemistry, sample)
     count_barcodes = is_true(check_barcode_count, "check_barcode_count")
 
+    # Every path argument is tested for unknown before it reaches `Path()`. `command_path` refuses
+    # these too, but it runs AFTER the existence checks below, and `Path(None)` raises a TypeError
+    # there that names neither the argument nor the sample while `Path("")` is the current
+    # directory. The refusal has to carry the argument's name to be worth anything.
+    for _value, _name in ((fastq_dir, "fastq_dir"), (genome_dir, "--genomeDir"),
+                          (work_dir, "work_dir"), (log, "log")):
+        _require_present(_value, _name, sample)
+
     fq = Path(fastq_dir)
     if not fq.is_dir():
         raise TaskFailure(f"{sample}: FASTQ directory does not exist: {fq}")
@@ -966,7 +1074,11 @@ def run_celescope(sample: str, fastq_dir, genome_dir, chemistry, work_dir, log,
     leftovers = refuse_leftovers(work, sample)
     started = time.time()
 
-    map_target = work if mapfile is None else Path(mapfile)
+    # `is_missing`, not `is None`: an unsupplied mapfile arrives as `None` from a caller, as
+    # `pandas.NA` or `nan` from a samplesheet column, and as `""` from an argument parser. All
+    # three mean the same thing - write it into the work directory - and `Path(pandas.NA)` raises
+    # while `Path("")` would put the mapfile in the current directory instead.
+    map_target = work if is_missing(mapfile) else Path(mapfile)
     map_path = write_mapfile(sample, fastq_dir, map_target, fastq_prefix)
     map_text, map_route = command_path(map_path, "mapfile", sample)
 

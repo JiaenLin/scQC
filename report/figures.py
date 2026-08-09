@@ -25,6 +25,9 @@ THE RULES EVERY FUNCTION HERE OBEYS, AND THE READING EACH ONE PREVENTS
                          difference look identical to a 4% one.
   n on every panel       A panel with no n reads as universal whether or not that was meant.
   thresholds are drawn   A cut at 350 is a line at 350, not a sentence under the figure.
+  labels via label_text  An optional label is read with the unknown predicate, never with
+                         `label or default`: a NaN is truthy, so `or` kept it and the axis read
+                         literally `nan (log scale, original units)`.
   shape as well as hue   Every flag carries a marker or a hatch, so the figure survives being
                          printed in grey and being read by someone who cannot separate the hues.
   log axes in units      Ticks read 1,000, not 10^3.
@@ -246,6 +249,34 @@ def denominator_label(text) -> str:
     return f"denominator: {text}"
 
 
+def label_text(value, default: str) -> str:
+    """An axis label, a title or a point's name from an optional argument. THE label reader.
+
+    Every label on every figure below is built through this. `value or default` is not an
+    equivalent spelling of it, and the difference is visible on the page:
+
+      float('nan') or 'metric'   is float('nan'), because a NaN is TRUTHY. F7's y axis then read
+                                 literally `nan (log scale, original units)` - a caption that
+                                 names the metric `nan` and reads, to anyone who did not draw it,
+                                 like a metric somebody called that.
+      numpy.float32('nan'),
+      numpy.datetime64('NaT'),
+      pandas.NaT                 the same, printing `nan` or `NaT` into the axis label.
+      pandas.NA                  never even reached the axis: `pd.NA or default` raises TypeError
+                                 out of the middle of drawing the panel, so one blank cell in a
+                                 metric name destroyed the whole figure.
+
+    So the unknown predicate decides, not truthiness. An unknown label falls back to the default;
+    so does a string that is empty or only whitespace, because a blank axis is indistinguishable
+    from one nobody labelled. Anything else is rendered exactly as the caller wrote it - including
+    `"0"` and `"False"`, which `or` would have silently replaced with the default.
+    """
+    if _unknown(value):
+        return default
+    text = str(value)
+    return text if text.strip() else default
+
+
 def grid_shape(n: int) -> tuple:
     """Rows and columns for `n` panels, wide rather than tall so the shared axis stays readable."""
     if n <= 0:
@@ -412,8 +443,10 @@ def _panel_note(ax, text: str, *, loc: str = "upper left", colour=None, wrap: in
     lines = []
     for para in str(text).split("\n"):
         lines += textwrap.wrap(para, wrap) or [""]
+    # `_unknown`, not `colour or PALETTE["muted"]`: a NaN colour is truthy and would be handed
+    # straight to matplotlib, which raises on it - the same defect as the labels, one layer down.
     t = ax.text(xy[0], xy[1], "\n".join(lines), transform=ax.transAxes, ha=xy[2], va=xy[3],
-                fontsize=7, color=colour or PALETTE["muted"],
+                fontsize=7, color=PALETTE["muted"] if _unknown(colour) else colour,
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 1.5})
     t.set_in_layout(False)
     return t
@@ -876,7 +909,8 @@ def fig_f5_doublet_sweep(sweep, *, published_band=None, chosen=None, rate_denomi
         ax.axvline(float(chosen), color=PALETTE["threshold"], linestyle="--", linewidth=1.1)
         _label(ax, float(chosen), ax.get_ylim()[1], f"  applied: {chosen}", rotation=90,
                fontsize=7, va="top", color=PALETTE["threshold"])
-    ax.set_xlabel(param_label or f"swept parameter ({NOT_SUPPLIED} - name it)", fontsize=8)
+    ax.set_xlabel(label_text(param_label, f"swept parameter ({NOT_SUPPLIED} - name it)"),
+                  fontsize=8)
     ax.set_ylabel(f"% called a doublet\n({denominator_label(rate_denominator)})", fontsize=8)
     ax.legend(fontsize=6.5, ncol=2, frameon=False)
     _panel_note(ax, f"{n_label(len(sweep), 'libraries')}   {n_points:,} swept points",
@@ -941,7 +975,8 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
         if _unknown(v):
             note += "\nvalley NOT SUPPLIED"
         _panel_note(ax, note, loc="upper right")
-        ax.set_xlabel(metric_label or f"metric ({NOT_SUPPLIED} - name it)", fontsize=7.5)
+        ax.set_xlabel(label_text(metric_label, f"metric ({NOT_SUPPLIED} - name it)"),
+                      fontsize=7.5)
         ax.tick_params(labelsize=7)
         _tidy(ax)
 
@@ -968,6 +1003,9 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, dpi: int 
     import math
 
     names = sorted(distributions)
+    # Read once, so the two panels cannot disagree about what the metric is called, and read
+    # through `label_text` so an unsupplied name is stated rather than printed as `nan`.
+    metric_name = label_text(metric_label, f"metric ({NOT_SUPPLIED} - name it)")
     fig = _new_fig((max(6.5, 1.05 * len(names) + 3.0), 6.6), dpi)
 
     for panel, log in ((1, False), (2, True)):
@@ -1022,11 +1060,11 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, dpi: int 
             if hi - lo >= 1.2:
                 ax.yaxis.set_major_locator(MultipleLocator(1))
             ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{10 ** v:,.0f}"))
-            ax.set_ylabel(f"{metric_label or 'metric'} (log scale, original units)", fontsize=8)
+            ax.set_ylabel(f"{metric_name} (log scale, original units)", fontsize=8)
             note = f"{dropped:,} value(s) at or below zero cannot be shown on a log axis"
             _panel_note(ax, note, loc="upper right")
         else:
-            ax.set_ylabel(f"{metric_label or 'metric'} (linear)", fontsize=8)
+            ax.set_ylabel(f"{metric_name} (linear)", fontsize=8)
             _panel_note(ax, n_label(len(names), "libraries"), loc="upper right")
         _tidy(ax)
 
@@ -1110,7 +1148,11 @@ def fig_f8_cluster_flags(clusters, *, thresholds=None, x_key: str = "umi_frac_of
                    linewidths=0.4, label=f"{key} ({len(g['rows']):,})")
         if key in ("FLAG", "WATCH"):
             for x, y, row in g["rows"]:
-                _annot(ax, f"{row.get('sample', '?')} c{row.get('cluster', '?')}", (x, y),
+                # `dict.get(k, "?")` returns the DEFAULT only when the key is absent: a row
+                # carrying `sample = NaN` - which is what a blank cell in a profile read from CSV
+                # is - sails past it and labels the point `nan c3`.
+                _annot(ax, f"{label_text(row.get('sample'), '?')} "
+                           f"c{label_text(row.get('cluster'), '?')}", (x, y),
                        fontsize=5.5, xytext=(4, 3), textcoords="offset points",
                        color=PALETTE["muted"])
 
@@ -1131,7 +1173,10 @@ def fig_f8_cluster_flags(clusters, *, thresholds=None, x_key: str = "umi_frac_of
     if skipped:
         note += f"\n{skipped:,} cluster(s) missing a coordinate and not drawn"
     _panel_note(ax, note, loc="upper right")
-    ax.set_xlabel(x_label or x_key.replace("_", " "), fontsize=8)
+    # The fallback is the key the depth was read from, which is itself an argument and so is
+    # itself read through `label_text` rather than being assumed to be a string.
+    ax.set_xlabel(label_text(x_label, label_text(x_key, f"depth key ({NOT_SUPPLIED})")
+                             .replace("_", " ")), fontsize=8)
     ax.set_ylabel("cluster median % mitochondrial", fontsize=8)
     # Only where something was drawn: a legend call over an empty axes warns, and a warning in a
     # task log about a cohort whose coordinates were all missing points at the wrong problem -

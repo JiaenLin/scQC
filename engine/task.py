@@ -86,6 +86,8 @@ class Task:
 class TaskResult:
     key: str
     status: Status
+    step: str = ""          # the canonical step this task belongs to; the report groups on it
+    sample: str = ""        # empty for a cohort-level task
     signature: str = ""
     outputs: list = field(default_factory=list)
     metrics: dict = field(default_factory=dict)

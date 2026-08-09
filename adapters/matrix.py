@@ -63,16 +63,25 @@ v3 and CellBender all write a CSC block of features x barcodes with the feature 
 tables beside it, under three different group names; that structure is what is checked for, and
 an unrecognised layout is refused with the group names the file actually contains.
 
-A DECLARED OUTPUT IS DELETED BEFORE IT IS WRITTEN
+A DECLARED OUTPUT IS DELETED BEFORE IT IS WRITTEN, AND CARRIES A TOKEN THIS CALL INVENTED
 
 `write_h5ad()` and `run_summary_stats()` both remove their output path, confirm it is gone, and
-only then invoke the writer; afterwards the file must exist AND be newer than the moment the write
-began. Asking only whether the output exists is satisfied by the previous run's file, so a tool
-that exits 0 having written nothing is recorded as a success and the earlier parameters' numbers
-are reported under the new ones - invisibly, because a stale .h5ad or statistics JSON opens,
-parses and reads exactly like a fresh one. Deleting first is what makes the existence check mean
-something. It removes an artifact of an earlier run of the same step and nothing else; no input is
-ever a candidate.
+only then invoke the writer. Asking only whether the output exists is satisfied by the previous
+run's file, so a tool that exits 0 having written nothing is recorded as a success and the earlier
+parameters' numbers are reported under the new ones - invisibly, because a stale .h5ad or
+statistics JSON opens, parses and reads exactly like a fresh one. Deleting first is what makes the
+existence check mean something. It removes an artifact of an earlier run of the same step and
+nothing else; no input is ever a candidate.
+
+The second statement - that the bytes now at that path are this call's - is made with a token and
+NOT with an mtime. An mtime was the previous spelling and it was blind by construction: clocks and
+filesystems disagree, so the comparison needed a tolerance window, and a window is precisely where
+a restored artifact lands - a copy of a previous object back-dated by one second was accepted,
+while the same construction at two hours was refused. `os.utime` will set a file's mtime to any
+value at all, so no width of window fixes that. Instead `new_write_token()` invents a uuid4 AFTER
+the path has been observed absent, the writer stores it INSIDE the artifact - under `uns` for an
+.h5ad, as a payload field for the statistics JSON - and it is read back off disk and compared.
+A file that does not carry this call's token was not produced by this call, however new it looks.
 
 WHAT THIS ADAPTER DOES NOT DO
 
@@ -99,6 +108,7 @@ import json
 import sys
 import tarfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence
 
@@ -140,12 +150,13 @@ STATS_SCHEMA = "scqc.matrix.stats/1"
 _VALUE_BLOCK = 1 << 22          # stored values examined per block by integer_check
 _ROW_BLOCK = 8192               # rows sliced per block from a backed or on-disk matrix
 
-#: How far an output's mtime may sit BEFORE the moment its write started and still be accepted as
-#: this run's work. A clock and filesystem-resolution allowance, not a staleness budget: a compute
-#: node and a shared filesystem do not agree to the second, and some filesystems store mtime at
-#: two-second resolution. The primary proof is that the path was removed and observed absent
-#: immediately before the command ran; this bound only catches a removal that did not take.
-_MTIME_SLACK_S = 2.0
+#: Where a write records, INSIDE the artifact it produced, WHICH CALL produced it. An mtime cannot
+#: carry that: `os.utime` sets it to any value, a restored file lands wherever the restorer chose,
+#: and the clock allowance a cross-host comparison needs is itself a window a restored file fits
+#: inside. A uuid4 invented after the path was observed absent exists nowhere else until this
+#: call's writer stores it, so an artifact that does not carry it was not written by this call.
+#: In an .h5ad it is an entry in `uns`; in the statistics JSON it is a top-level field.
+WRITE_TOKEN_KEY = "scqc_write_token"
 
 _TAR_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tbz", ".tar.xz", ".txz")
 _MTX_NAMES = ("matrix.mtx.gz", "matrix.mtx")
@@ -1166,6 +1177,86 @@ def object_backed_labels(adata):
     return new.get("obs"), new.get("var")
 
 
+def new_write_token() -> str:
+    """A value that exists nowhere - on disk, in any other process - until this call invents it.
+
+    A uuid4 rather than a timestamp, a counter or a digest of the object being written. Each of
+    those can be reproduced by something that is not this call: a clock by reading the clock, a
+    counter by counting, and a content digest by the previous run's own output, which is exactly
+    the artifact the token has to be able to tell apart from this one.
+    """
+    return "scqc-write-" + uuid.uuid4().hex
+
+
+def _decode_scalar_string(value) -> Optional[str]:
+    """One HDF5 or numpy scalar as `str`; None when it is not a string at all.
+
+    h5py returns variable-length strings as `bytes` on some builds and `str` on others, and a
+    scalar dataset read with `[()]` can arrive as a 0-d numpy array wrapping either.
+    """
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    if isinstance(value, str):
+        return value
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            inner = item()
+        except (TypeError, ValueError):
+            return None
+        if isinstance(inner, (bytes, str)):
+            return _decode_scalar_string(inner)
+    return None
+
+
+def read_write_token(path) -> Optional[str]:
+    """The token `write_h5ad()` stored inside an .h5ad, or None when the file carries none.
+
+    None means "this file has no token" and is a real answer about a real file - a .h5ad written
+    by anything other than `write_h5ad()`, including an earlier checkout of this adapter. A file
+    that cannot be opened at all is NOT that answer and raises instead, because a read failure
+    reported as "no token" would be indistinguishable from a file that simply predates the check.
+
+    h5py first, because it reads one scalar and no matrix; anndata second, because it necessarily
+    understands any layout anndata just wrote and a verification that fires on a correct write is
+    a verification somebody will delete. Both failing is reported with both reasons.
+    """
+    p = Path(path)
+    try:
+        import h5py
+
+        with h5py.File(str(p), "r") as fh:
+            uns = fh.get("uns")
+            if uns is None or WRITE_TOKEN_KEY not in uns:
+                return None
+            return _decode_scalar_string(uns[WRITE_TOKEN_KEY][()])
+    except Exception as first:  # noqa: BLE001 - re-raised below with the second attempt's reason
+        try:
+            import anndata
+
+            obj = anndata.read_h5ad(str(p), backed="r")
+            try:
+                uns = getattr(obj, "uns", None)
+                if uns is None or WRITE_TOKEN_KEY not in uns:
+                    return None
+                return _decode_scalar_string(uns[WRITE_TOKEN_KEY])
+            finally:
+                fh = getattr(obj, "file", None)
+                if fh is not None:
+                    try:
+                        fh.close()
+                    except Exception:  # noqa: BLE001 - closing a read handle is best effort
+                        pass
+        except Exception as second:  # noqa: BLE001
+            raise TaskFailure(
+                f"{p} could not be opened to read back the write token that says which call "
+                f"produced it.\n"
+                f"  h5py: {first!r}\n"
+                f"  anndata: {second!r}\n"
+                f"  The file is reported as unverifiable rather than assumed to be this run's; "
+                f"nothing downstream may treat it as an output.") from second
+
+
 def write_h5ad(adata, path, compression: str = "gzip"):
     """Write an AnnData and confirm THIS call produced the file. Returns the path that was checked.
 
@@ -1174,16 +1265,37 @@ def write_h5ad(adata, path, compression: str = "gzip"):
     exists to stop exactly that: an output is a file that was verified to exist, never a path that
     was passed to a writer.
 
-    Existence alone is not that check, though, which is why the path is deleted first: an .h5ad
-    left at the same path by an earlier run satisfies every test a writer's silence would
-    otherwise escape - it opens, it reads, it counts - and the previous parameters' object is then
-    reported as this run's output. So the file is removed, its absence is confirmed, and after the
-    write its mtime is checked against the moment the write began.
+    Existence alone is not that check, which is why the path is deleted first: an .h5ad left at the
+    same path by an earlier run satisfies every test a writer's silence would otherwise escape - it
+    opens, it reads, it counts - and the previous parameters' object is then reported as this run's
+    output.
+
+    WHAT THE FRESHNESS CHECK IS, AND WHAT IT CAN AND CANNOT DETECT
+
+    After the write the file must exist, be non-empty, start with the HDF5 signature, and carry in
+    `uns[WRITE_TOKEN_KEY]` the uuid4 this call invented after observing the path absent. That token
+    is the evidence. No time is compared: the previous spelling compared mtimes with a two-second
+    allowance for clock and filesystem resolution, and a restored artifact back-dated by one second
+    was accepted while the same construction at two hours was refused - a tolerance window is
+    exactly where a restored file is placed, and `os.utime` puts a file's mtime anywhere at all, so
+    no width of window closes it.
+
+      Detects: a writer that returned without writing and left the previous run's file standing; an
+      artifact restored from a backup, a copy, a rename or a hardlink, whatever its mtime; a file
+      written by an earlier checkout of this adapter, which carries no token; a file written by any
+      other producer; a write that landed somewhere other than this path.
+
+      Does not detect: anything about the CONTENT beyond its provenance - the token says these
+      bytes came from this call's writer, not that X, obs and var hold what the caller intended,
+      and not that the file is complete beyond the token being readable. It says nothing about
+      what happens to the path after this function returns, and it cannot distinguish two writes
+      of the same object from one. A process that could read this process's memory could copy the
+      token; nothing short of that can produce it.
 
     Anything anndata declines to store as it stands is normalised losslessly first, by
-    `object_backed_labels()`; on pandas 3.0 that is what makes `write_h5ad(read_matrix(x))` work
-    at all. Nothing about the caller's object is left changed: the re-backed frames are attached
-    for the duration of the write and the originals are put back afterwards.
+    `object_backed_labels()`; on pandas 3.0 that is what makes `write_h5ad(read_matrix(x))` work at
+    all. Nothing about the caller's object is left changed: the re-backed frames and the token are
+    attached for the duration of the write and the originals are put back afterwards.
     """
     if not hasattr(adata, "write_h5ad"):
         raise TaskFailure(f"write_h5ad expects an AnnData, got {type(adata).__name__}")
@@ -1196,12 +1308,23 @@ def write_h5ad(adata, path, compression: str = "gzip"):
     p.parent.mkdir(parents=True, exist_ok=True)
     new_obs, new_var = object_backed_labels(adata)
     old_obs, old_var = adata.obs, adata.var
+    uns = getattr(adata, "uns", None)
+    if uns is None or not hasattr(uns, "__setitem__"):
+        raise TaskFailure(
+            f"write_h5ad was given a {type(adata).__name__} whose .uns cannot hold an entry, so "
+            f"the write token that identifies this call's output could not be stored in the file. "
+            f"An output whose provenance cannot be recorded is not written.")
+    had_token = WRITE_TOKEN_KEY in uns
+    old_token = uns[WRITE_TOKEN_KEY] if had_token else None
+    # Invented AFTER the path is observed absent, so it cannot have reached any file already there.
     started = _clear_previous_output(p)
+    token = new_write_token()
     try:
         if new_obs is not None:
             adata.obs = new_obs
         if new_var is not None:
             adata.var = new_var
+        adata.uns[WRITE_TOKEN_KEY] = token
         adata.write_h5ad(str(p), compression=compression)
     except TaskFailure:
         raise
@@ -1214,11 +1337,19 @@ def write_h5ad(adata, path, compression: str = "gzip"):
         # Restored unconditionally. anndata's writer also converts string columns to categoricals
         # in place as it goes, so without this the caller's object comes back from a write with
         # dtypes it did not have - and a function that quietly rewrites its argument is a worse
-        # defect than the one being fixed.
+        # defect than the one being fixed. The token is removed again for the same reason: it
+        # describes one write, not the object.
         if new_obs is not None:
             adata.obs = old_obs
         if new_var is not None:
             adata.var = old_var
+        if had_token:
+            adata.uns[WRITE_TOKEN_KEY] = old_token
+        else:
+            try:
+                del adata.uns[WRITE_TOKEN_KEY]
+            except KeyError:
+                pass
 
     if not p.is_file():
         raise TaskFailure(f"write_h5ad returned but {p} does not exist. The object was not "
@@ -1226,16 +1357,31 @@ def write_h5ad(adata, path, compression: str = "gzip"):
     size = p.stat().st_size
     if size == 0:
         raise TaskFailure(f"{p} was created but is empty (0 bytes) - the write did not complete")
-    if p.stat().st_mtime < started - _MTIME_SLACK_S:
-        raise TaskFailure(
-            f"{p} was last modified {started - p.stat().st_mtime:.1f}s before this write began, "
-            f"so it is not the file this call produced. The path was deleted and observed absent "
-            f"immediately beforehand; a file older than that means the write did not happen.")
     with p.open("rb") as fh:
         magic = fh.read(8)
     if magic != b"\x89HDF\r\n\x1a\n":
         raise TaskFailure(f"{p} exists ({size} bytes) but does not start with the HDF5 signature; "
                           f"it is not a readable .h5ad")
+    stored = read_write_token(p)
+    # Reported for the reader, never compared: the age of a file is not evidence about who wrote
+    # it, and this line exists so that a refusal can be recognised in a log, not to decide one.
+    age = started - p.stat().st_mtime
+    if stored is None:
+        raise TaskFailure(
+            f"{p} exists ({size:,} bytes, mtime {age:+.1f}s relative to the start of this write) "
+            f"but carries no {WRITE_TOKEN_KEY} in its /uns, so it is not the file this call "
+            f"produced.\n"
+            f"  The path was deleted and observed absent immediately beforehand and the writer was "
+            f"handed a token to store. An .h5ad here without one was written by something else - "
+            f"a restored artifact, or an earlier checkout of this adapter - and its contents "
+            f"describe different parameters.")
+    if stored != token:
+        raise TaskFailure(
+            f"{p} carries the write token {stored!r}, not this call's {token!r} (size {size:,} "
+            f"bytes, mtime {age:+.1f}s relative to the start of this write).\n"
+            f"  It is a different write's output standing at this path: the file was deleted and "
+            f"observed absent immediately before the writer ran, so what is here now was restored "
+            f"or copied rather than written. Its numbers describe different parameters.")
     return p
 
 
@@ -1245,7 +1391,7 @@ def write_h5ad(adata, path, compression: str = "gzip"):
 
 def build_stats_argv(python_exe, matrix, out_json, *, expected_genes=None, name=None,
                      tmp_dir=None, rank_points: int = 0, module_path=None,
-                     reuse_extracted: bool = False) -> list:
+                     reuse_extracted: bool = False, write_token=None) -> list:
     """The argv that makes a Python interpreter measure one matrix and write the JSON payload.
 
     Separated from running it because the interpreter that measures the matrix is usually not the
@@ -1256,9 +1402,22 @@ def build_stats_argv(python_exe, matrix, out_json, *, expected_genes=None, name=
 
     The module is invoked by FILE PATH rather than as `-m adapters.matrix`, so the measuring
     environment needs nothing installed and nothing on PYTHONPATH.
+
+    `write_token` is echoed into the payload the subprocess writes, so the caller can establish
+    that the JSON now at `out_json` is the one this invocation produced rather than an earlier
+    one left there. It is passed on the command line and never through the environment, because an
+    inherited environment is the one thing a restored artifact's producer also had.
     """
     mod = Path(module_path) if module_path is not None else Path(__file__).resolve()
     argv = [str(python_exe), str(mod), "stats", "--matrix", str(matrix), "--out", str(out_json)]
+    if write_token is not None:
+        tok = str(write_token)
+        if not tok.strip() or any(c.isspace() for c in tok):
+            raise TaskFailure(
+                f"write_token={write_token!r} is blank or contains whitespace. It is compared "
+                f"verbatim against the value read back out of the payload; a token that does not "
+                f"survive an argv round trip would refuse every correct run.")
+        argv += ["--write-token", tok]
     if expected_genes is not None:
         argv += ["--expected-genes", str(_require_positive_int_or_none(expected_genes,
                                                                       "expected_genes"))]
@@ -1322,6 +1481,15 @@ def parse_stats_json(text: str) -> dict:
     if not isinstance(versions, dict) or not versions:
         raise TaskFailure("the statistics JSON records no tool versions; a result whose "
                           "provenance was not observed cannot be told from one that was")
+    if "write_token" in payload:
+        # Checked for shape here and for VALUE in run_summary_stats(), which is the only place
+        # that knows which token was issued. A payload carrying a blank one is refused rather than
+        # read as "no token", because the two are different claims and only one of them is honest.
+        tok = payload["write_token"]
+        if not isinstance(tok, str) or not tok.strip():
+            raise TaskFailure(
+                f"the statistics JSON carries write_token={tok!r}, which is not a token. It is "
+                f"what says which invocation produced this file; a blank one identifies nothing.")
     rank = payload.get("barcode_rank")
     if rank is not None:
         if not isinstance(rank, list):
@@ -1342,11 +1510,17 @@ def run_summary_stats(matrix, out_json, log, python_exe, *, expected_genes=None,
     silently running on the submitting host a step that was meant for a compute node is the kind
     of substitution this repository refuses everywhere else.
 
-    `out_json` is deleted and observed absent BEFORE the command runs, and after it returns the
-    file must exist AND have been modified since that moment. Existence alone is not evidence: a
+    `out_json` is deleted and observed absent BEFORE the command runs, and the payload it writes
+    must carry the token this call issued on the command line. Existence alone is not evidence: a
     command that exits 0 and writes nothing leaves the previous run's numbers in place, they
     parse, they are returned as metrics, and they describe a different matrix measured under
-    different parameters. Nothing downstream can detect that, which is why it is settled here.
+    different parameters. Nothing downstream can detect that, which is why it is settled here -
+    and settled with a token rather than an mtime, for the reason `write_h5ad()` sets out at
+    length: a time comparison needs a tolerance window and a restored file lands inside it.
+
+    That check refuses a payload written by a copy of this module old enough not to understand
+    `--write-token`, and does so by name rather than by passing the run: an unverifiable
+    measurement and a verified one must not look alike.
 
     The versions returned are the ones the MEASURING process reported for the libraries it
     actually imported - not the ones the orchestrator's own interpreter has. On a scheduler those
@@ -1357,11 +1531,13 @@ def run_summary_stats(matrix, out_json, log, python_exe, *, expected_genes=None,
                           "a PBSExecutor explicitly")
     matrix = Path(matrix)
     out = Path(out_json)
-    started = _clear_previous_output(out)
+    # Invented after the path is observed absent, so no file already present can be carrying it.
+    _clear_previous_output(out)
+    token = new_write_token()
 
     argv = build_stats_argv(python_exe, matrix, out, expected_genes=expected_genes, name=name,
                             tmp_dir=tmp_dir, rank_points=rank_points, module_path=module_path,
-                            reuse_extracted=reuse_extracted)
+                            reuse_extracted=reuse_extracted, write_token=token)
     captured = executor.shell(argv, log=Path(log), env=env, cwd=cwd, timeout_s=timeout_s)
 
     if not out.is_file() or out.stat().st_size == 0:
@@ -1369,15 +1545,24 @@ def run_summary_stats(matrix, out_json, log, python_exe, *, expected_genes=None,
         raise TaskFailure(
             f"{argv[0]} exited 0 but wrote no statistics to {out}.\n  log: {log}\n"
             f"  last lines:\n{tail}")
-    if out.stat().st_mtime < started - _MTIME_SLACK_S:
-        raise TaskFailure(
-            f"{out} was last modified {started - out.stat().st_mtime:.1f}s before {argv[0]} was "
-            f"invoked, so it is not this run's measurement.\n"
-            f"  The path was deleted and observed absent immediately before the command ran; a "
-            f"file older than that means the command wrote nothing and something restored an "
-            f"earlier one. Its numbers describe a different matrix or different parameters.\n"
-            f"  log: {log}")
     payload = parse_stats_json(out.read_text(encoding="utf-8"))
+    stamped = payload.get("write_token")
+    if stamped is None:
+        raise TaskFailure(
+            f"{out} carries no write_token, so it cannot be shown to be this run's measurement.\n"
+            f"  {argv[0]} was given --write-token {token}. A payload without one was written "
+            f"either by an older copy of this module - check module_path={module_path!r} - or by "
+            f"an earlier run whose file was restored to this path after it was deleted. The "
+            f"numbers are refused rather than reported under parameters they may not describe.\n"
+            f"  log: {log}")
+    if stamped != token:
+        raise TaskFailure(
+            f"{out} carries write_token {stamped!r}, not this run's {token!r}, so it is another "
+            f"invocation's measurement standing at this path.\n"
+            f"  The path was deleted and observed absent immediately before the command ran; what "
+            f"is here now was restored or copied rather than written. Its numbers describe a "
+            f"different matrix or different parameters.\n"
+            f"  log: {log}")
 
     metrics = dict(payload["stats"])
     metrics["source_format"] = payload["format"]
@@ -1436,6 +1621,9 @@ def main(argv=None) -> int:
     s.add_argument("--tmp-dir", dest="tmp_dir")
     s.add_argument("--rank-points", dest="rank_points", type=int, default=0)
     s.add_argument("--reuse-extracted", dest="reuse_extracted", action="store_true")
+    # Echoed into the payload so the caller can tell this invocation's file from one restored to
+    # the same path. It is not a measurement and nothing here reads it.
+    s.add_argument("--write-token", dest="write_token")
     a = ap.parse_args(argv)
     if a.cmd != "stats":
         ap.print_help()
@@ -1453,6 +1641,8 @@ def main(argv=None) -> int:
             "stats": stats,
             "versions": _observed_versions(),
         }
+        if a.write_token is not None:
+            payload["write_token"] = str(a.write_token)
         if a.rank_points:
             payload["barcode_rank"] = [[r, t] for r, t in barcode_rank(adata, n=a.rank_points)]
         out = Path(a.out)

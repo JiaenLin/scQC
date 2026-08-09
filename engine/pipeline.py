@@ -135,7 +135,7 @@ class Pipeline:
                    if self.results_by_key.get(n) is None
                    or not self.results_by_key[n].ok]
             if bad:
-                r = TaskResult(key, Status.BLOCKED,
+                r = TaskResult(key, Status.BLOCKED, step=task.step, sample=(task.sample or ""),
                                message=f"upstream did not complete: {', '.join(sorted(bad))}")
                 self.results_by_key[key] = r
                 self.state.record(r)
@@ -145,7 +145,7 @@ class Pipeline:
                 skip, why = self.state.should_skip(task)
                 if skip:
                     rec = self.state.get(key) or {}
-                    r = TaskResult(key, Status.SKIPPED, signature=rec.get("signature", ""),
+                    r = TaskResult(key, Status.SKIPPED, step=task.step, sample=(task.sample or ""), signature=rec.get("signature", ""),
                                    outputs=rec.get("outputs", []),
                                    metrics=rec.get("metrics", {}),
                                    versions=rec.get("versions", {}),
@@ -168,11 +168,11 @@ class Pipeline:
                         f"file it did not write fails here, not three steps later.")
                 for name, ver in (out.get("versions") or {}).items():
                     self.prov.observe(name, ver)
-                r = TaskResult(key, Status.DONE, signature=task.signature(), outputs=produced,
+                r = TaskResult(key, Status.DONE, step=task.step, sample=(task.sample or ""), signature=task.signature(), outputs=produced,
                                metrics=out.get("metrics", {}), versions=out.get("versions", {}),
                                seconds=time.time() - started, log=str(log))
             except Refusal as e:
-                r = TaskResult(key, Status.REFUSED, message=str(e),
+                r = TaskResult(key, Status.REFUSED, step=task.step, sample=(task.sample or ""), message=str(e),
                                seconds=time.time() - started, log=str(log))
                 self.results_by_key[key] = r
                 self.state.record(r)
@@ -180,7 +180,7 @@ class Pipeline:
                 print(f"  REFUSE  {key}")
                 break
             except TaskFailure as e:
-                r = TaskResult(key, Status.FAILED, message=str(e),
+                r = TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""), message=str(e),
                                seconds=time.time() - started, log=str(log))
                 self.results_by_key[key] = r
                 self.state.record(r)
@@ -188,7 +188,7 @@ class Pipeline:
                 print(f"  FAIL    {key}")
                 break
             except Exception as e:                                    # noqa: BLE001
-                r = TaskResult(key, Status.FAILED,
+                r = TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""),
                                message=f"{type(e).__name__}: {e}",
                                seconds=time.time() - started, log=str(log))
                 self.results_by_key[key] = r
@@ -204,13 +204,95 @@ class Pipeline:
         # missing section reads as a section with nothing to report.
         for key in order:
             if key not in self.results_by_key:
-                r = TaskResult(key, Status.BLOCKED, message="the run stopped before this step")
+                r = TaskResult(key, Status.BLOCKED, step=task.step, sample=(task.sample or ""), message="the run stopped before this step")
                 self.results_by_key[key] = r
                 self.state.record(r)
 
         return self.payload(stopped)
 
     # ------------------------------------------------------------------ report payload
+
+    def report_payload(self, stopped: str | None) -> dict:
+        """The orchestrator's state, in the shape report/build.py documents.
+
+        A separate function from payload() on purpose. The report has its OWN schema - run,
+        deliverable, gates, parameters, steps, provenance - and a key it does not recognise is
+        dropped rather than rejected. Handing it payload() directly produced a document with no
+        refusal in it, no stop reason, and nothing anywhere saying a translation had failed. The
+        mapping is written out here so a mismatch is a visible edit rather than a silent omission.
+        """
+        stat = {k: r.status.value for k, r in self.results_by_key.items()}
+        refused = [k for k, v in stat.items() if v == "refused"]
+        failed = [k for k, v in stat.items() if v == "failed"]
+        stopped_after = (sorted(refused) + sorted(failed) or [None])[0]
+        return {
+            "run": {"project": str(self.project), "mode": self.mode,
+                    "invocation": " ".join(sys.argv),
+                    "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+            "deliverable": {
+                "text": (f"STOPPED at {stopped_after}" if stopped_after else
+                         "no deliverable was written; this run measured and did not apply"),
+                "stopped_after": stopped_after,
+                "stopped_because": stopped or (
+                    self.results_by_key[stopped_after].message.splitlines()[0]
+                    if stopped_after and self.results_by_key.get(stopped_after) else None),
+            },
+            "gates": list(self.findings),
+            "steps": self._step_records(),
+            "provenance": self.prov.snapshot(
+                self.project / "decisions.yml"
+                if (self.project / "decisions.yml").exists() else None),
+            "open_items": ([f"{k} did not run: {self.results_by_key[k].message.splitlines()[0]}"
+                            for k in sorted(stat) if stat[k] == "blocked"][:20]
+                           or ["none recorded"]),
+        }
+
+    def _step_records(self) -> list:
+        """One record per canonical step, aggregating every task that belongs to it.
+
+        The report is organised by step, not by library: a reader asks what happened at the cell
+        call, not what happened to library 7. Emitting one record per TASK put every step under a
+        key the report did not recognise, and it correctly said so - "no record of this step at
+        all" for eight steps that had in fact run. The aggregation is here rather than in the
+        report because only the orchestrator knows which tasks belong to which step.
+
+        A step's status is the worst of its tasks, so one refused library cannot be averaged away
+        by nine that passed.
+        """
+        from . import steps as _s
+
+        rank = {"refused": 5, "failed": 4, "blocked": 3, "running": 2, "pending": 1,
+                "skipped": 0, "done": 0}
+        grouped: dict = {}
+        for key, r in sorted(self.results_by_key.items()):
+            grouped.setdefault(r.step if hasattr(r, "step") else key.split("/", 1)[0],
+                               []).append((key, r))
+
+        out = []
+        for step, items in sorted(grouped.items()):
+            worst = max(items, key=lambda kr: rank.get(kr[1].status.value, 0))[1]
+            what, cannot = _s.step_text(step)
+            found, sources = [], []
+            for key, r in items:
+                sources.extend(str(o) for o in (r.outputs or []))
+                for mk, mv in sorted((r.metrics or {}).items()):
+                    label = f"{mk} ({r.sample})" if getattr(r, "sample", None) else mk
+                    found.append({"label": label, "value": mv,
+                                  "source": (list(r.outputs or []) or [None])[0]})
+            statuses = sorted({r.status.value for _, r in items})
+            out.append({
+                "key": step,
+                "status": worst.status.value,
+                "what_it_does": what,
+                "cannot_establish": cannot,
+                "found": found,
+                "sources": sorted(set(sources)),
+                "tasks": [{"key": k, "status": r.status.value,
+                           "message": (r.message or "").splitlines()[0][:200]}
+                          for k, r in items],
+                "task_statuses": statuses,
+            })
+        return out
 
     def payload(self, stopped: str | None) -> dict:
         counts: dict = {}
@@ -228,6 +310,12 @@ class Pipeline:
                 if (self.project / "decisions.yml").exists() else None),
             "samples": self.samples,
         }
+
+
+def _step_text(result) -> tuple:
+    """A step's description and its stated limit, from its task key."""
+    from . import steps as _s
+    return _s.step_text(result.key.split("/", 1)[0])
 
 
 def _toposort(tasks: list[Task]) -> list[str]:
