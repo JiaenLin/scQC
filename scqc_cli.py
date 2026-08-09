@@ -100,19 +100,25 @@ def read_csv(path: Path) -> list[dict]:
 
 
 def design_from(rows: list[dict], skip: set[str], max_levels: int = 6) -> dict:
-    """Every column with 2..max_levels distinct values is a design factor.
+    """Every column with 2..max_levels levels is a design factor, unless it is an identifier.
 
-    Discovered, not declared. A column that is constant cannot separate anything, and a column
-    with a distinct value per row is an identifier, not a factor.
+    Discovered, not declared. Three things are excluded: a constant column, which separates
+    nothing; a column with more levels than the pipeline can test; and a column with ONE SAMPLE
+    PER LEVEL. The last is the one that slips through a bare `<= max_levels` test - a replicate
+    id in a four-sample cohort has four levels, and every differential check then computes a
+    ratio between single libraries, which is arithmetic rather than evidence and is reported in
+    the same words as a real design differential. A factor must leave at least one level holding
+    more than one sample.
     """
     if not rows:
         return {}
     out = {}
+    ceiling = min(max_levels, max(len(rows) - 1, 1))
     for col in rows[0]:
         if col in skip:
             continue
         vals = {r.get(col, "") for r in rows if (r.get(col) or "").strip()}
-        if 2 <= len(vals) <= max_levels:
+        if 2 <= len(vals) <= ceiling:
             out[col] = {r["sample"]: r[col] for r in rows if r.get(col)}
     return out
 

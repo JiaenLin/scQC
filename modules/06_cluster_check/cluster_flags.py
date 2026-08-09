@@ -88,6 +88,44 @@ TOPN = 20
 class ClusterRefusal(RuntimeError):
     """Raised when the flags cannot be computed honestly."""
 
+def _tri(v):
+    """Normalise one operand to True, False or None, whatever type carries it.
+
+    Identity is the wrong test and it inverted this module. `numpy.bool_(False) is False` is
+    False, so `_and(np.False_, np.False_)` fell through the False branch and the unknown branch
+    and returned True: a cluster that failed both criteria was reported as FLAGGED. Every profile
+    this module reads comes from a numpy-backed table, so the wrong branch was the usual one.
+
+    A string is read from its VOCABULARY, never by truthiness. `bool("False")` is True, so a
+    profile round-tripped through CSV would have flagged every cluster; a word this function does
+    not recognise is unknown, because guessing at it is how the previous defect happened.
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "t", "yes", "y", "1"):
+            return True
+        if s in ("false", "f", "no", "n", "0"):
+            return False
+        return None
+    if isinstance(v, float) and v != v:                 # NaN, including numpy's
+        return None
+    if type(v).__name__ in ("NAType", "NaTType", "MaskedConstant"):
+        return None
+    try:
+        if v != v:                                      # numpy/pandas NaN of any width
+            return None
+    except Exception:                                   # noqa: BLE001
+        return None
+    try:
+        return bool(v)
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
 def _and(*vals):
     """Three-valued AND. False beats unknown; unknown beats True.
 
@@ -95,6 +133,7 @@ def _and(*vals):
     None` is None because the conjunction has not been evaluated, which is not the same as
     having been evaluated and passed.
     """
+    vals = [_tri(v) for v in vals]
     if any(v is False for v in vals):
         return False
     if any(v is None for v in vals):
@@ -103,6 +142,7 @@ def _and(*vals):
 
 def _or(*vals):
     """Three-valued OR. True beats unknown; unknown beats False."""
+    vals = [_tri(v) for v in vals]
     if any(v is True for v in vals):
         return True
     if any(v is None for v in vals):
@@ -111,6 +151,7 @@ def _or(*vals):
 
 def _not(v):
     """Three-valued NOT. The negation of an unknown is unknown, not True."""
+    v = _tri(v)
     return None if v is None else (not v)
 
 @dataclass
