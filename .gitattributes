@@ -1,0 +1,24 @@
+# Force LF in the repository and in every checkout.
+#
+# These files are executed on Linux clusters. A shell script checked out with CRLF fails as
+# `bad interpreter: /usr/bin/env bash^M`, and a Python file with CRLF in a heredoc produces
+# errors that point nowhere near the cause. Normalising here means a Windows contributor cannot
+# reintroduce it.
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.tsv  text eol=lf
+*.csv  text eol=lf
+*.cff  text eol=lf
+*.txt  text eol=lf
+LICENSE  text eol=lf
+VERSION  text eol=lf
+
+*.png  binary
+*.pdf  binary
+*.gz   binary
+*.h5ad binary

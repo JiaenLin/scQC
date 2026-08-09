@@ -1,0 +1,22 @@
+# Acceptance expectations for ONE cohort you hold locally. Copy this file to
+# expected.local.tsv and fill each value from that cohort's own recorded tables.
+# expected.local.tsv is gitignored: these numbers describe data the reader does not have.
+#
+# Tier 1 is deterministic, so every value here must reproduce EXACTLY and nothing in it
+# carries a tolerance. A BLANK value is a FAILURE, not a skip - a checkpoint with nothing
+# to compare against can never fail.
+#
+# The checkpoint names below are exactly the ones run_tier1.py checks, and it checks no
+# others. If you override `fail_columns` in schema.local.tsv, replace the four `only_*`
+# rows: each is named only_<column name with its fail_ prefix removed>.
+tier	checkpoint	value
+1	droplets_analysed
+1	ambient_cells
+1	scored_for_doublets
+1	doublets_called
+1	step5_after_quality
+1	only_umi_lt_350
+1	only_genes_lt_250
+1	only_mito_gt_40
+1	only_scdblfinder_sd006
+1	deliverable

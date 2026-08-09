@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scqc"
+dynamic = ["version"]
+description = "Quality-control decisions and gates for single-cell and single-nuclei RNA-seq"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "Jiaen Lin", email = "jiaenlin999@gmail.com" }]
+keywords = ["single-cell", "single-nucleus", "RNA-seq", "quality-control", "reproducibility"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# The gates and decision logic are deliberately stdlib-only, so `scqc` installs and runs
+# anywhere. pandas is needed only by the tests that read a cohort's tables.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pandas>=1.5"]
+
+[project.urls]
+Homepage = "https://github.com/JiaenLin/scQC"
+Issues = "https://github.com/JiaenLin/scQC/issues"
+
+[project.scripts]
+scqc = "scqc_cli:main"
+
+[tool.setuptools]
+py-modules = ["scqc_cli"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }

@@ -1,0 +1,39 @@
+# Installed environments and downloaded references are large, machine-specific and
+# non-relocatable. The RECIPES that build them are tracked - see conf/env/.
+# `/env/` is root-anchored on purpose: an unanchored `env/` also matched conf/env/
+# and silently excluded every install recipe, which is the one thing a reproducibility
+# claim cannot afford to lose.
+/env/
+references/*/
+!references/_registry/
+
+# Per-cohort expectations describe data the reader does not have.
+*.local.tsv
+*.local.yml
+
+# Run outputs.
+work/
+results/
+
+# Python.
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Tool caches.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Packaging output. Anchored to the root for the same reason `/env/` is: an unanchored
+# `build/` would also match any directory named `build` inside the tree, and this
+# repository already keeps a build script and a build recipe under tracked paths.
+/build/
+/dist/
+
+# Editor and OS noise.
+.idea/
+.vscode/
+.DS_Store

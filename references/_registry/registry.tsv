@@ -1,0 +1,2 @@
+species	build	path	built_by	star_version	notes
+mus_musculus	ensembl_112_filtered	references/mus_musculus/ensembl_112_filtered	celescope 2.7.3 rna mkref	2.7.11a	EXAMPLE ENTRY - the index is not distributed. GTF filtered with celescope utils mkgtf DEFAULT attributes (introns retained); yields 34,290 genes. Rebuild with conf/env/build_reference.sh: the gene count must come out identical, and a different count means the release or the filter attributes differ from what this row declares
