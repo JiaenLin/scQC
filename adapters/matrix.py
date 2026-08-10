@@ -468,6 +468,60 @@ def _open_text(path: Path):
     return path.open("rt", encoding="utf-8", errors="replace")
 
 
+def called_barcodes(path) -> list:
+    """The barcodes a cell caller kept, from a directory or a barcode file.
+
+    Step 2 compares the aligner's cell call with the denoiser's, and the number that decides the
+    gate is how many the aligner called that the denoiser did NOT - which needs the SETS, not two
+    counts. Two callers can agree on 21,000 cells and disagree about which 21,000.
+
+    Accepts what the two callers actually emit:
+      * a directory holding `barcodes.tsv[.gz]` - CeleScope `outs/filtered`, CellRanger
+        `filtered_feature_bc_matrix`;
+      * that file directly;
+      * a one-column CSV, which is CellBender's `_cell_barcodes.csv` shape.
+
+    Deliberately stdlib-only: this runs in the orchestrator, a bare interpreter on a cluster, and
+    reading a list of strings is not a reason to require the analysis stack.
+    """
+    p = Path(path)
+    if p.is_dir():
+        for n in _BARCODE_NAMES:
+            if (p / n).is_file():
+                p = p / n
+                break
+        else:
+            raise TaskFailure(
+                f"{path} holds no {' or '.join(_BARCODE_NAMES)}, so the cells it called cannot be "
+                f"read. A directory that is not a called-cell matrix is not an empty one.")
+    if not p.is_file():
+        raise TaskFailure(f"{p} does not exist, so its cell call cannot be read.")
+
+    out, seen = [], set()
+    with _open_text(p) as fh:
+        for line in fh:
+            # The first field, whether the separator is a tab (10x/CeleScope) or a comma
+            # (CellBender). Suffixes such as `-1` are NOT stripped: they distinguish barcodes
+            # within a run, and trimming them here would merge distinct cells into one.
+            bc = line.strip().split("\t")[0].split(",")[0].strip().strip('"')
+            if not bc:
+                continue
+            if bc.lower() in ("barcode", "barcodes", "cell_barcode", "cell_barcodes"):
+                continue
+            if bc in seen:
+                raise TaskFailure(
+                    f"{p} lists barcode {bc!r} more than once. Counting cells from it would "
+                    f"over-count, and the overlap with the other caller would be wrong in the "
+                    f"direction that flatters the comparison.")
+            seen.add(bc)
+            out.append(bc)
+    if not out:
+        raise TaskFailure(
+            f"{p} lists no barcodes. That is not a cell call of zero to carry forward; a caller "
+            f"that produced nothing has failed, and the step comparing it must say so.")
+    return out
+
+
 def _read_table_rows(path: Path) -> list:
     """Every non-empty line of a TSV, split on tabs. Blank trailing lines are not rows.
 

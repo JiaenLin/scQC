@@ -130,9 +130,30 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 "supplied": supplied_of,
                 "design": design},
     ))
+    # Step 2 needs each caller's BARCODES, not two counts: the number the gate turns on is how
+    # many the aligner called that the denoiser did not.
+    #
+    # Where they come from depends on who ran what. When CellBender runs here it writes
+    # `<stem>_cell_barcodes.csv` beside its output; when the object was SUPPLIED, this run never
+    # saw that file and the samplesheet must say where it is. The aligner's call is its filtered
+    # matrix directory - `outs/filtered` for CeleScope, `filtered_feature_bc_matrix` for
+    # CellRanger - which the samplesheet names for an accepted matrix.
+    #
+    # Neither is defaulted or inferred from the raw matrix. The whole point of this step is to
+    # catch a population lost at the boundary between the two callers, and a step that quietly
+    # compares something else is worse than one that refuses.
+    call_paths = {}
+    for s, row in by_sample.items():
+        cb_csv = str(row.get("cellbender_barcodes") or "").strip()
+        if not cb_csv and s not in supplied_of:
+            stem = pipeline.results / "objects" / f"{s}_cellbender"
+            cb_csv = str(stem.parent / f"{stem.name}_cell_barcodes.csv")
+        call_paths[s] = {"aligner": str(row.get("aligner_cells") or "").strip(),
+                         "cellbender": cb_csv}
+
     tasks.append(Task(
         key="02_cells", step="02_cells", fn=steps._cellcall, needs=("01_ambient_audit",),
-        params={"design": design, "samples": list(by_sample)},
+        params={"design": design, "samples": list(by_sample), "call_paths": call_paths},
     ))
 
     # --- steps 3-4: the light floor, then doublet scoring on what clears it.

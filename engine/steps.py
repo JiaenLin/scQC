@@ -270,8 +270,45 @@ def _ambient_audit(task, pipeline, log):
 
 
 def _cellcall(task, pipeline, log):
+    """Compare the aligner's cell call with the denoiser's, over the barcodes themselves.
+
+    `calls` was read straight from task.params and nothing ever put it there, so this step had
+    never run. It is built here from each caller's barcode list, because `lost` - aligner cells
+    the denoiser did not call - is a SET DIFFERENCE. Two callers can agree on a total and
+    disagree about which cells; the gate turns on the difference, not the totals.
+    """
+    from adapters import matrix as mx
+
     cg = step_module("cellcall_gate")
-    calls = task.params["calls"]
+    paths = task.params.get("call_paths") or {}
+    calls, missing = {}, []
+    for s in task.params["samples"]:
+        p = paths.get(s) or {}
+        a_path, c_path = p.get("aligner"), p.get("cellbender")
+        if not a_path or not c_path:
+            missing.append(
+                f"{s}: " + ", ".join(
+                    x for x in (("aligner_cells" if not a_path else None),
+                                ("cellbender_barcodes" if not c_path else None)) if x))
+            continue
+        a = set(mx.called_barcodes(a_path))
+        c = set(mx.called_barcodes(c_path))
+        calls[s] = {"aligner": len(a), "cellbender": len(c), "lost": len(a - c)}
+        print(f"    {s:<14} aligner {len(a):>7,}   denoiser {len(c):>7,}   "
+              f"lost {len(a - c):>6,}  ({100 * len(a - c) / max(len(a), 1):.2f}%)")
+
+    if missing:
+        # REFUSED, not skipped. This step exists to catch a population lost between two callers,
+        # and a population lost here cannot be recovered by anything downstream. Running the rest
+        # of the pipeline with the check silently absent is the outcome it was written to prevent.
+        raise Refusal(
+            "02_cells cannot compare cell calls - the samplesheet does not say where they are:\n"
+            + "\n".join(f"    - {m}" for m in missing)
+            + "\n    `aligner_cells` is the aligner's filtered matrix directory (CeleScope "
+              "outs/filtered, CellRanger filtered_feature_bc_matrix).\n"
+              "    `cellbender_barcodes` is CellBender's <stem>_cell_barcodes.csv; it is required "
+              "when the denoised object was SUPPLIED, because this run never produced one.")
+
     findings = cg.gate(calls, task.params["design"])
     pipeline.gate("02_cells", findings, cg.verdict(findings))
     out = _tables(pipeline) / "cell_calls.csv"
