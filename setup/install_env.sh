@@ -378,6 +378,17 @@ Point scQC at them with:
   export SCQC_ENV_ROOT="$PREFIX"
 
 Add that line to your shell profile, or pass --env-root on every run.
+
+RUN scqc ITSELF WITH core's INTERPRETER:
+
+  $PREFIX/core/bin/python bin/scqc run --project ... --python $PREFIX/core/bin/python
+
+This is not a style preference. \`core\` is built unconditionally because the orchestrator needs
+the analysis stack in its OWN process: several steps read matrices directly, and under a bare
+system python they fail with ModuleNotFoundError partway through a run rather than at the start.
+The other environments exist for the aligner and the denoiser, whose pins are incompatible with
+core and with each other; they are reached through --celescope, --cellbender and --rscript, and
+are never imported.
 EOF
 
 [[ $ok -eq 1 ]] || {

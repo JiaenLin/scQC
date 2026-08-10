@@ -214,6 +214,24 @@ pip install -e '.[test]'
 COHORT_DIR=/path/to/cohort python tests/acceptance/run_tier1.py
 ```
 
+### Which interpreter runs `scqc`
+
+**`core`'s.** Not the system python.
+
+```bash
+$SCQC_ENV_ROOT/core/bin/python bin/scqc run     --project my_project --mode evidence     --python $SCQC_ENV_ROOT/core/bin/python
+```
+
+`core` is installed unconditionally because the orchestrator needs the analysis stack in its own
+process — several steps read matrices directly. Under a bare system python they fail with
+`ModuleNotFoundError` partway through a run rather than at the start, which is the worst place
+for an environment problem to appear.
+
+The other environments exist for tools whose pins are incompatible with `core` and with each
+other. They are reached through `--celescope`, `--cellbender` and `--rscript`, and are never
+imported.
+
+
 The acceptance harness is a regression test against a dataset **you** supply — no data ships with
 this repository, so it cannot be run from a clone alone.
 
