@@ -522,12 +522,6 @@ class Pipeline:
         }
 
 
-def _step_text(result) -> tuple:
-    """A step's description and its stated limit, from its task key."""
-    from . import steps as _s
-    return _s.step_text(result.key.split("/", 1)[0])
-
-
 def _toposort(tasks: list[Task]) -> list[str]:
     """Dependency order, refusing a cycle rather than looping or silently dropping a task."""
     remaining = {t.key: set(t.needs) for t in tasks}

@@ -40,11 +40,6 @@ def _objects(p) -> Path:
     return p.results / "objects"
 
 
-def _tool(p, name: str, default: str) -> str:
-    """Resolve a tool path from the project config, falling back to the bare name on PATH."""
-    return str(p.decisions.get("tools", {}).get(name, default))
-
-
 def _design(samples: list[dict], max_levels: int = 6) -> dict:
     """Design factors discovered from the samplesheet, never declared.
 
@@ -701,40 +696,6 @@ def _report(task, pipeline, log):
 
 # --------------------------------------------------------------------------------------------
 # graph construction
-
-
-def build_tasks(pipeline, python_exe: str, tools: dict) -> list[Task]:
-    """Assemble the graph for this project and mode.
-
-    In evidence mode the apply task is NOT PLACED IN THE GRAPH. Not disabled, not guarded by a
-    flag - absent, so there is no code path from `--mode evidence` to a deletion.
-    """
-    tasks: list[Task] = []
-    samples = pipeline.samples
-    design = _design(samples)
-    if not design:
-        print("  NOTE: no design factor found in the samplesheet. Every differential check "
-              "will report NOT CHECKED,\n        which is its own outcome and does not read "
-              "as a pass.")
-
-    for row in samples:
-        s = row["sample"]
-        tasks.append(Task(
-            key=f"00_ingest/{s}", step="00_ingest", sample=s, fn=_ingest,
-            inputs=tuple(x for x in (row.get("matrix"), row.get("fastq_r1")) if x),
-            params={"row": row, "python_exe": python_exe,
-                    "expected_genes": row.get("expected_genes")},
-        ))
-
-    # The remaining per-sample steps are added by the caller once step 0 has decided whether a
-    # matrix is accepted or must be rebuilt: a graph that assumes the answer would either skip a
-    # needed alignment or run one that was not needed.
-    tasks.append(Task(
-        key="report", step="report", fn=_report,
-        needs=tuple(t.key for t in tasks),
-        params={"extra": {}},
-    ))
-    return tasks
 
 
 # --------------------------------------------------------------------------------------------
