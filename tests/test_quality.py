@@ -35,10 +35,29 @@ if min(GENES) >= UMI_BOUNDS[0]:
 print(" applying UMI bounds to genes would refuse a real library for being correct")
 
 print("\n" + "-" * 74)
-print("C. a unimodal library - no valley to return")
+print("C. ONE unimodal library - classified, not refused")
+# This asserted a refusal until 2026-08-10. A shallow minimum says the number is a judgement
+# rather than a measurement; it does not say the number is unusable, and refusing discarded the
+# information the depth test had just produced. On a real ten-library cohort six were shoulders,
+# all six landed inside the bounds, and the constant they produced was the one that cohort had
+# applied. What the depth test decides now is the PROVENANCE label.
 try:
-    derive([Valley(s, "umi", v, s != "ctrl_03") for s, v in zip(S, UMI)], "umi")
-    fails.append("C: unimodal must refuse")
+    p_mixed = derive([Valley(s, "umi", v, s != "ctrl_03") for s, v in zip(S, UMI)], "umi")
+    print(f"[ACCEPTED] constant {p_mixed.constant}, provenance {p_mixed.provenance!r}, "
+          f"shoulders {p_mixed.shoulders}")
+    if p_mixed.provenance != "declared_informed":
+        fails.append(f"C: one shoulder must class as declared_informed, got {p_mixed.provenance}")
+    if p_mixed.shoulders != ("ctrl_03",):
+        fails.append(f"C: the shoulder library must be NAMED, got {p_mixed.shoulders}")
+    if not any("NOT a pure measurement" in n for n in p_mixed.notes):
+        fails.append("C: the proposal must say it is not a pure measurement")
+except ThresholdRefusal as e:
+    fails.append(f"C: one shoulder must NOT refuse - {str(e)[:100]}")
+
+print("\nC2. EVERY library unimodal - nothing to take a median OF")
+try:
+    derive([Valley(s, "umi", v, False) for s, v in zip(S, UMI)], "umi")
+    fails.append("C2: an all-unimodal cohort must refuse")
 except ThresholdRefusal as e:
     print(f"[REFUSED] {str(e)[:180]}...")
 
