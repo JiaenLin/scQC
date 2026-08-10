@@ -174,7 +174,11 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                          "cellbender": cb_csv}
 
     tasks.append(Task(
-        key="02_cells", step="02_cells", fn=steps._cellcall, needs=("01_ambient_audit",),
+        key="02_cells", step="02_cells", fn=steps._cellcall,
+        # The denoiser's cell call comes from the measurement of <sample>_ambient.h5, which is the
+        # object every step after step 1 reads. It used to come from a second file named in the
+        # samplesheet, from a run nothing verified was this one.
+        needs=tuple(f"05_quality/{s}" for s in by_sample),
         params={"design": design, "samples": list(by_sample), "call_paths": call_paths},
     ))
 
@@ -212,7 +216,10 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     for s in by_sample:
         tasks.append(Task(
             key=f"05_quality/{s}", step="05_quality", sample=s, fn=steps._quality_measure,
-            needs=("04_doublet_health",),
+            # Runs right after step 1, not after the doublets: it MEASURES and removes nothing,
+            # and both step 2 and step 5 need what it produces. Ordering constraints in this
+            # pipeline are about what may FILTER before what, never about what may be looked at.
+            needs=("01_ambient_audit",),
             params={"sample": s, "python_exe": python_exe,
                     "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
                     "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip()},
@@ -221,7 +228,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
 
     tasks.append(Task(
         key="05_quality", step="05_quality", fn=steps._quality_stage,
-        needs=tuple(f"05_quality/{s}" for s in by_sample),
+        needs=tuple(f"05_quality/{s}" for s in by_sample) + ("04_doublet_health",),
         params={"samples": list(by_sample), "python_exe": python_exe,
                 "light_floor": tools.get("light_floor", 200),
                 "decisions": pipeline.decisions},

@@ -272,42 +272,76 @@ def _ambient_audit(task, pipeline, log):
 def _cellcall(task, pipeline, log):
     """Compare the aligner's cell call with the denoiser's, over the barcodes themselves.
 
-    `calls` was read straight from task.params and nothing ever put it there, so this step had
-    never run. It is built here from each caller's barcode list, because `lost` - aligner cells
-    the denoiser did not call - is a SET DIFFERENCE. Two callers can agree on a total and
-    disagree about which cells; the gate turns on the difference, not the totals.
+    THE DENOISER'S CALL COMES FROM THE OBJECT EVERY OTHER STEP READS.
+
+    It used to come from a `_cell_barcodes.csv` named in the samplesheet - a second artefact,
+    from a run nothing verified was this one. Two denoising runs of the same library produce
+    different calls in identically-shaped files, so the comparison could be against the wrong
+    denoising and nothing downstream could tell.
+
+    The failure is not hypothetical. On the calibration cohort the object's barcodes carried a
+    `<sample>_` prefix and the CSV's did not: the same run, described two ways, intersecting in
+    ZERO barcodes. A check that had simply intersected them would have reported every cell lost.
+
+    So the denoiser's call is read from `<sample>_ambient.h5` - written by step 1, read by steps
+    4, 5 and 6 - and the aligner's call remains an external file, because the aligner's output
+    genuinely is one. A supplied `cellbender_barcodes` is no longer the source; it is CHECKED
+    against the object, after normalising the sample prefix, and a disagreement stops the run.
     """
     from adapters import matrix as mx
 
     cg = step_module("cellcall_gate")
     paths = task.params.get("call_paths") or {}
-    calls, missing = {}, []
+    calls, missing, notes = {}, [], []
     for s in task.params["samples"]:
-        p = paths.get(s) or {}
-        a_path, c_path = p.get("aligner"), p.get("cellbender")
-        if not a_path or not c_path:
-            missing.append(
-                f"{s}: " + ", ".join(
-                    x for x in (("aligner_cells" if not a_path else None),
-                                ("cellbender_barcodes" if not c_path else None)) if x))
+        pth = paths.get(s) or {}
+        a_path = pth.get("aligner")
+        if not a_path:
+            missing.append(f"{s}: aligner_cells")
             continue
-        a = set(mx.called_barcodes(a_path))
-        c = set(mx.called_barcodes(c_path))
+
+        # Read from the measurement task's own result, so step 2 and step 5 are looking at one
+        # pass over one object rather than two reads that could disagree.
+        r = pipeline.results_by_key.get(f"05_quality/{s}")
+        called_csv = (getattr(r, "metrics", None) or {}).get("called_barcodes") if r else None
+        if not called_csv or not Path(called_csv).exists():
+            missing.append(f"{s}: no denoiser call was measured from {s}_ambient.h5")
+            continue
+        called = mx.called_barcodes(called_csv)
+
+        a = {_bare(b, s) for b in mx.called_barcodes(a_path)}
+        c = {_bare(b, s) for b in called}
+
+        # A supplied CSV is a cross-check now, never the source.
+        csv_path = pth.get("cellbender")
+        if csv_path and Path(csv_path).exists():
+            declared = {_bare(b, s) for b in mx.called_barcodes(csv_path)}
+            if declared != c:
+                only_csv, only_obj = declared - c, c - declared
+                raise Refusal(
+                    f"02_cells ({s}): the declared cellbender_barcodes disagrees with the object "
+                    f"step 1 produced. {len(only_csv):,} barcode(s) are in the CSV and not the "
+                    f"object; {len(only_obj):,} are in the object and not the CSV. They are not "
+                    f"the same denoising run, and comparing the aligner against the wrong one "
+                    f"produces a loss figure that describes nothing.\n"
+                    f"    object: {len(c):,} called   CSV: {len(declared):,} called\n"
+                    f"    Remove cellbender_barcodes, or point ambient_h5 at the run it came from.")
+            notes.append(s)
+
         calls[s] = {"aligner": len(a), "cellbender": len(c), "lost": len(a - c)}
         print(f"    {s:<14} aligner {len(a):>7,}   denoiser {len(c):>7,}   "
               f"lost {len(a - c):>6,}  ({100 * len(a - c) / max(len(a), 1):.2f}%)")
 
     if missing:
-        # REFUSED, not skipped. This step exists to catch a population lost between two callers,
-        # and a population lost here cannot be recovered by anything downstream. Running the rest
-        # of the pipeline with the check silently absent is the outcome it was written to prevent.
         raise Refusal(
-            "02_cells cannot compare cell calls - the samplesheet does not say where they are:\n"
+            "02_cells cannot compare cell calls:\n"
             + "\n".join(f"    - {m}" for m in missing)
             + "\n    `aligner_cells` is the aligner's filtered matrix directory (CeleScope "
-              "outs/filtered, CellRanger filtered_feature_bc_matrix).\n"
-              "    `cellbender_barcodes` is CellBender's <stem>_cell_barcodes.csv; it is required "
-              "when the denoised object was SUPPLIED, because this run never produced one.")
+              "outs/filtered, CellRanger filtered_feature_bc_matrix). The denoiser's call is "
+              "read from <sample>_ambient.h5 and needs no declaration.")
+    if notes:
+        print(f"    cross-checked against a declared cellbender_barcodes for "
+              f"{len(notes)} library(ies); all agree with the object")
 
     findings = cg.gate(calls, task.params["design"])
     pipeline.gate("02_cells", findings, cg.verdict(findings))
@@ -315,10 +349,23 @@ def _cellcall(task, pipeline, log):
     import csv
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["sample", "aligner", "ambient", "lost"])
+        w.writerow(["sample", "aligner", "denoiser", "lost"])
         for s, c in sorted(calls.items()):
             w.writerow([s, c["aligner"], c["cellbender"], c["lost"]])
     return {"outputs": [str(out)], "metrics": {"libraries": len(calls)}, "versions": {}}
+
+
+def _bare(barcode, sample) -> str:
+    """A barcode without the `<sample>_` prefix some conversions add.
+
+    The same cell is written `AACGT...` by one tool and `lib3_AACGT...` by another, and the two
+    sets then intersect in nothing while describing identical data. Normalising here means the
+    comparison is between cells rather than between naming conventions - and stripping only an
+    exact `<sample>_` prefix cannot merge two distinct barcodes, which a general strip could.
+    """
+    b = str(barcode)
+    pre = f"{sample}_"
+    return b[len(pre):] if b.startswith(pre) else b
 
 
 # --------------------------------------------------------------------------------------------
@@ -559,9 +606,15 @@ def _quality_measure(task, pipeline, log):
               f"bimodal {bim.get(metric)}")
     # Carried on the task RESULT so the barrier reads it from the manifest rather than from a
     # shared mutable the workers would race on.
+    # The path to the denoiser's call travels with the result, so step 2 consumes this one pass
+    # rather than opening the object again.
+    called_csv = next((o for o in res.get("outputs", []) if str(o).endswith(".called_barcodes.csv")),
+                      None)
     return {"outputs": list(res.get("outputs", [])),
             "metrics": {"valleys": got, "bimodal": bim,
-                        "mito_quartiles": m.get("mito_quartiles")},
+                        "mito_quartiles": m.get("mito_quartiles"),
+                        "called_barcodes": str(called_csv) if called_csv else None,
+                        "n_called_by_denoiser": m.get("n_called_by_denoiser")},
             "versions": res.get("versions", {})}
 
 

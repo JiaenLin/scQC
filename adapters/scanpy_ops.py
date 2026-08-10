@@ -2115,6 +2115,33 @@ def _op_valley(adata, params, out_prefix) -> tuple:
             mito = {"n": len(_v), "median": _q(0.5), "q1": _q(0.25), "q3": _q(0.75),
                     "max": _v[-1]}
 
+    # THE DENOISER'S CELL CALL, read from THIS object rather than from a file beside it.
+    #
+    # Step 2 compares the aligner's call with the denoiser's. It took the denoiser's from a
+    # `_cell_barcodes.csv` named in the samplesheet - a SECOND artefact, from a run nothing
+    # verified was this one. Two CellBender runs of the same library at different --fpr produce
+    # different calls and identically-shaped files, so the comparison could be against the wrong
+    # denoising with no symptom at all.
+    #
+    # It is also how a naming difference hides: on the calibration cohort the object carried a
+    # `<sample>_` prefix and the CSV did not, so the two sets intersected in ZERO barcodes while
+    # describing the same run. Reading the call from the object removes both failures, because
+    # every step after step 1 then names its cells the same way.
+    #
+    # After denoising an empty droplet holds no counts, so the called cells are exactly the
+    # barcodes with counts remaining. That is a property of the output rather than an inference
+    # about it.
+    import csv as _csv
+    _tot = adata.X.sum(axis=1)
+    _tot = _tot.A1 if hasattr(_tot, "A1") else _tot.ravel()
+    called = [str(b) for b, keep in zip(adata.obs_names, _tot > 0) if keep]
+    cells_path = Path(str(out_prefix) + ".called_barcodes.csv")
+    with cells_path.open("w", encoding="utf-8", newline="") as fh:
+        _w = _csv.writer(fh)
+        _w.writerow(["barcode"])
+        for _b in called:
+            _w.writerow([_b])
+
     valleys = write_valleys_csv(records, str(out_prefix) + ".valleys.csv")
     density = write_density_csv(records, str(out_prefix) + ".valley_density.csv")
     jpath = Path(str(out_prefix) + ".valleys.json")
@@ -2126,7 +2153,8 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                # None when obs carries no pct_counts_mt, or the library is too small to place a
                # quartile. Absent is reported as absent; step 5 refuses rather than defaulting.
                "mito_quartiles": mito}
-    return [valleys, density, jpath], metrics
+    metrics["n_called_by_denoiser"] = len(called)
+    return [valleys, density, jpath, cells_path], metrics
 
 
 def _op_cluster(adata, params, out_prefix) -> tuple:
