@@ -453,7 +453,13 @@ class Pipeline:
             # counts are what the report's first block is built from, so a run's headline figure
             # was a sentence denying the run had produced anything.
             "deliverable": self._deliverable_block(stopped, stopped_after),
-            "gates": list(self.findings),
+            # `None`, not `[]`, when no gate ran in this process AND none was restored from a
+            # previous one. The two are different claims: an empty list says the gates ran and
+            # raised nothing, which the report reads as a pass, and nothing distinguishes it on
+            # the page from a run where no gate was ever evaluated. A resumed run whose state
+            # predates finding-persistence is exactly that case.
+            "gates": (list(self.findings)
+                      if (self.findings or self._gated_this_run) else None),
             "steps": self._step_records(),
             # ASSEMBLED HERE, not by the report task, because the report is built from TWO call
             # sites: the `report` task, and scqc_cli.finish() afterwards - the second exists so a
