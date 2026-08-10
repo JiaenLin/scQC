@@ -91,6 +91,7 @@ import base64
 import html
 import io
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -1344,62 +1345,134 @@ def _e(value) -> str:
 
 
 _CSS = """
-:root{--ink:#1b1b1b;--paper:#ffffff;--rule:#d8d8d8;--muted:#5f5f5f;--ok:#0072B2;
---review:#E69F00;--refuse:#D55E00;--unknown:#CC79A7;--wash:#f6f6f4;}
+/* The accepted layout design (docs/REPORT_DESIGN.md). Three theme states, not two: an explicit
+   choice stamps data-theme, and the default "system" setting stamps nothing - so the bare :root
+   carries the complete light palette and both dark rules only redefine tokens. */
+:root{
+  --ink:#16191d; --paper:#fbfbfc; --panel:#ffffff; --wash:#f1f4f7;
+  --rule:#dde2e8; --muted:#5c6570; --spine:#c3ccd6;
+  --ok:#0072B2; --review:#E69F00; --refuse:#D55E00; --unknown:#CC79A7;
+  --before:#bcc5cf; --after:#2f353c; --median:#0072B2; --cutline:#D55E00;
+  --shadow:0 1px 2px rgba(22,25,29,.06), 0 8px 24px -16px rgba(22,25,29,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#e6eaef; --paper:#0f1216; --panel:#161a1f; --wash:#1a1f25;
+    --rule:#2b323a; --muted:#95a1ad; --spine:#3a434d;
+    --ok:#57ABDD; --review:#EDA93B; --refuse:#E8734A; --unknown:#D68FB5;
+    --before:#4a545f; --after:#cbd4dd; --median:#57ABDD; --cutline:#E8734A;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#e6eaef; --paper:#0f1216; --panel:#161a1f; --wash:#1a1f25;
+  --rule:#2b323a; --muted:#95a1ad; --spine:#3a434d;
+  --ok:#57ABDD; --review:#EDA93B; --refuse:#E8734A; --unknown:#D68FB5;
+  --before:#4a545f; --after:#cbd4dd; --median:#57ABDD; --cutline:#E8734A;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);
-font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-.wrap{max-width:1080px;margin:0 auto;padding:28px 22px 80px;}
-h1{font-size:24px;margin:0 0 2px;letter-spacing:-.01em}
-h2{font-size:18px;margin:38px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--ink)}
-h3{font-size:15px;margin:26px 0 6px}
-p{margin:8px 0}
-.sub{color:var(--muted);font-size:13px;margin:0 0 18px}
-pre{background:var(--wash);border:1px solid var(--rule);border-radius:4px;padding:12px 14px;
-overflow-x:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-white-space:pre;margin:10px 0}
-table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}
-th,td{border:1px solid var(--rule);padding:6px 8px;text-align:left;vertical-align:top}
-th{background:var(--wash);font-weight:600}
-/* The per-library table is wider than the page on purpose - twenty-odd thresholds is what
-   there are. It scrolls inside its own box rather than shrinking the type or dropping columns. */
-.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:4px;margin:10px 0}
-table.wide{margin:0;font-size:12px;white-space:nowrap;width:auto;min-width:100%}
-table.wide th,table.wide td{border-left:none;border-right:1px solid var(--rule)}
-table.wide tr td:first-child,table.wide tr th:first-child{position:sticky;left:0;
-background:var(--paper);border-right:2px solid var(--ink)}
-table.wide tr th:first-child{background:var(--wash)}
-td.ns{color:var(--muted);font-style:italic}
-.badge{display:inline-block;padding:3px 10px;border-radius:3px;color:#fff;font-weight:700;
-font-size:12px;letter-spacing:.04em}
-.b-REFUSE{background:var(--refuse)}.b-REVIEW{background:var(--review)}
-.b-PASS{background:var(--ok)}.b-NOTDET{background:var(--unknown)}
-.chip{display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:700;
-color:#fff}
-.c-REFUSE{background:var(--refuse)}.c-REVIEW{background:var(--review)}.c-ok{background:var(--ok)}
-.c-unrecognised{background:var(--unknown)}
-.defect{border-left:4px solid var(--refuse);background:#fdf1ea;padding:9px 12px;margin:10px 0;
-font-size:13px}
-.notice{border-left:4px solid var(--unknown);background:#fbf0f6;padding:9px 12px;margin:10px 0;
-font-size:13px}
-.cannot{border-left:4px solid var(--muted);background:var(--wash);padding:9px 12px;margin:10px 0;
-font-size:13px}
-figure{margin:14px 0;padding:0}
-figure img{max-width:100%;height:auto;border:1px solid var(--rule);border-radius:3px;
-display:block}
-figcaption{font-size:12px;color:var(--muted);margin-top:6px}
-.q{font-style:italic}
-.step{border:1px solid var(--rule);border-radius:5px;padding:2px 16px 14px;margin:16px 0;
-background:var(--paper)}
-.meta{font-size:12px;color:var(--muted)}
-.src{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;
-color:var(--muted)}
-.det{margin:4px 0 0 14px;padding:0;font-size:12px;color:var(--muted)}
-.klass{font-weight:700;letter-spacing:.03em}
-.k-ADJUDICATED{color:var(--refuse)}.k-DERIVED{color:var(--ok)}.k-DECLARED{color:var(--review)}
-.k-FIXED{color:var(--muted)}
-footer{margin-top:44px;padding-top:12px;border-top:1px solid var(--rule);font-size:12px;
-color:var(--muted)}
+body{margin:0; background:var(--paper); color:var(--ink);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px; margin:0 auto; padding:34px 26px 100px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.lbl{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:var(--muted)}
+h1{font-size:19px; margin:0; letter-spacing:-.01em; font-weight:650}
+h2{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px;
+  letter-spacing:.16em; text-transform:uppercase; margin:0 0 4px; font-weight:600}
+h3{margin:0 0 6px; font-size:13px; font-weight:620}
+p{margin:6px 0}
+a{color:var(--ok)}
+.sub{color:var(--muted); font-size:13.5px; max-width:70ch}
+.masthead{display:flex; justify-content:space-between; align-items:flex-start; gap:20px;
+  padding-bottom:16px; border-bottom:2px solid var(--ink); flex-wrap:wrap}
+.chip{display:inline-block; padding:3px 10px; border-radius:3px; color:#fff;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px; letter-spacing:.1em; font-weight:700}
+.c-REVIEW,.c-review{background:var(--review)}
+.c-ok,.c-PASS{background:var(--ok)}
+.c-REFUSE,.c-refuse{background:var(--refuse)}
+.c-NOTDET,.c-unrecognised{background:var(--unknown)}
+.decision{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:1px;
+  background:var(--rule); border:1px solid var(--rule); border-radius:8px; overflow:hidden;
+  margin:22px 0 10px}
+.cell{background:var(--panel); padding:15px 17px}
+.big{font-size:26px; font-weight:640; letter-spacing:-.02em; line-height:1.15; margin:2px 0 0;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cell .note{font-size:12px; color:var(--muted); margin-top:3px}
+.evenness{border-left:3px solid var(--review)}
+.spine{position:relative; margin:26px 0 10px}
+.spine::before{content:""; position:absolute; left:calc(100% - 86px); top:0; bottom:0; width:2px;
+  background:var(--spine); transform:translateX(-50%)}
+.axis{display:grid; grid-template-columns:1fr 172px; align-items:center; gap:16px;
+  padding:22px 0; border-top:1px solid var(--rule)}
+.axis:first-child{border-top:0}
+.panel{background:var(--panel); border:1px solid var(--rule); border-radius:8px;
+  padding:13px 15px 11px; box-shadow:var(--shadow); min-width:0}
+.panel .cap{font-size:11.5px; color:var(--muted); margin:8px 0 0; line-height:1.45}
+.panel .src{font-size:10.5px; color:var(--muted); margin-top:4px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cut{justify-self:center; text-align:center; background:var(--paper); padding:8px 4px;
+  z-index:2; position:relative}
+.cut .val{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:15px;
+  font-weight:700; background:var(--ink); color:var(--paper); padding:5px 11px;
+  border-radius:4px; display:inline-block; white-space:nowrap}
+.cut .how{font-size:10.5px; color:var(--muted); margin-top:6px; letter-spacing:.04em}
+img{display:block; width:100%; height:auto; max-width:100%}
+.missing{border:1px dashed var(--unknown); border-radius:6px; padding:11px 13px;
+  background:color-mix(in srgb, var(--unknown) 7%, transparent); font-size:12.5px;
+  color:var(--ink)}
+.missing b{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px;
+  letter-spacing:.1em}
+section{margin:44px 0 0}
+.head{border-bottom:1px solid var(--rule); padding-bottom:7px; margin-bottom:16px}
+.card{background:var(--panel); border:1px solid var(--rule); border-radius:8px;
+  padding:15px 17px; box-shadow:var(--shadow)}
+.grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:14px}
+.scroll{overflow-x:auto; border:1px solid var(--rule); border-radius:8px}
+table{border-collapse:collapse; width:100%; font-size:12.5px}
+th,td{padding:7px 11px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--rule)}
+th{background:var(--wash); font-weight:600; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted)}
+th .scope{display:block; font-weight:400; letter-spacing:.02em; text-transform:none;
+  font-size:10px; opacity:.85}
+td:first-child,th:first-child{text-align:left;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--wash)}
+.flag{color:var(--review); font-weight:700}
+details{border:1px solid var(--rule); border-radius:7px; background:var(--panel); margin-bottom:8px}
+summary{cursor:pointer; padding:10px 14px; font-size:13px; display:flex; gap:10px;
+  align-items:center; list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"\25B8"; margin-left:auto; color:var(--muted)}
+details[open] summary::after{content:"\25BE"}
+details .body{padding:0 14px 13px; font-size:13px; color:var(--muted); max-width:82ch}
+details .body ul{margin:6px 0 0 16px; padding:0}
+summary:focus-visible{outline:2px solid var(--ok); outline-offset:-2px}
+.limits{display:grid; grid-template-columns:repeat(auto-fit,minmax(258px,1fr)); gap:12px}
+.limit{border-left:3px solid var(--unknown); padding:2px 0 2px 13px}
+.limit b{display:block; font-size:12.5px; margin-bottom:2px}
+.limit span{font-size:12.5px; color:var(--muted)}
+.prov{display:grid; grid-template-columns:auto 1fr; gap:5px 20px; font-size:12.5px}
+.prov dt{color:var(--muted)}
+.prov dd{margin:0; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  overflow-wrap:anywhere}
+.klass{font-weight:700; letter-spacing:.03em; font-size:11px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.k-ADJUDICATED{color:var(--refuse)} .k-DERIVED{color:var(--ok)}
+.k-DECLARED{color:var(--review)} .k-FIXED{color:var(--muted)}
+.defect{border-left:3px solid var(--refuse); padding:8px 0 8px 13px; margin:10px 0;
+  font-size:13px}
+footer{margin-top:52px; padding-top:16px; border-top:1px solid var(--rule); font-size:12px;
+  color:var(--muted)}
+@media (max-width:860px){
+  .axis{grid-template-columns:1fr; gap:12px}
+  .spine::before{display:none}
+  .cut{justify-self:start}
+}
 """
 
 
@@ -1618,203 +1691,334 @@ def assert_self_contained(html_text: str) -> None:
             f"linking it.")
 
 
+def _fig_panel(block, uri, *, title=None) -> str:
+    """One figure in the layout, or a stated reason there is none.
+
+    A figure that could not be produced is drawn as a bordered note carrying the reason the
+    assembler gave, never as a gap. A gap in a document reads as a figure nobody thought was
+    needed, which is the one reading that is never true here.
+    """
+    head = f"<h3>{_e(title)}</h3>" if title else ""
+    if block is None:
+        return (f"<div class='panel'>{head}<div class='missing'><b>NOT PRODUCED</b><br>"
+                f"this figure is not declared by any step, so nothing assembled it.</div></div>")
+    fid = block.get("id", "")
+    question = block.get("question") or ""
+    cap = block.get("caption") or ""
+    src = block.get("source") or ""
+    if not uri:
+        status = block.get("status") or "NOT PRODUCED"
+        return (f"<div class='panel'>{head or ''}<div class='missing'>"
+                f"<b>{_e(fid)} · NOT PRODUCED</b><br>{_e(status)}</div>"
+                f"<p class='cap'>{_e(question)}</p></div>")
+    return (f"<div class='panel'>{head}"
+            f"<p class='lbl'>{_e(fid)} · {_e(question)}</p>"
+            f"<img src='{uri}' alt='{_e(fid)}: {_e(question)}'>"
+            + (f"<p class='cap'>{_e(cap)}</p>" if cap else "")
+            + (f"<p class='src'>source: {_e(src)}</p>" if src else "")
+            + "</div>")
+
+
+def _cut(value: str, label: str, how: str) -> str:
+    """The threshold between a before and an after, with how it was arrived at."""
+    return (f"<div class='cut'><span class='val'>{_e(value)}</span>"
+            f"<p class='how'>{_e(label)}<br>{_e(how)}</p></div>")
+
+
+def _column(per_sample, key):
+    """One column of the per-library table, as a list of values."""
+    return [r.get(key) for r in (per_sample.get("rows") or []) if isinstance(r, dict)]
+
+
+def _one_value(values):
+    """The single value of a cohort constant, or None when the column does not agree.
+
+    A constant that is not constant is not a constant, and printing the first of several
+    different numbers as though it applied to every library is the error this prevents.
+    """
+    seen = {v for v in values if v is not None and v != ""}
+    return next(iter(seen)) if len(seen) == 1 else None
+
+
+def _fmt(value, suffix="") -> str:
+    if value is None:
+        return "not recorded"
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return (f"{int(round(f)):,}" if abs(f - round(f)) < 1e-9 and abs(f) >= 10
+            else f"{f:g}") + suffix
+
+
+def _evenness(findings):
+    """The worst design-differential ratio any gate measured, and the factors it compared.
+
+    Read from the gates rather than recomputed, so the headline number and the finding that
+    raised it cannot disagree. None when no gate measured one - which is stated, not filled in
+    with a reassuring number.
+    """
+    worst, where = None, ""
+    for f in findings or []:
+        if "design differential" not in str(f.get("check", "")):
+            continue
+        m = re.search(r"([\d.]+)\s*x", str(f.get("message", "")))
+        if not m:
+            continue
+        ratio = float(m.group(1))
+        if worst is None or ratio > worst:
+            worst, where = ratio, str(f.get("check", "")).split(":")[-1].strip()
+    return worst, where
+
+
 def render_html(doc: dict, figure_uris: dict) -> str:
-    """The single-file document. Inline CSS, inline images, no external request of any kind."""
+    """The single-file document, in the layout of docs/REPORT_DESIGN.md.
+
+    Inline CSS, inline images, no external request of any kind.
+
+    THE SHAPE, AND WHY IT IS NOT A LOG
+
+    The first version of this renderer emitted the steps in order, each with its metrics - a run
+    log. It is the natural thing to produce and the wrong thing to read: it puts what the
+    pipeline did in front of what a reader needs to decide, which is whether the filter took the
+    same proportion out of every arm of the design, and where each cut fell relative to the
+    distribution it was cutting. Those two questions now open the document, and the steps are
+    below them.
+    """
     v = doc["verdict"]
-    badge = {"REFUSE": "b-REFUSE", "REVIEW": "b-REVIEW", "PASS": "b-PASS"}.get(
-        v["overall"], "b-NOTDET")
+    run, prov = doc["run"], doc["provenance"]
+    per_sample = doc.get("per_sample") or {}
+    steps = doc.get("steps") or []
+    figs = {f["id"]: f for s in steps for f in (s.get("figures") or [])}
+    uri = lambda fid: figure_uris.get(fid)                                    # noqa: E731
+    d = v.get("deliverable") or {}
+
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-        f"<title>scQC report — {_e(doc['run']['project'])}</title>",
+        f"<title>scQC report — {_e(Path(str(run['project'])).name)}</title>",
         f"<style>{_CSS}</style></head><body><div class='wrap'>",
-        f"<h1>scQC quality-control report <span class='badge {badge}'>{_e(v['overall'])}"
-        f"</span></h1>",
-        f"<p class='sub'>project {_e(doc['run']['project'])} · mode {_e(doc['run']['mode'])} · "
-        f"generated {_e(doc['provenance']['generated'])} "
-        f"({_e(doc['provenance']['generated_source'])})</p>",
     ]
 
-    # ---------------------------------------------------------------- 1 verdict
-    parts.append("<h2>1 · Verdict</h2>")
-    parts.append("<pre>" + "\n".join(_e(line) for line in v["lines"]) + "</pre>")
-    if not v["gates_supplied"]:
-        parts.append("<div class='defect'><strong>Defect.</strong> No gate findings were "
-                     "supplied. This document cannot state that the run passed; it can only "
-                     "state that nobody recorded whether it did.</div>")
-    if v["defect_count"]:
-        parts.append(f"<div class='defect'><strong>{v['defect_count']} defect(s) in this "
-                     f"report.</strong> Each is marked where it occurs and listed at the foot "
-                     f"of the document. A report that omits a required block silently reads "
-                     f"exactly like a complete one.</div>")
-    if v["refuse"] or v["review"] or v["unrecognised"]:
-        parts.append("<h3>every REFUSE and REVIEW, with the step that raised it</h3>")
-        rows = []
-        for f in v["refuse"] + v["review"] + v["unrecognised"]:
-            detail = ""
-            if f["detail"]:
-                detail = "<ul class='det'>" + "".join(f"<li>{_e(d)}</li>" for d in f["detail"]) \
-                         + "</ul>"
-            rows.append(f"<tr><td><span class='chip c-{_e(f['severity'])}'>{_e(f['severity'])}"
-                        f"</span></td><td class='src'>{_e(f['step'])}</td>"
-                        f"<td>{_e(f['check'])}</td><td>{_e(f['message'])}{detail}</td></tr>")
-        parts.append("<table><tr><th>verdict</th><th>step</th><th>check</th><th>finding</th>"
-                     "</tr>" + "".join(rows) + "</table>")
-    parts.append(f"<p class='meta'>{v['n_ok']} further finding(s) recorded as ok, shown with "
-                 f"their steps in section 3.</p>")
+    # ---------------------------------------------------------------- masthead
+    n_libs = len(per_sample.get("rows") or []) or len(_column(per_sample, "sample"))
+    parts.append(
+        "<div class='masthead'><div>"
+        f"<h1>Quality control · <span class='mono'>{_e(Path(str(run['project'])).name)}</span>"
+        f"</h1>"
+        f"<p class='sub'>{n_libs} librar{'y' if n_libs == 1 else 'ies'} · "
+        f"{_e(run['mode'])} mode</p></div>"
+        f"<div style='text-align:right'><span class='chip c-{_e(v['overall'])}'>"
+        f"{_e(v['overall'])}</span>"
+        f"<p class='lbl' style='margin-top:8px'>{_e(prov.get('generated', ''))} · "
+        f"scQC {_e(doc.get('report_version', ''))}</p></div></div>")
 
-    # ---------------------------------------------------------------- 2 parameters
-    parts.append("<h2>2 · What was decided, and by whom</h2>")
-    if not doc["parameters"]["stated"]:
-        parts.append("<div class='defect'><strong>Defect.</strong> No parameter table was "
-                     "supplied. The class of a parameter — who was allowed to set it — is the "
-                     "point of this report.</div>")
-    else:
-        rows = []
-        for r in doc["parameters"]["rows"]:
-            if r.get("defect"):
-                rows.append(f"<tr><td>{_e(r['name'])}</td><td colspan='3'>"
-                            f"<span class='defect' style='display:block;margin:0'>"
-                            f"<strong>Defect.</strong> {_e(r['message'])}</span></td></tr>")
-                continue
-            words = ""
-            if r["verbatim"]:
-                who = " — ".join(x for x in (r["decided_by"], r["decided_on"]) if x)
-                words = (f"<br><span class='src'>&ldquo;{_e(r['verbatim'])}&rdquo;"
-                         + (f" — {_e(who)}" if who else "") + "</span>")
-            rows.append(
-                f"<tr><td>{_e(r['name'])}</td><td>{_e(r['value'])}</td>"
-                f"<td><span class='klass k-{_e(r['class'])}'>{_e(r['class'])}</span>"
-                f"<br><span class='meta'>{_e(r['class_meaning'])}</span></td>"
-                f"<td>{_e(r['basis'])}{words}</td></tr>")
-        parts.append("<table><tr><th>parameter</th><th>value</th><th>class</th><th>basis</th>"
-                     "</tr>" + "".join(rows) + "</table>")
-        parts.append("<p class='meta'>An ADJUDICATED row carries the operator's own words. A "
-                     "row without them is withheld and shown as a defect: the class asserts "
-                     "that a person decided after reading the evidence, and that assertion is "
-                     "not checkable without the words.</p>")
+    # ---------------------------------------------------------------- decision strip
+    n_in, n_kept = d.get("n_in"), d.get("n_kept")
+    pct = d.get("pct_removed")
+    ratio, factor = _evenness(v.get("findings"))
+    cells = [
+        ("Observations in", _fmt(n_in), "before any criterion was applied"),
+        ("Kept", _fmt(n_kept),
+         (f"{100 - float(pct):.1f}% retained" if pct is not None else "")),
+        ("Removed", _fmt(None if n_in is None or n_kept is None else n_in - n_kept),
+         "every one named in the ledger"),
+    ]
+    strip = "".join(
+        f"<div class='cell'><p class='lbl'>{_e(lbl)}</p><p class='big'>{_e(val)}</p>"
+        f"<p class='note'>{_e(note)}</p></div>" for lbl, val, note in cells)
+    strip += ("<div class='cell evenness'><p class='lbl'>Evenness across the design</p>"
+              + (f"<p class='big' style='color:var(--review)'>{ratio:.2f}×</p>"
+                 f"<p class='note'>widest ratio measured, on {_e(factor)}</p>"
+                 if ratio is not None else
+                 "<p class='big'>not measured</p><p class='note'>no gate compared removal "
+                 "across the design</p>")
+              + "</div>")
+    parts.append(f"<div class='decision'>{strip}</div>")
+    if not _stated(n_in) or not _stated(n_kept):
+        parts.append(f"<p class='sub'>{_e(d.get('text') or '')}</p>")
+    parts.append("<p class='sub' style='margin-bottom:0'>A filter that falls harder on one arm "
+                 "of the design puts a technical gradient where the biology is measured. This "
+                 "is the number to read first.</p>")
 
-    # ---------------------------------------------------------------- 3 steps
-    parts.append("<h2>3 · The steps</h2>")
-    for s in doc["steps"]:
-        parts.append("<div class='step'>")
-        parts.append(f"<h3>{_e(s['title'])} <span class='meta'>— {_e(s['status'])}</span></h3>")
-        parts.append(f"<p>{_e(s['purpose'])} <span class='meta'>[{_e(s['purpose_source'])}]"
-                     f"</span></p>")
-        parts.append(f"<p class='meta'>removes: {_e(s['removes'])}</p>")
-        for fig in s["figures"]:
-            uri = figure_uris.get(fig["id"])
-            parts.append("<figure>")
-            if _stated(uri):
-                parts.append(f"<img alt='{_e(fig['id'])}' src='{_e(uri)}'>")
-            else:
-                parts.append(f"<div class='defect'><strong>Figure {_e(fig['id'])} is not "
-                             f"here.</strong> {_e(_text(fig['status'], 'not rendered'))}</div>")
-            cap = (f"<strong>{_e(fig['id'])}</strong> <span class='q'>"
-                   f"{_e(fig['question'])}</span>")
-            if _stated(fig["caption"]):
-                cap += f" — {_e(fig['caption'])}"
-            if fig["source"]:
-                cap += f"<br><span class='src'>source: {_e(fig['source'])}</span>"
-            parts.append(f"<figcaption>{cap}</figcaption></figure>")
-        parts.append("<p><strong>What it found</strong></p>")
-        if not s["found_stated"]:
-            parts.append("<p class='meta'>no findings were recorded for this step.</p>")
-        elif not s["found"]:
-            parts.append("<p class='meta'>none recorded.</p>")
-        else:
-            rows = "".join(f"<tr><td>{_e(f['label'])}</td><td>{_e(f['value'])}</td>"
-                           f"<td class='src'>{_e(f['source'])}</td></tr>" for f in s["found"])
-            parts.append("<table><tr><th>quantity</th><th>value</th><th>source file</th></tr>"
-                         + rows + "</table>")
-        parts.append(_findings_table(s["findings"]))
-        css = "defect" if s["cannot_establish_source"] == "absent" else "cannot"
-        parts.append(f"<div class='{css}'><strong>What this step cannot establish.</strong> "
-                     f"{_e(s['cannot_establish'])} <span class='meta'>"
-                     f"[{_e(s['cannot_establish_source'])}]</span></div>")
-        if s["sources"]:
-            parts.append("<p class='src'>files: " + ", ".join(_e(x) for x in s["sources"])
-                         + "</p>")
-        parts.append("</div>")
+    # ---------------------------------------------------------------- the spine
+    umi_cut = _one_value(_column(per_sample, "umi_floor_proposed"))
+    gene_cut = _one_value(_column(per_sample, "gene_floor_proposed"))
+    mito = [x for x in _column(per_sample, "mito_ceiling_pct") if x is not None]
+    mito_txt = (f"{min(float(m) for m in mito):.2f}–{max(float(m) for m in mito):.2f}%"
+                if mito else "not recorded")
+    rows = [
+        ("Counts per nucleus", "F7", f"≥ {_fmt(umi_cut)}", "UMI floor",
+         "DERIVED · cohort constant"),
+        ("Genes detected", None, f"≥ {_fmt(gene_cut)}", "gene floor",
+         "DERIVED · cohort constant"),
+        ("Mitochondrial %", None, f"≤ {mito_txt}", "mito ceiling", "DERIVED · per library"),
+        ("Where the doublets sat", "F10", "scDblFinder", "doublet call", "DECLARED · per library"),
+        ("What survived, same embedding", "F11", "", "", ""),
+    ]
+    body = []
+    for title, fid, val, label, how in rows:
+        block = figs.get(fid) if fid else None
+        if fid is None:
+            block = {"id": "—", "question": "",
+                     "status": "no figure is produced for this axis; the cut is stated from "
+                               "the per-library table beside it"}
+        cut = _cut(val, label, how) if val else "<div class='cut'></div>"
+        body.append(f"<div class='axis'>{_fig_panel(block, uri(fid) if fid else None, title=title)}"
+                    f"{cut}</div>")
+    parts.append(
+        "<section><div class='head'><h2>What quality control did</h2>"
+        "<p class='sub'>One row per criterion: every library's distribution before the cut and "
+        "what survived it, with the threshold on the rule at the right.</p></div>"
+        f"<div class='spine'>{''.join(body)}</div></section>")
 
-    # ---------------------------------------------------------------- 4 provenance
-    parts.append("<h2>4 · Provenance</h2>")
-    parts.append("<pre>" + "\n".join(_e(line) for line in doc["provenance"]["lines"])
-                 + "</pre>")
-    fresh = doc["provenance"]["freshness"]
-    if fresh["stale"] is True:
-        parts.append("<div class='defect'><strong>STALE.</strong> This artifact is older than "
-                     "its newest input. It is not out of date, it is wrong — and wrong in the "
-                     "one way nobody checks, because it opens, renders and reads exactly like a "
-                     "correct one. Rebuild it before it is shown to anyone.</div>")
-    elif fresh["stale"] is None:
-        parts.append(f"<div class='notice'><strong>Freshness NOT CHECKED.</strong> "
-                     f"{_e(fresh['reason'])}</div>")
-    for c in doc["provenance"]["input_check"]:
-        if c["reasons"]:
-            parts.append(f"<div class='notice'><strong>{_e(c['name'])}</strong><ul class='det'>"
-                         + "".join(f"<li>{_e(r)}</li>" for r in c["reasons"]) + "</ul></div>")
+    # ---------------------------------------------------------------- linear axis + criteria
+    parts.append(
+        "<section><div class='head'><h2>The same distributions on a linear axis</h2>"
+        "<p class='sub'>The log axis shows that two populations exist and where the boundary "
+        "is. The linear axis shows the scale people work in, and how little of the retained "
+        "distribution sits near the cut.</p></div>"
+        f"{_fig_panel(figs.get('F12'), uri('F12'))}</section>")
+    parts.append(
+        "<section><div class='head'><h2>What each criterion removed</h2>"
+        "<p class='sub'>Solid is what only this criterion removed; a criterion that removes "
+        "nothing uniquely is doing no work of its own.</p></div>"
+        f"{_fig_panel(figs.get('F9'), uri('F9'))}</section>")
 
-    # ------------------------------------------- every threshold, per library
-    ps = doc["per_sample"]
-    parts.append("<h2>Every threshold this run derived, per library</h2>")
-    if not ps["stated"]:
-        parts.append("<div class='defect'><strong>Defect.</strong> No per-library threshold "
-                     "table was supplied. Which thresholds vary by library and which are one "
-                     "cohort constant is not derivable from the rest of this document, and it "
-                     "decides how every number in it may be compared.</div>")
-    else:
+    # ---------------------------------------------------------------- inputs and clusters
+    parts.append(
+        "<section><div class='head'><h2>What went in, and what was examined</h2>"
+        "<p class='sub'>Before any threshold: whether the input was raw, how much ambient "
+        "signal was removed and whether evenly, whether the denoiser dropped cells the aligner "
+        "kept, and what was never examined at all.</p></div><div class='grid2'>"
+        + "".join(_fig_panel(figs.get(f), uri(f)) for f in ("F1", "F2", "F3", "F4"))
+        + "</div></section>")
+    parts.append(
+        "<section><div class='head'><h2>Cluster check</h2>"
+        "<p class='sub'>Flags are reported; nothing is removed on them.</p></div>"
+        f"<div class='grid2'>{_fig_panel(figs.get('F5'), uri('F5'))}"
+        f"{_fig_panel(figs.get('F8'), uri('F8'))}</div></section>")
+
+    # ---------------------------------------------------------------- per-library thresholds
+    cols = per_sample.get("columns") or []
+    rws = per_sample.get("rows") or []
+    if cols and rws:
+        head = "<tr><th>library</th>" + "".join(
+            f"<th>{_e(c.get('label', c.get('key', '')))}"
+            f"<span class='scope'>{_e(c.get('scope', ''))}</span></th>" for c in cols) + "</tr>"
+        trs = []
+        for r in rws:
+            tds = [f"<td>{_e(str(r.get('sample', '')))}</td>"]
+            for c in cols:
+                key = c.get("key")
+                val = r.get(key)
+                mark = ""
+                if key == "mito_ceiling_pct" and str(r.get("mito_clamped", "")).lower()                         in ("true", "upper", "lower", "1"):
+                    mark = " ▲"
+                cls = " class='flag'" if mark else ""
+                tds.append(f"<td{cls}>{_e('' if val is None else str(val))}{mark}</td>")
+            trs.append("<tr>" + "".join(tds) + "</tr>")
         parts.append(
-            f"<p>{len(ps['rows'])} librar{'y' if len(ps['rows']) == 1 else 'ies'}, "
-            f"<strong>{ps['n_per_library']}</strong> quantities derived per library and "
-            f"<strong>{ps['n_cohort']}</strong> proposed once for the cohort. A cohort constant "
-            f"repeats down its column on purpose: two libraries can only be compared by someone "
-            f"who can see which numbers differ because the libraries do.</p>")
-        head = ("<tr><th>library</th>"
-                + "".join(f"<th>{_e(c['label'])}</th>" for c in ps["columns"]) + "</tr>")
-        scope = ("<tr><td class='src'>scope</td>"
-                 + "".join(f"<td class='src'>{_e(c['scope'])}</td>" for c in ps["columns"])
-                 + "</tr>")
-        body = "".join(
-            "<tr><td><strong>" + _e(r["sample"]) + "</strong></td>"
-            + "".join(
-                "<td class='"
-                + ("ns" if r["cells"][c["key"]] == NOT_STATED else "")
-                + f"'>{_e(r['cells'][c['key']])}</td>" for c in ps["columns"])
-            + "</tr>" for r in ps["rows"])
-        parts.append("<div class='scroll'><table class='wide'>" + head + scope + body
-                     + "</table></div>")
-        constant = [c for c in ps["columns"] if c["key"] not in ps["varying"]]
-        if constant:
-            parts.append("<p class='src'>identical in every library: "
-                         + _e(", ".join(c["label"] for c in constant)) + "</p>")
-        parts.append(f"<p class='src'>source: {_e(ps['source'])}</p>")
+            "<section><div class='head'><h2>Every threshold, per library</h2>"
+            "<p class='sub'>Which numbers differ because the libraries differ, and which are "
+            "one constant repeated. A cohort constant repeats down its column on purpose.</p>"
+            "</div><div class='scroll'><table><thead>" + head + "</thead><tbody>"
+            + "".join(trs) + "</tbody></table></div>"
+            + (f"<p class='sub' style='margin-top:9px'>▲ a declared bound decided this ceiling, "
+               f"not the library's own distribution. Source: "
+               f"<span class='mono'>{_e(str(per_sample.get('source', '')))}</span></p>")
+            + "</section>")
 
-    # ---------------------------------------------------------------- 5 open items
-    parts.append("<h2>5 · Open items</h2>")
-    if not doc["open_items"]["stated"]:
-        parts.append("<div class='defect'><strong>Defect.</strong> No open-items list was "
-                     "supplied. A missing section and an empty one are not the same claim: this "
-                     "report cannot say that nothing is unresolved.</div>")
-    elif not doc["open_items"]["items"]:
-        parts.append("<p>none</p>")
-    else:
-        rows = "".join(f"<tr><td>{_e(i['item'])}</td><td>{_e(i['closes_when'])}</td>"
-                       f"<td>{_e(i['blocked_on'])}</td></tr>"
-                       for i in doc["open_items"]["items"])
-        parts.append("<table><tr><th>open item</th><th>what would close it</th>"
-                     "<th>blocked on</th></tr>" + rows + "</table>")
+    # ---------------------------------------------------------------- what was decided
+    # build_parameter_table() returns {"stated": bool, "rows": [...]}; the rows are one key
+    # INSIDE it, and iterating the block itself yields its key strings.
+    params = (doc.get("parameters") or {}).get("rows") or []
+    if params:
+        rows_p = "".join(
+            f"<tr><td>{_e(str(p.get('name', '')))}</td>"
+            f"<td>{_e(str(p.get('value', '')))}</td>"
+            f"<td><span class='klass k-{_e(str(p.get('class', '')))}'>"
+            f"{_e(str(p.get('class', '')))}</span></td>"
+            f"<td>{_e(str(p.get('basis', '') or p.get('verbatim', '')))}</td></tr>"
+            for p in params)
+        parts.append(
+            "<section><div class='head'><h2>What was decided, and by whom</h2>"
+            "<p class='sub'>DERIVED is computed from this dataset. DECLARED was supplied before "
+            "seeing the result. ADJUDICATED means a person decided after seeing it, in their own "
+            "words.</p></div><div class='scroll'><table><thead><tr><th>parameter</th>"
+            "<th>value</th><th>class</th><th>basis</th></tr></thead><tbody>"
+            + rows_p + "</tbody></table></div></section>")
 
-    # ---------------------------------------------------------------- defects appendix
-    if doc["defects"]:
-        parts.append("<h2>Defects and notices in this report</h2>")
-        rows = "".join(f"<tr><td>{_e(d['severity'])}</td><td class='src'>{_e(d['where'])}</td>"
-                       f"<td>{_e(d['what'])}</td></tr>" for d in doc["defects"])
-        parts.append("<table><tr><th>kind</th><th>where</th><th>what is missing</th></tr>"
-                     + rows + "</table>")
+    # ---------------------------------------------------------------- limits
+    limits = "".join(
+        f"<div class='limit'><b>{_e(s.get('title', s.get('key', '')))}</b>"
+        f"<span>{_e(s.get('cannot_establish', ''))}</span></div>"
+        for s in steps if s.get("cannot_establish"))
+    if limits:
+        parts.append(
+            "<section><div class='head'><h2>What this run could not establish</h2>"
+            "<p class='sub'>Each step states its own limit. An omitted limit reads as no "
+            "limit.</p></div>"
+            f"<div class='limits'>{limits}</div></section>")
 
-    parts.append("<footer>Self-contained: every figure is embedded, no request leaves this "
-                 "file. Every number here is also in report.json beside it.</footer>")
+    # ---------------------------------------------------------------- findings
+    refuse, review = v.get("refuse") or [], v.get("review") or []
+    unrec = v.get("unrecognised") or []
+    parts.append(
+        f"<section><div class='head'><h2>Findings · {len(review)} review, {len(refuse)} "
+        f"refusal{'' if len(refuse) == 1 else 's'}, {v.get('n_ok', 0)} ok</h2></div>")
+    if not v.get("gates_supplied"):
+        parts.append("<div class='defect'><b>Defect.</b> No gate findings were supplied. This "
+                     "document cannot state that the run passed; only that nobody recorded "
+                     "whether it did.</div>")
+    for f in list(refuse) + list(review) + list(unrec):
+        detail = ""
+        if f.get("detail"):
+            detail = "<ul>" + "".join(f"<li>{_e(str(x))}</li>" for x in f["detail"]) + "</ul>"
+        parts.append(
+            f"<details open><summary><span class='chip c-{_e(str(f.get('severity', '')))}'>"
+            f"{_e(str(f.get('severity', '')))}</span>{_e(str(f.get('check', '')))}</summary>"
+            f"<div class='body'>{_e(str(f.get('message', '')))}{detail}"
+            f"<p class='src mono'>{_e(str(f.get('step', '')))}</p></div></details>")
+    ok_rows = [f for f in (v.get("findings") or [])
+               if str(f.get("severity", "")).lower() == "ok"]
+    if ok_rows:
+        parts.append("<details><summary><span class='chip c-ok'>ok</span>"
+                     f"{len(ok_rows)} check(s) that passed</summary><div class='body'><ul>"
+                     + "".join(f"<li><b>{_e(str(f.get('check', '')))}</b> — "
+                               f"{_e(str(f.get('message', '')))}</li>" for f in ok_rows)
+                     + "</ul></div></details>")
+    parts.append("</section>")
+
+    # ---------------------------------------------------------------- provenance
+    prov_rows = "".join(f"<dt>{_e(str(k))}</dt><dd>{_e(str(val))}</dd>"
+                        for k, val in prov.items() if not isinstance(val, (dict, list)))
+    parts.append("<section><div class='head'><h2>Provenance</h2></div>"
+                 f"<dl class='prov'>{prov_rows}"
+                 f"<dt>wall clock</dt><dd>{_e(str(run.get('elapsed_s', '')))} s over "
+                 f"{_e(str(run.get('jobs', '')))} job(s)</dd></dl></section>")
+
+    # ---------------------------------------------------------------- open items and defects
+    open_items = doc.get("open_items") or []
+    if open_items:
+        parts.append("<section><div class='head'><h2>Open items</h2></div><div class='card'><ul>"
+                     + "".join(f"<li>{_e(str(o))}</li>" for o in open_items)
+                     + "</ul></div></section>")
+    if doc.get("defects"):
+        rows_d = "".join(
+            f"<tr><td>{_e(str(x.get('severity', '')))}</td><td>{_e(str(x.get('where', '')))}</td>"
+            f"<td>{_e(str(x.get('what', '')))}</td></tr>" for x in doc["defects"])
+        parts.append(
+            "<section><div class='head'><h2>Defects and notices in this report</h2>"
+            "<p class='sub'>What this document could not state, and why. A report that omits a "
+            "required block reads exactly like a complete one.</p></div>"
+            "<div class='scroll'><table><thead><tr><th>kind</th><th>where</th>"
+            "<th>what is missing</th></tr></thead><tbody>" + rows_d
+            + "</tbody></table></div></section>")
+
+    parts.append("<footer>Self-contained: every figure is embedded and no request leaves this "
+                 "file. Every number here is also in <span class='mono'>report.json</span> "
+                 "beside it.</footer>")
     parts.append("</div></body></html>")
     return "".join(parts)
 

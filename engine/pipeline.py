@@ -414,14 +414,13 @@ class Pipeline:
                     "task_seconds_total": round(
                         sum((r.seconds or 0) for r in self.results_by_key.values()), 1),
                     "jobs": self.jobs},
-            "deliverable": {
-                "text": (f"STOPPED at {stopped_after}" if stopped_after else
-                         "no deliverable was written; this run measured and did not apply"),
-                "stopped_after": stopped_after,
-                "stopped_because": stopped or (
-                    first_line(self.results_by_key[stopped_after].message)
-                    if stopped_after and self.results_by_key.get(stopped_after) else None),
-            },
+            # WHAT THE RUN PRODUCED, from the step that produced it. This said "no deliverable
+            # was written; this run measured and did not apply" on every run that did not stop -
+            # including an apply run that had just written 117,021 nuclei to disk, because the
+            # text was chosen from `stopped_after` alone and never consulted step 7 at all. The
+            # counts are what the report's first block is built from, so a run's headline figure
+            # was a sentence denying the run had produced anything.
+            "deliverable": self._deliverable_block(stopped, stopped_after),
             "gates": list(self.findings),
             "steps": self._step_records(),
             # ASSEMBLED HERE, not by the report task, because the report is built from TWO call
@@ -443,6 +442,30 @@ class Pipeline:
                             for k in sorted(stat) if stat[k] == "blocked"][:20]
                            or ["none recorded"]),
         }
+
+    def _deliverable_block(self, stopped, stopped_after) -> dict:
+        """What this run produced: the counts from step 7, or why there are none.
+
+        `n_in` and `n_kept` are handed over rather than a sentence, so the report composes its
+        own wording and its headline block has numbers to show. A run that stopped, or one in a
+        mode that applies nothing, says so - and says which, because "nothing was removed" and
+        "the removal never ran" are different facts about a cohort.
+        """
+        because = stopped or (
+            first_line(self.results_by_key[stopped_after].message)
+            if stopped_after and self.results_by_key.get(stopped_after) else None)
+        block = {"stopped_after": stopped_after, "stopped_because": because,
+                 "unit": "observations"}
+        r = self.results_by_key.get("07_apply")
+        m = (getattr(r, "metrics", None) or {}) if r is not None else {}
+        n_in, n_kept = m.get("n_in"), m.get("n_delivered")
+        if n_in is not None and n_kept is not None:
+            block["n_in"], block["n_kept"] = n_in, n_kept
+            return block
+        block["text"] = (f"STOPPED at {stopped_after}" if stopped_after else
+                         "no deliverable was written: step 7 recorded no counts, so this run "
+                         "measured and did not apply")
+        return block
 
     def _figures_block(self) -> dict:
         """The figure data this run's tables can support, and a reason for every figure they

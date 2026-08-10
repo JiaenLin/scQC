@@ -42,10 +42,31 @@ Three things this report does that a metrics report structurally cannot:
 
 ---
 
-## Layout — five sections, in this order
+## Layout
 
-The order is the argument: the verdict first, because a reader who stops after ten seconds should
-stop having read the thing that matters most.
+The order is the argument: a reader who stops after ten seconds should stop having read the thing
+that matters most. What that is turned out not to be the verdict.
+
+The document opens with a **masthead** (cohort, library count, mode, verdict chip) and a
+**decision strip**: observations in, kept, removed, and *evenness across the design* — the widest
+removal ratio any gate measured between arms of the design. That last figure leads because it is
+the one a conventional QC report does not carry, and the one that decides whether a technical
+gradient has been laid down where the biology is measured.
+
+Then **what quality control did**: one row per criterion, each showing the distribution before the
+cut and what survived it, with the threshold and how it was arrived at (DERIVED / DECLARED, per
+library / cohort constant) on a rule down the right. A criterion with no figure states the cut
+anyway and says no figure was produced for that axis.
+
+After the spine: the same distributions on a linear axis; what each criterion removed uniquely;
+what went in and what was examined; the cluster check; every threshold per library; what was
+decided and by whom; what this run could not establish; the findings; provenance; open items; and
+the report's own defects.
+
+**A section is never omitted because it is empty.** An absent block reads exactly like a block
+nobody needed, so each states what it could not establish instead.
+
+The sections below specify the content each block carries.
 
 ### 1 · Verdict
 
