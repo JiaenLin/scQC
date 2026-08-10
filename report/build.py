@@ -863,7 +863,15 @@ def _one_step(key, title, purpose, removes, figures, entry, payload, verdict_blo
         block = {"id": fid, "question": FIGURE_QUESTIONS.get(fid, ""),
                  "caption": "", "source": "", "status": ""}
         if spec is MISSING:
-            block["status"] = "NOT PRODUCED — no data or image was supplied for this figure"
+            # A reason, when the assembler gave one. "NOT PRODUCED" alone reads as an oversight;
+            # "NOT PRODUCED — step 5 fits a KDE, takes the minimum and discards the curve" tells
+            # the reader it is a gap in what the pipeline records, and tells the next person
+            # exactly what to change to close it.
+            fig_notes = _get(payload, "figure_notes")
+            reason = "" if fig_notes is MISSING else _text(_get(fig_notes, fid), "")
+            block["status"] = ("NOT PRODUCED — " + reason if reason
+                               else "NOT PRODUCED — no data or image was supplied for this "
+                                    "figure")
             _defect(defects, where, f"figure {fid} is expected at this step and nothing was "
                                     f"supplied for it.", severity="notice" if not ran
                     else "defect")

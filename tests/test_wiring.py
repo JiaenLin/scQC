@@ -365,6 +365,13 @@ else:
 #
 # Two builders of one document will always drift. So the payload has exactly one source, and any
 # call to build_report() whose payload is not report_payload() is that drift starting again.
+#
+# A payload READ BACK from reports/payload.json is accepted, and is not a second builder: that
+# file is written by the report task from the payload report_payload() returned, so replaying it
+# reproduces the same document rather than assembling a competing one. `scqc report` rebuilds a
+# finished run this way, which is what makes a caption or a figure iterable without re-running a
+# pipeline. The distinction the check still enforces is assembling a payload versus reloading
+# one - a hand-built dict named `payload` fails here exactly as before.
 _builders = []
 for _py in sorted((ROOT / "engine").glob("*.py")) + [ROOT / "scqc_cli.py"]:
     for _n in ast.walk(ast.parse(_py.read_text(encoding="utf-8"))):
@@ -383,8 +390,8 @@ for _py in sorted((ROOT / "engine").glob("*.py")) + [ROOT / "scqc_cli.py"]:
             _ok = _fn is not None and any(
                 isinstance(a, ast.Assign) and any(
                     isinstance(t, ast.Name) and t.id == _arg.id for t in a.targets)
-                and "report_payload" in (ast.get_source_segment(
-                    _py.read_text(encoding="utf-8"), a) or "")
+                and any(k in (ast.get_source_segment(_py.read_text(encoding="utf-8"), a) or "")
+                        for k in ("report_payload", "payload.json"))
                 for a in ast.walk(_fn))
         _builders.append((f"{_py.name}:{_n.lineno}", _ok))
         if not _ok:

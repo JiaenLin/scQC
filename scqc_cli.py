@@ -327,6 +327,54 @@ def cmd_cluster_preflight(a) -> int:
     return code_for(emit(findings, a.json))
 
 
+def cmd_report(a) -> int:
+    """Rebuild a finished run's report from the files in its own results directory.
+
+    The pipeline writes the report at the end of a run, which means a change to the report or to
+    the figures used to need the whole run again - hours, to redraw a plot. This reads the
+    tables the run already wrote and rebuilds from them, so the report is iterable on its own.
+
+    It rebuilds ONLY what the directory can support: the payload's steps and per-library table
+    come from the existing report.json, and the figures from the tables. Nothing is recomputed
+    from the matrices, so a number in the rebuilt report is the same number as in the original.
+    """
+    from report.build import build_report
+    from report.collect import collect as collect_figures
+
+    results = Path(a.results).expanduser().resolve()
+    reports, tables = results / "reports", results / "tables"
+    source = reports / "payload.json"
+    if not tables.is_dir():
+        print(f"scqc: {tables} does not exist - not a results directory from `scqc run`")
+        return 2
+    if not source.exists():
+        # NOT report.json. That file is the rendered document, and building a document from a
+        # document silently produces a report with empty steps rather than an error.
+        print(f"scqc: {source} does not exist, so there is nothing to rebuild from. It is "
+              f"written by the report step; a run finished before that step wrote it has only "
+              f"report.json, which is the rendered document and not a payload.")
+        return 2
+
+    # Read back, not rebuilt: this is the payload report_payload() produced during the run, so
+    # the document below is the same one that run would have written, with the figures added.
+    payload = json.loads((reports / "payload.json").read_text(encoding="utf-8"))
+    figures, notes = collect_figures(tables, samplesheet=a.samplesheet)
+    payload["figures"] = figures
+    payload["figure_notes"] = notes
+    print(f"figures assembled: {len(figures)}  ({', '.join(sorted(figures)) or 'none'})")
+    for fid in sorted(notes):
+        print(f"  {fid} NOT PRODUCED - {notes[fid]}")
+    source.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
+    doc = build_report(payload, reports / "qc_report.html", reports / "report.json")
+    rendered = sum(1 for v in (doc.get("figures", {}).get("index") or {}).values()
+                   if v.get("rendered"))
+    print(f"rendered {rendered} figure(s) into {reports / 'qc_report.html'}")
+    for fid, entry in sorted((doc.get("figures", {}).get("index") or {}).items()):
+        if not entry.get("rendered"):
+            print(f"  {fid} did not draw: {entry.get('source')}")
+    return 0
+
+
 def cmd_selftest(a) -> int:
     suites = sorted((ROOT / "tests").glob("test_*.py")) + [ROOT / "tests" / "adversarial.py"]
     passed, failed, skipped = [], [], []
@@ -578,6 +626,13 @@ def build_parser() -> argparse.ArgumentParser:
     r2.add_argument("--jobs", "-j", type=int, default=0,
                     help="independent tasks to run at once (0 = auto: cores, capped at 16)")
     r2.set_defaults(fn=cmd_run)
+
+    rp = sub.add_parser("report",
+                        help="rebuild the report of a finished run, from that run's own files")
+    rp.add_argument("results", help="a results/<digest> directory written by `scqc run`")
+    rp.add_argument("--samplesheet", default=None,
+                    help="the run's samplesheet, for the design panel of F2")
+    rp.set_defaults(fn=cmd_report)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")
     s.add_argument("-v", "--verbose", action="store_true"); s.set_defaults(fn=cmd_selftest)

@@ -22,6 +22,7 @@ where nobody will look for it.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from .pipeline import step_module
@@ -674,17 +675,40 @@ def _round(v, n):
 
 def _report(task, pipeline, log):
     from report.build import build_report
+    from report.collect import collect as collect_figures
 
     # report_payload() assembles the per-library table and writes its CSV, because scqc_cli
     # rebuilds this payload after the graph finishes and would otherwise write over anything
     # added here. This step reports the file; it does not produce it.
     payload = pipeline.report_payload(stopped=None)
     payload.update(task.params.get("extra", {}))
+
+    # THE FIGURES. Everything below this line existed and was never called: report/figures.py
+    # draws twelve, report/build.py renders whatever the payload describes, and the payload
+    # described none of them - so every finished run produced a report that printed "NOT
+    # PRODUCED" twelve times over a complete set of tables.
+    figures, figure_notes = collect_figures(
+        _tables(pipeline), samplesheet_rows=pipeline.samples)
+    payload.setdefault("figures", {}).update(figures)
+    payload["figure_notes"] = figure_notes
+    print(f"    figures: {len(figures)} assembled ({', '.join(sorted(figures))})")
+    for fid in sorted(figure_notes):
+        print(f"      {fid} not produced: {figure_notes[fid]}")
+
     per_sample = payload.get("per_sample") or {}
     out_html = pipeline.results / "reports" / "qc_report.html"
     out_json = pipeline.results / "reports" / "report.json"
+
+    # The PAYLOAD, beside the document built from it. report.json is the rendered document and
+    # cannot be fed back in; without the payload, changing a caption or a figure meant running
+    # the whole pipeline again to redraw it. With it, `scqc report <results>` rebuilds from the
+    # run's own files in seconds and cannot reach the matrices, so no number can change.
+    out_payload = pipeline.results / "reports" / "payload.json"
+    out_payload.parent.mkdir(parents=True, exist_ok=True)
+    out_payload.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
+
     build_report(payload, out_html, out_json)
-    outputs = [str(out_html), str(out_json)]
+    outputs = [str(out_html), str(out_json), str(out_payload)]
     if per_sample.get("source"):
         outputs.append(str(per_sample["source"]))
     return {"outputs": outputs,
