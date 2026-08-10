@@ -2181,13 +2181,13 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     #
     #   a valley is a boundary BETWEEN TWO MODES, so it needs both modes present. Pre-cutting at
     #   a count floor deletes most of the debris mode, and the minimum then lands inside the
-    #   nucleus mode or disappears - measured, on this cohort: one library's UMI valley moves from
-    #   279 to 1,018 and another's stops existing.
+    #   nucleus mode or disappears - measured on the calibration cohort: one library's UMI valley
+    #   moves from 279 to 1,018 and another's stops existing.
     #
     #   a PERCENTAGE needs a denominator big enough to mean something. A 30-UMI droplet with 10
     #   mitochondrial counts reads 33%, and a fence built on Q3 is set by exactly those. Over
-    #   every called barcode this cohort's ceilings come out 1.14x-1.71x higher than over the
-    #   floored population, in 7 of 10 libraries, and always higher.
+    #   every called barcode the calibration cohort's ceilings come out 1.14x-1.71x higher than
+    #   over the floored population, in 7 of 10 libraries, and always higher.
     #
     # This ran without the floor until 2026-08-10 and produced ceilings for a population the
     # ceiling is never applied to: every barcode it added is removed by the count floor first.

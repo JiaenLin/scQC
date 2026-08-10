@@ -181,9 +181,10 @@ class PBSExecutor:
     job running with nothing watching it.
 
     THE JOB WRITES ITS OWN LOG; PBS DOES NOT DELIVER IT. `#PBS -o` names a path *on the host that
-    submitted the job*, so when the orchestrator is itself a job on compute1002 and a task lands on
-    compute1001, PBS must copy the file between two compute nodes after the job ends. On this
-    cluster that copy fails and nothing says so: `Exit_status = 0`, the work correct on disk, and
+    submitted the job*, so when the orchestrator is itself a job on one node and a task lands on
+    another, PBS must copy the file between two compute nodes after the job ends. On the cluster
+    this was found on that copy fails and nothing says so: `Exit_status = 0`, work correct on disk,
+    and
     an output file that never appears. It failed intermittently - only for tasks that happened to
     land on a different node from the orchestrator - which reads exactly like a staging delay and
     is not one. Waiting cannot fix it, because there is nothing on the way.

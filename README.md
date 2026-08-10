@@ -240,19 +240,23 @@ it has caught came from calling a function with a hostile input and looking at w
 
 ## Status
 
-**0.0.1-dev.** Being precise about this, because a QC tool that overstates itself does damage
-quietly. Every row below was checked against the tree rather than remembered.
+**0.1.0.** Being precise about this, because a QC tool that overstates itself does damage
+quietly — and one that *understates* itself is also wrong, which half this table was until the
+driver it says does not exist ran a cohort end to end. Every row below was checked against the
+tree rather than remembered.
 
 | | |
 |---|---|
-| ✅ **Built and tested** | The decision layer: each step's policy, contract, threshold derivation and gate, importable as Python, plus the `scqc` CLI over it. `scqc selftest` on a clean clone reports **10 passed, 1 skipped** — the skip is `test_audit_ambient.py`, which needs a cohort (`COHORT_DIR`) and is not evidence either way. An acceptance harness whose tier-1 checkpoints must reproduce exactly — it needs a dataset you supply. |
+| ✅ **Built and tested** | The decision layer: each step's policy, contract, threshold derivation and gate, importable as Python, plus the `scqc` CLI over it. `scqc selftest` on a clean clone reports **15 passed, 0 failed, 1 skipped** — the skip needs pandas or a cohort (`COHORT_DIR`) and is not evidence either way. |
 | ✅ **Built** | The `scqc` command, as **per-step subcommands** over tables you supply: `validate`, `verify`, `gate-cells`, `doublet-health`, `quality`, `cluster-preflight`, `selftest`. Exit code 2 on a refusal, `--json` for structured output. |
 | ✅ **Built** | Recoverable removal. Step 7 pairs each removed observation with the criteria that fired on it, refuses if that record and the mask disagree, and writes it as a CSV any reader can open. |
-| ⚠️ **Not built — the two-mode driver** | There is no `--mode evidence` / `--mode apply` and nothing runs the steps in sequence. The `scqc --project … --mode …` lines in this README, and the ones `setup/init_project.sh` writes into a generated project README, describe an interface rather than a program. Running a study still means calling the steps yourself, in order. |
-| ⚠️ **Not built — no report** | Nothing writes an HTML report, a `report.json`, a figure, or a `decisions.template.yml`; the CLI prints to stdout. The five sections, the nine figures F1–F9 and the JSON companion in [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) are a **specification** of what the report must be. |
-| ⚠️ **Not built — the execution layer** | No step invokes an aligner, a denoiser or a doublet caller, and nothing reads a count matrix. scQC judges numbers you computed elsewhere. **This is not a turnkey end-to-end pipeline.** The one exception is `conf/env/build_reference.sh`, a standalone helper that does call `celescope utils mkgtf` to build and verify a reference; it is wired to no step. |
-| ⚠️ **Not built — freshness is not enforced** | Nothing compares an artifact's timestamp against its inputs. The refusal described under *Provenance* in REPORT_DESIGN.md does not exist. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
-| ⚠️ **Not built — decisions are not read** | No code reads, hashes or validates a `decisions.yml`. Approvals are passed to step 7 as arguments today. |
+| ✅ **Built, and run end to end** | The two-mode driver. `scqc run --project … --mode evidence\|apply` builds the task graph and runs it, locally or on PBS with one job per task. A ten-library cohort completes as 47 tasks with nothing reused. In `evidence` mode the apply task is **not placed in the graph at all**, so there is no code path from it to a removal. |
+| ✅ **Built** | The execution layer. Steps invoke the aligner, the denoiser, the doublet caller and the analysis stack out of process, each under its own interpreter, and read count matrices through the adapters. Versions are obtained by asking the tool, never read from a lockfile. |
+| ✅ **Built** | The report. Every run writes `qc_report.html` and `report.json`, including a per-library table of every threshold the run derived with each column marked per-library or cohort constant. The report **audits itself**: anything the payload should have carried and did not is a defect counted on its own front page. |
+| ✅ **Built** | Decisions are read. `decisions.yml` is parsed and validated, and `--mode apply` refuses on a missing or incomplete one, naming every problem at once rather than one per run. |
+| ⚠️ **Not built — the figures** | `report/figures.py` exists and the report expects F1–F9, but no step supplies one. Each absence is reported as a defect rather than omitted. The five sections and the nine figures in [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) remain a specification. |
+| ⚠️ **Not fed — freshness** | `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be current. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
+| ⚠️ **Not built — the deliverable object** | Step 7 validates the decisions, runs its pre-flight, and then refuses: there is no combined object for it to filter. **Nothing in this pipeline has ever removed an observation, in either mode.** |
 | ⚠️ **Not measured** | Run-to-run tolerance for the stochastic steps. Recorded as `UNMEASURED`; the pipeline will not assert a tolerance it has not measured. |
 | ⚠️ **n = 1 cohort** | One tissue, one species, one platform. Every threshold is an existence proof, not a range. See [CALIBRATION.md](CALIBRATION.md). |
 

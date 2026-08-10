@@ -37,3 +37,8 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+
+# The blind-test handover. It names the calibration cohort, its libraries, its host and
+# its numbers, none of which belong in a public general-purpose pipeline. It lives with the
+# private harness that produced it.
+HANDOVER.md

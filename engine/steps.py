@@ -874,8 +874,9 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
     with open(p, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         # `pop_floor_umi` and `pop_n_all` are not decoration. A ceiling means nothing without the
-        # population it was taken over, and the whole disagreement with the reference study was
-        # this column being absent on both sides.
+        # population it was taken over: two implementations of the same published rule, applied to
+        # the same libraries, disagreed on 7 of 10 ceilings for no other reason than this column
+        # being absent on both sides, and neither could tell which one was different.
         w.writerow(["sample", "n", "median", "q1", "q3", "iqr", "derived", "ceiling", "clamped",
                     "iqr_mult", "assay", "bound_lo", "bound_hi",
                     "pop_floor_umi", "pop_n_all_called"])
