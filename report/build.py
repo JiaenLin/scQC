@@ -144,13 +144,13 @@ STEPS = (
     ("03_light_floor", "3 · light floor",
      "technical floor for doublet scoring - not a quality filter", "nothing", ("F4",)),
     ("04_doublets", "4 · doublets",
-     "score per sample, before quality filtering; flag only", "nothing", ("F5",)),
+     "score per sample, before quality filtering; flag only", "nothing", ("F5", "F10")),
     ("05_quality", "5 · quality",
-     "derive count floors and mitochondrial ceiling", "nothing", ("F6", "F7")),
+     "derive count floors and mitochondrial ceiling", "nothing", ("F6", "F7", "F12")),
     ("06_cluster_check", "6 · cluster check",
      "per-cluster flags: depth, mitochondrial, markers, doublet", "nothing", ("F8",)),
     ("07_apply", "7 · apply", "pre-flight, verify approval, remove",
-     "YES - the only step in the pipeline that removes anything", ("F9",)),
+     "YES - the only step in the pipeline that removes anything", ("F9", "F11")),
 )
 
 #: The question each figure answers, from docs/REPORT_DESIGN.md. Printed with the figure so a

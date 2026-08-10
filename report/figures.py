@@ -1267,8 +1267,11 @@ def fig_f9_criterion_contributions(per_criterion, *, n_removed=None, n_in=None,
                                    dpi: int = DEFAULT_DPI):
     """F9 - what did each criterion remove UNIQUELY?
 
-    `per_criterion` maps a criterion to `{"unique": n, "shared": n}` - the shape
-    `criterion_contributions()` returns. A criterion whose removals are all shared with another
+    `per_criterion` maps a criterion to `{"unique": n, "shared": n}` - which is the
+    `"per_criterion"` ENTRY of what `criterion_contributions()` returns, not its return value.
+    That distinction is written out because passing the return value straight in fails here as
+    `'int' object has no attribute 'get'`, having iterated `n_removed` as a criterion name. A
+    criterion whose removals are all shared with another
     removed nothing on its own, and a total-only bar chart cannot show that; it is the number
     that decides whether dropping a criterion would change the deliverable at all.
 

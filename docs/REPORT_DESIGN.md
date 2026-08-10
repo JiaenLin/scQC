@@ -149,7 +149,7 @@ a distribution nobody drew.
 | F9 | 7 apply | what did each criterion remove *uniquely*? | unique vs shared contribution per criterion |
 | F10 | 4 doublets | where in the manifold did the doublets sit? | one embedding per library, doublet calls coloured |
 | F11 | 7 apply | did the removed nuclei leave as a population, or scattered? | **the same embeddings**, removed nuclei coloured |
-| F12 | 5 quality | the same distributions, on the scale people work in | F7's data on a linear axis, with the share above the cap stated |
+| F12 | 5 quality | the same count distributions, on the scale people work in | F7's data on a linear axis, with the share above the cap stated |
 
 **F2 and F6 are the two that matter most.** F2 is the only figure that can show a technical
 removal has become an apparent biological difference. F6 is the only one that shows a derived

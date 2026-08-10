@@ -226,10 +226,13 @@ def _f9(tables: Path, n_in, n_removed) -> dict:
         rows = [(r.get("identifier"),
                  [c for c in criteria if _flag(r.get(c)) or str(r.get(c)).strip() == "1"])
                 for r in reader]
-    per_criterion = figmod.criterion_contributions(rows, criteria=criteria)
-    data = {"per_criterion": per_criterion}
-    if n_removed is not None:
-        data["n_removed"] = n_removed
+    # criterion_contributions() returns {"per_criterion": {...}, "n_removed": n,
+    # "n_multi_criterion": n} - the mapping is one key INSIDE it, not the return value. Passing
+    # the whole thing through made F9 iterate "n_removed" as though it were a criterion and die
+    # on `int.get`, which is what it looks like when a docstring describes the nested shape.
+    contrib = figmod.criterion_contributions(rows, criteria=criteria)
+    data = {"per_criterion": contrib["per_criterion"],
+            "n_removed": n_removed if n_removed is not None else contrib["n_removed"]}
     if n_in is not None:
         data["n_in"] = n_in
     return data
@@ -288,7 +291,6 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     _try("F2", "tables/ambient_summary.csv", lambda: _f2(tables, sheet))
     _try("F3", "tables/cell_calls.csv", lambda: _f3(tables))
     _try("F8", "tables/cluster_profile.csv", lambda: _f8(tables))
-    _try("F9", "tables/removal_ledger.csv", lambda: _f9(tables, n_in, n_removed))
 
     if samples:
         try:
@@ -303,5 +305,11 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
              lambda: _f4(percell, floors))
         _try("F7", src, lambda: _f7(percell, umi_cut, scale="log", fig_id="F7"))
         _try("F12", src, lambda: _f7(percell, umi_cut, scale="linear", fig_id="F12"))
+
+    # After the per-cell tables, because that is where the denominator comes from: F9 draws each
+    # criterion's unique removals against the population they were removed FROM, and a bar chart
+    # with no denominator cannot say whether a criterion removed much or little.
+    n_considered = sum(len(r) for r in percell.values()) if percell else n_in
+    _try("F9", "tables/removal_ledger.csv", lambda: _f9(tables, n_considered, n_removed))
 
     return figures, notes

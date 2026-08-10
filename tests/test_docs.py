@@ -118,6 +118,41 @@ for name in ("docs/FILTERS.md", "docs/OUTPUTS.md"):
     if not ok:
         fails.append(f"{name}: exists={exists}, linked from README={linked}.")
 
+# ---- docs/REPORT_DESIGN.md assigns every figure to a step; the code must put it there.
+#
+# The design document assigned F10 to step 4, F11 to step 7 and F12 to step 5. `STEPS` in
+# report/build.py declared F1..F9 and stopped, and a step displays only the ids it declares - so
+# those three were specified, implemented, assembled, RENDERED, and shown to nobody. The report
+# was not wrong about them; it never mentioned them, which is the failure a reader cannot detect,
+# because an absent figure reads like a figure nobody designed.
+DESIGN = ROOT / "docs" / "REPORT_DESIGN.md"
+if not DESIGN.exists():
+    fails.append(f"{DESIGN} does not exist; it defines the report's figures.")
+else:
+    from report.build import FIGURE_QUESTIONS, STEPS
+
+    declared = {fid: key for key, _t, _p, _r, ids in STEPS for fid in ids}
+    rows = re.findall(r"^\|\s*(F\d+)\s*\|\s*(\d+)\s+[^|]*\|\s*([^|]+?)\s*\|",
+                      DESIGN.read_text(encoding="utf-8"), re.MULTILINE)
+    if not rows:
+        fails.append("REPORT_DESIGN.md: no figure rows matched; this check tests nothing.")
+    for fid, step_no, question in rows:
+        where = declared.get(fid)
+        ok = where is not None and where.startswith(f"{int(step_no):02d}_")
+        print(f"  {'ok    ' if ok else 'DRIFT '} {fid:<4} doc: step {step_no:<2} "
+              f"code: {where or 'NO STEP DECLARES IT'}")
+        if not ok:
+            fails.append(f"{fid}: REPORT_DESIGN.md assigns it to step {step_no}; "
+                         f"report.build.STEPS declares it at {where or 'no step at all'}. A "
+                         f"figure no step declares is never displayed, however well it draws.")
+        # Markdown emphasis is formatting, not wording: `*uniquely*` and `uniquely` are the same
+        # question, and failing on that would train the reader of this check to ignore it.
+        question = re.sub(r"\*+", "", question)
+        if fid in FIGURE_QUESTIONS and FIGURE_QUESTIONS[fid].strip() != question.strip():
+            fails.append(f"{fid}: the question differs between the document and the code.\n"
+                         f"    doc:  {question.strip()}\n"
+                         f"    code: {FIGURE_QUESTIONS[fid].strip()}")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")
