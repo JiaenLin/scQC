@@ -86,14 +86,46 @@ def load(name: str):
 
 
 def read_csv(path: Path) -> list[dict]:
-    """Read a CSV, skipping comment lines. Returns a list of dicts."""
+    """Read a delimited table, skipping comment lines. Returns a list of dicts.
+
+    THE DELIMITER IS DETECTED, AND AN UNDETECTABLE ONE IS REFUSED.
+
+    This read comma-separated only. Handed a tab-separated samplesheet - the extension this
+    project's own docs use - csv.DictReader did not fail: it produced one column per row whose
+    single key was the entire header line. The run then reported "samples: 10", started stage 1,
+    and died on `KeyError: 'sample'` inside the task graph, three layers from the cause.
+
+    That is the failure worth engineering against. A wrong delimiter does not produce a parse
+    error, it produces a table of the right LENGTH and the wrong SHAPE, and every check that
+    counts rows agrees with it.
+    """
     if not path.exists():
         raise SystemExit(f"scqc: no such file: {path}")
     with path.open(encoding="utf-8", newline="") as fh:
         lines = [ln for ln in fh if not ln.lstrip().startswith("#")]
     if not lines:
         raise SystemExit(f"scqc: {path} contains no data")
-    rows = list(csv.DictReader(lines))
+
+    header = lines[0].rstrip("\r\n")
+    counts = {d: header.count(d) for d in ("\t", ",", ";")}
+    best = max(counts, key=lambda d: counts[d])
+    if counts[best] == 0:
+        raise SystemExit(
+            f"scqc: {path} has a single-column header ({header[:60]!r}...). No tab, comma or "
+            f"semicolon separates it, so there is nothing to read columns from.")
+    # Ambiguity is refused rather than guessed. A header carrying both tabs and commas in
+    # comparable numbers parses two different ways into two different tables, and picking one
+    # silently is how the wrong shape gets used.
+    rivals = [d for d, n in counts.items() if d != best and n >= counts[best]]
+    if rivals:
+        names = {"\t": "tab", ",": "comma", ";": "semicolon"}
+        raise SystemExit(
+            f"scqc: {path} is ambiguous - its header contains "
+            + ", ".join(f"{n} {names[d]}(s)" for d, n in counts.items() if n)
+            + ". Quote the fields or use one delimiter; guessing produces a table of the right "
+              "length and the wrong shape.")
+
+    rows = list(csv.DictReader(lines, delimiter=best))
     if not rows:
         raise SystemExit(f"scqc: {path} has a header but no data rows")
     return rows
