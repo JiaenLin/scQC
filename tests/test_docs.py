@@ -107,12 +107,16 @@ if not same:
                  f"{sig.group(1) if sig else '?'} and its docstring says "
                  f"{says.group(1) if says else '?'}.")
 
-# The README must point at the document, or nobody finds it.
+# The README must point at each document, or nobody finds it. And a document the README
+# advertises but the repository does not contain is a broken promise on the front page.
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
-linked = "docs/FILTERS.md" in readme
-print(f"  {'ok    ' if linked else 'DRIFT '} {'linked from README':<22}{linked}")
-if not linked:
-    fails.append("README.md does not link docs/FILTERS.md.")
+for name in ("docs/FILTERS.md", "docs/OUTPUTS.md"):
+    exists = (ROOT / name).exists()
+    linked = name in readme
+    ok = exists and linked
+    print(f"  {'ok    ' if ok else 'DRIFT '} {name:<22}exists {exists}   linked {linked}")
+    if not ok:
+        fails.append(f"{name}: exists={exists}, linked from README={linked}.")
 
 print("=" * 74)
 if fails:

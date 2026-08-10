@@ -13,7 +13,8 @@ applies — the data, or a person in their own words — so the two can never be
 > **Read [Status](#status) before you plan a run.** At `0.1.0` scQC runs a cohort end to end —
 > `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
-> process. It writes a report and, in apply mode, a filtered object with its removal ledger.
+> process. It writes a report and, in apply mode, one filtered object per library plus a merged
+> cohort object, with a ledger naming every barcode removed and why.
 > What it does **not** yet produce is any figure, and nothing feeds its freshness check. The
 > per-step subcommands remain, for judging tables you produced elsewhere.
 
@@ -148,12 +149,15 @@ upgrading the pipeline cannot disturb an existing result.
 | 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet | — |
 | 7 | **apply** | measure every criterion, write the ledger, then write the filtered objects | **yes — only here** |
 
-Apply mode writes `objects/cohort.deliverable.h5ad` and
-`objects/cohort_per_sample/<sample>.filtered.h5ad`. Every retained nucleus carries `sample`,
-`cluster`, `cluster_FLAG`, `cluster_WATCH` and the continuous values behind them, so nothing
-downstream has to re-cluster to recover what step 6 found — and a re-clustering of the filtered
-object would not give the same answer anyway, since criterion D is a tautology once the doublets
-are gone.
+Apply mode writes one filtered object per library, and a cohort object that is the **merge of
+those files read back from disk**. Every retained nucleus carries `sample`, `cluster`,
+`cluster_FLAG`, `cluster_WATCH` and the continuous values behind them, so nothing downstream has
+to re-cluster to recover what step 6 found — and a re-clustering of the filtered object would not
+give the same answer anyway, since criterion D is a tautology once the doublets are gone.
+
+The per-library objects are primary and the cohort object is derived from them: each library is
+filtered on its own mitochondrial ceiling and cluster-checked on its own clustering.
+📄 **[Output reference](docs/OUTPUTS.md)** — every file, every column.
 
 🔬 **[How each filter is calculated](docs/FILTERS.md)** — the exact procedure for the UMI floor,
 the gene floor, the mitochondrial ceiling, doublets and the cluster check: what each is derived
@@ -212,6 +216,7 @@ See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each
 | document | answers |
 |---|---|
 | [docs/FILTERS.md](docs/FILTERS.md) | **how each filter is calculated** — the exact procedure, the population it is derived over, and what it cannot establish |
+| [docs/OUTPUTS.md](docs/OUTPUTS.md) | **every file a run writes** — the object `obs` schema, every table's columns, and which files are meant to be read next |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | diagrams: the pipeline, the two phases, the parameter classes |
 | [docs/PRINCIPLES.md](docs/PRINCIPLES.md) | the removal checklist and the three other enforced rules |
 | [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | the report layout and the nine figures. The layout is built; **the figures are not** |

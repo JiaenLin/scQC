@@ -2570,7 +2570,7 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
     # pipeline's cluster check is per library precisely because identity is decided there.
     per_sample_dir = Path(str(out_prefix) + "_per_sample")
     per_sample_dir.mkdir(parents=True, exist_ok=True)
-    parts, per_lib, var_ref, var_from = [], [], None, None
+    per_lib, var_ref, var_from = [], None, None
     written_per_sample = []
     for entry in libs:
         s = str(entry.get("sample"))
@@ -2628,9 +2628,19 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
         one = per_sample_dir / f"{s}.filtered.h5ad"
         sub.write_h5ad(str(one))
         written_per_sample.append(one)
-        parts.append(sub)
-        del a
+        del a, sub
 
+    # THE COMBINED OBJECT IS THE MERGE OF THE PER-LIBRARY ONES, and is built by reading them back
+    # rather than from the copies that were in memory when they were written. The two would
+    # ordinarily be identical, which is the point: if they are not - a failed write, a truncated
+    # file, an encoding that did not round-trip - the difference belongs in the combined object
+    # rather than hidden by having kept a good copy in memory. What a reader can open is what was
+    # merged.
+    #
+    # It also means the per-library objects are the primary artifact and the combined one is
+    # derived, which is the honest ordering: each library is filtered on its own thresholds and
+    # cluster-checked on its own clustering, and the cohort object is those results put together.
+    parts = [_load(str(p)) for p in written_per_sample]
     combined = parts[0] if len(parts) == 1 else anndata.concat(
         parts, axis=0, join="inner", merge="same", label=None, index_unique=None)
     if combined.obs_names.has_duplicates:
@@ -2647,9 +2657,19 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
         "library_n_in": [int(x["n_in"]) for x in per_lib],
         "library_n_kept": [int(x["n_kept"]) for x in per_lib],
         "n_delivered": int(combined.n_obs),
-        "note": "filtered by an approved keep-list; the ledger names every barcode removed and "
-                "the criteria that removed it",
+        "built_from": [str(p.name) for p in written_per_sample],
+        "note": "the merge of the per-library filtered objects, read back from disk; the ledger "
+                "names every barcode removed and the criteria that removed it",
     }
+    # The merge must account for every nucleus the libraries kept. A concatenation that silently
+    # dropped one - a var axis that did not align, a barcode colliding across libraries - would
+    # produce a smaller cohort that still looks complete.
+    expected = sum(int(x["n_kept"]) for x in per_lib)
+    if int(combined.n_obs) != expected:
+        raise TaskFailure(
+            f"the merged object holds {combined.n_obs:,} nuclei and the per-library objects hold "
+            f"{expected:,} between them. The merge lost or duplicated observations, so the cohort "
+            f"object is not the sum of its libraries and no count taken from it describes them.")
     combined.write_h5ad(str(out_h5))
     return ([out_h5] + written_per_sample,
             {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),
