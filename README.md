@@ -215,11 +215,13 @@ See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each
 
 | document | answers |
 |---|---|
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | **start here** — install, samplesheet, run, and how to read the report |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | **operating it** — every command, run keys and resuming, approvals, and what a refusal means |
 | [docs/FILTERS.md](docs/FILTERS.md) | **how each filter is calculated** — the exact procedure, the population it is derived over, and what it cannot establish |
 | [docs/OUTPUTS.md](docs/OUTPUTS.md) | **every file a run writes** — the object `obs` schema, every table's columns, and which files are meant to be read next |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | diagrams: the pipeline, the two phases, the parameter classes |
 | [docs/PRINCIPLES.md](docs/PRINCIPLES.md) | the removal checklist and the three other enforced rules |
-| [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | the report layout and the nine figures. The layout is built; **the figures are not** |
+| [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | the report layout and its twelve figures. Both are built; five figures need data no step records yet, and each says so in its own place |
 | [docs/TOOLS_AND_REFERENCES.md](docs/TOOLS_AND_REFERENCES.md) | tools, versions, reference resolution |
 | [CALIBRATION.md](CALIBRATION.md) | what was measured, how much it varied, what one cohort cannot establish |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | what a pull request has to answer before it can remove anything |

@@ -110,7 +110,7 @@ if not same:
 # The README must point at each document, or nobody finds it. And a document the README
 # advertises but the repository does not contain is a broken promise on the front page.
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
-for name in ("docs/FILTERS.md", "docs/OUTPUTS.md"):
+for name in ("docs/QUICKSTART.md", "docs/USER_GUIDE.md", "docs/FILTERS.md", "docs/OUTPUTS.md"):
     exists = (ROOT / name).exists()
     linked = name in readme
     ok = exists and linked
