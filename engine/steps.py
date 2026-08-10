@@ -1124,7 +1124,7 @@ def _cluster_flags(task, pipeline, log):
     empty = [r for r in rows if r.get("median_umi") in (None, 0, 0.0)]
     cells = sum(int(r.get("n") or 0) for r in rows)
     if empty:
-        pipeline.findings.append({
+        pipeline.record_findings("06_cluster_check", [{
             "step": "06_cluster_check", "check": "population clustered", "severity": "REVIEW",
             "message": (
                 f"{len(empty)} of {len(rows)} clusters have a median UMI of zero, holding "
@@ -1137,7 +1137,7 @@ def _cluster_flags(task, pipeline, log):
                 f"thresholds proposed from it inherit that."),
             "detail": ["clusters per library: " + ", ".join(
                 f"{s}={sum(1 for r in rows if r.get('sample') == s)}"
-                for s in task.params["samples"])]})
+                for s in task.params["samples"])]}])
 
     fired, unknown = flagged.counts(), flagged.unknown_counts()
     for k in ("A", "B", "C", "D", "FLAG", "WATCH"):
@@ -1364,9 +1364,10 @@ def _apply(task, pipeline, log):
 
     # The pre-flight is told the real retained total, not a placeholder: its whole job is to say
     # what share of the DELIVERABLE sits in a cluster step 6 flagged.
-    for f in ap.preflight(rows, kept_total=n_in - n_removed):
-        pipeline.findings.append({"step": "07_apply", "check": f.check, "severity": f.severity,
-                                  "message": f.message, "detail": list(f.detail or [])})
+    pipeline.record_findings("07_apply", [
+        {"step": "07_apply", "check": f.check, "severity": f.severity,
+         "message": f.message, "detail": list(f.detail or [])}
+        for f in ap.preflight(rows, kept_total=n_in - n_removed)])
 
     # --- the ledger, BEFORE the gate. One row per removed barcode, listing every criterion that
     # fired on it, so what left can be named afterwards and re-read from the input.

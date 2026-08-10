@@ -438,6 +438,29 @@ else:
                      f"report_payload(), which both callers go through.")
     print(f"J2. payload additions inside the report task: {len(set(_mutations))}")
 
+# ---- J3. nothing mutates pipeline.findings, because it is a property and the write vanishes.
+#
+# `findings` builds a new list on every access, so `pipeline.findings.append(...)` appends to a
+# throwaway and is discarded without an error anywhere. Two call sites did that and lost four
+# findings between them - one of which was the statement that 21,395 delivered nuclei sat inside
+# a cluster the run had flagged. The report was complete, well-formed, and quietly missing the
+# finding a reader most needed.
+_mutators = []
+for _py in sorted((ROOT / "engine").glob("*.py")) + sorted((ROOT / "modules").rglob("*.py")):
+    for _n in ast.walk(ast.parse(_py.read_text(encoding="utf-8"))):
+        if not (isinstance(_n, ast.Call) and isinstance(_n.func, ast.Attribute)
+                and _n.func.attr in ("append", "extend", "insert")):
+            continue
+        _tgt = _n.func.value
+        if (isinstance(_tgt, ast.Attribute) and _tgt.attr == "findings"
+                and isinstance(_tgt.value, ast.Name) and _tgt.value.id != "self"):
+            _mutators.append(f"{_py.name}:{_n.lineno}")
+for _m in _mutators:
+    fails.append(f"J3: {_m} mutates pipeline.findings directly. It is a read-only property - "
+                 f"the write goes to a temporary list and disappears silently. Use "
+                 f"record_findings(), or gate() when there is a verdict to act on.")
+print(f"J3. direct writes to pipeline.findings: {len(_mutators)}")
+
 # ---- K. every step_module() the engine asks for is one the engine can load.
 #
 # `step_module("audit_removal")` raised KeyError at runtime because the module was never added to

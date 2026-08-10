@@ -196,11 +196,35 @@ class Pipeline:
     def findings(self) -> list:
         """Every gate finding this cohort has, in step order - re-run or restored alike.
 
-        A property rather than a list, so there is one place the report can get them and no
-        caller can hold a copy that a later step's gate does not reach.
+        READ-ONLY. It builds a new list on each access, so `pipeline.findings.append(...)`
+        appends to a throwaway and vanishes without error. Two callers did exactly that and
+        lost four findings between them - including the one saying 21,395 delivered nuclei sat
+        inside a flagged cluster. Use `record_findings()`, or `gate()` when there is a verdict.
         """
         return [f for step in sorted(self._findings_by_step)
                 for f in self._findings_by_step[step]]
+
+    def record_findings(self, step: str, findings) -> None:
+        """Store findings that are not a gate decision - an observation, with nothing to stop.
+
+        Same store and same replace-on-re-run rule as `gate()`; it simply has no verdict to
+        act on. Accepts dicts or finding objects, because both are already in use and making
+        each caller convert is one more place a message can be dropped.
+        """
+        with self._prov_lock:
+            if step not in self._gated_this_run:
+                self._gated_this_run.add(step)
+                self._findings_by_step[step] = []
+            for f in findings:
+                self._findings_by_step[step].append(f if isinstance(f, dict) else {
+                    "step": step,
+                    "check": getattr(f, "check", "?"),
+                    "severity": getattr(f, "severity", "ok"),
+                    "message": getattr(f, "message", str(f)),
+                    "detail": list(getattr(f, "detail", []) or []),
+                })
+            self.state.data["findings_by_step"] = self._findings_by_step
+            self.state.flush()
 
     def gate(self, step: str, findings, verdict: str) -> None:
         """Record a gate's output and stop the run if it refused.
@@ -209,22 +233,17 @@ class Pipeline:
         The distinction is preserved all the way into the report rather than collapsed to
         pass/fail, because collapsing it trains a reader to ignore both.
         """
+        # UNDER THE LOCK, because a step gates once per LIBRARY and those tasks run concurrently.
+        #
         # First gate of this run for this step replaces what the step recorded last time; later
         # gates of the same step append to it. A step whose tasks were all skipped never reaches
         # here and keeps the findings it stored when it did run.
-        if step not in self._gated_this_run:
-            self._gated_this_run.add(step)
-            self._findings_by_step[step] = []
-        for f in findings:
-            self._findings_by_step[step].append({
-                "step": step,
-                "check": getattr(f, "check", "?"),
-                "severity": getattr(f, "severity", "ok"),
-                "message": getattr(f, "message", str(f)),
-                "detail": list(getattr(f, "detail", []) or []),
-            })
-        self.state.data["findings_by_step"] = self._findings_by_step
-        self.state.flush()
+        #
+        # Without the lock two libraries of the same step both find the step absent from
+        # `_gated_this_run`, and the second one's reset discards what the first had just
+        # recorded. It cost five of thirty-five findings on the first run after this store was
+        # added - a silent partial loss, in the direction that makes a cohort look cleaner.
+        self.record_findings(step, findings)
         if verdict == "REFUSE":
             worst = [f for f in findings if getattr(f, "severity", "") == "REFUSE"]
             raise Refusal(
