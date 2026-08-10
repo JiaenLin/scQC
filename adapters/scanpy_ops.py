@@ -117,6 +117,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from adapters.cellbender import ID_COLUMNS  # noqa: E402  (see the sys.path note above)
 from engine.fs import VISIBILITY_TIMEOUT_S, await_visible  # noqa: E402  (see the note above)
 from engine.task import TaskFailure  # noqa: E402  (see the sys.path note above)
 
@@ -2570,6 +2571,52 @@ def _annotation_value(column: str, raw):
         return text
 
 
+def _unique_var_index(a, sample: str):
+    """Give `var` a unique index, keeping the symbols, or refuse. Returns a note or None.
+
+    Gene SYMBOLS are not unique in most references - this cohort's carries duplicates - and
+    an object indexed by them cannot be merged: anndata.concat reindexes the alternate axis
+    and pandas raises "cannot reindex on an axis with duplicate labels". It is also a hazard
+    in the delivered object itself, where `adata[:, "Gm5773"]` silently returns two columns.
+
+    So when, and only when, the index is not unique, it is replaced by the identifier axis -
+    which is unique, and which the ambient audit already had to fall back on for the same
+    reason - and the symbols are kept in `var["gene_symbol"]`. A reference whose symbols are
+    unique is left exactly as it came in, so this changes nothing for most inputs.
+
+    Matching on symbol - `mt-`, `^Rp[sl]` - therefore reads var["gene_symbol"] on a delivered
+    object whose index was replaced. Every threshold in this pipeline was computed before this
+    point, on the per-library objects, so no measurement is affected by the choice.
+    """
+    import pandas as pd
+
+    names = list(map(str, a.var_names))
+    if len(set(names)) == len(names):
+        return None
+    for col in ID_COLUMNS:
+        if col not in a.var.columns:
+            continue
+        ids = [str(v) for v in a.var[col]]
+        if len(set(ids)) != len(ids):
+            continue
+        if "gene_symbol" not in a.var.columns:
+            a.var["gene_symbol"] = pd.Categorical(names)
+        a.var.index = pd.Index(ids, name=col)
+        dup = len(names) - len(set(names))
+        return (f"var was indexed by gene symbol, which is not unique ({dup:,} duplicate "
+                f"label(s) over {len(names):,} genes); re-indexed by {col} and the symbols "
+                f"kept in var['gene_symbol']")
+    from collections import Counter
+    worst = [g for g, _ in Counter(names).most_common(3)]
+    raise TaskFailure(
+        f"{sample}: var is indexed by a label that is not unique "
+        f"({len(names) - len(set(names)):,} duplicates over {len(names):,} genes, e.g. "
+        f"{', '.join(worst)}) and the object carries no unique identifier column to use "
+        f"instead (looked for {', '.join(ID_COLUMNS)}). The libraries cannot be merged on "
+        f"this axis, and making the labels unique by appending suffixes would invent gene "
+        f"symbols that are not in the reference.")
+
+
 def _annotation_column(values: list):
     """One annotation column, typed from its own values, with unknown still unknown.
 
@@ -2625,13 +2672,16 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
     per_sample_dir = Path(str(out_prefix) + "_per_sample")
     per_sample_dir.mkdir(parents=True, exist_ok=True)
     per_lib, var_ref, var_from = [], None, None
-    written_per_sample = []
+    written_per_sample, var_notes = [], []
     for entry in libs:
         s = str(entry.get("sample"))
         keep_path = Path(str(entry.get("keep_csv")))
         wanted = [ln.strip() for ln in
                   keep_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
         a = _load(str(entry.get("h5ad")))
+        note = _unique_var_index(a, s)
+        if note and not var_notes:
+            var_notes.append(note)
         # The var axis is not re-derived, it is CHECKED. anndata.concat with an outer join fills
         # a gene absent from one library with zeros, which is fabricated data wearing the shape
         # of a measurement; an inner join silently narrows the feature space instead.
@@ -2713,6 +2763,7 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
         "built_from": [str(p.name) for p in written_per_sample],
         "note": "the merge of the per-library filtered objects, read back from disk; the ledger "
                 "names every barcode removed and the criteria that removed it",
+        "var_index": var_notes or ["var is indexed as it arrived; gene labels are unique"],
     }
     # The merge must account for every nucleus the libraries kept. A concatenation that silently
     # dropped one - a var axis that did not align, a barcode colliding across libraries - would
@@ -2728,7 +2779,9 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
             {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),
              "libraries": per_lib,
              "per_sample_objects": [str(p) for p in written_per_sample],
-             "obs_columns": sorted(map(str, combined.obs.columns))})
+             "obs_columns": sorted(map(str, combined.obs.columns)),
+             "var_index": str(combined.var.index.name or "gene label"),
+             "var_index_note": var_notes[0] if var_notes else ""})
 
 
 def main(argv=None) -> int:
