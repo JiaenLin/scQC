@@ -334,6 +334,48 @@ else:
                 f"file that never arrives is indistinguishable from a job that printed nothing.")
     print(f"I. PBS output reads, all from the job's own log: {len(_read)}")
 
+# ---- J. every report is built from report_payload(), and from nothing else.
+#
+# The document is assembled at TWO call sites: the `report` task, and scqc_cli.finish() after the
+# graph ends - the second exists so a run that stopped still leaves a document. When the task
+# enriched its payload and finish() rebuilt one without the addition, finish() ran last and wrote
+# over the top: the per-library threshold table was absent from every report while the code
+# producing it ran correctly on every run, and the only symptom was the report's own defect
+# saying a section had not been supplied.
+#
+# Two builders of one document will always drift. So the payload has exactly one source, and any
+# call to build_report() whose payload is not report_payload() is that drift starting again.
+_builders = []
+for _py in sorted((ROOT / "engine").glob("*.py")) + [ROOT / "scqc_cli.py"]:
+    for _n in ast.walk(ast.parse(_py.read_text(encoding="utf-8"))):
+        if not (isinstance(_n, ast.Call) and isinstance(_n.func, ast.Name)
+                and _n.func.id == "build_report" and _n.args):
+            continue
+        _arg = _n.args[0]
+        # Either build_report(pipe.report_payload(...)) or a name assigned from it.
+        _ok = (isinstance(_arg, ast.Call) and isinstance(_arg.func, ast.Attribute)
+               and _arg.func.attr == "report_payload")
+        if not _ok and isinstance(_arg, ast.Name):
+            _src = ast.get_source_segment(_py.read_text(encoding="utf-8"), _n) or ""
+            _fn = next((f for f in ast.walk(ast.parse(_py.read_text(encoding="utf-8")))
+                        if isinstance(f, ast.FunctionDef)
+                        and f.lineno <= _n.lineno <= (f.end_lineno or _n.lineno)), None)
+            _ok = _fn is not None and any(
+                isinstance(a, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == _arg.id for t in a.targets)
+                and "report_payload" in (ast.get_source_segment(
+                    _py.read_text(encoding="utf-8"), a) or "")
+                for a in ast.walk(_fn))
+        _builders.append((f"{_py.name}:{_n.lineno}", _ok))
+        if not _ok:
+            fails.append(f"J: {_py.name}:{_n.lineno} calls build_report() with a payload that "
+                         f"did not come from report_payload(). Two builders of one document "
+                         f"drift, and the loser is silent - the section is simply absent.")
+if not _builders:
+    fails.append("J: no call to build_report() was found; this check is not testing anything.")
+print(f"J. build_report call sites, all fed by report_payload(): "
+      f"{sum(1 for _, ok in _builders if ok)} of {len(_builders)}")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

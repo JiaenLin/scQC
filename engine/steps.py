@@ -540,18 +540,22 @@ def _round(v, n):
 def _report(task, pipeline, log):
     from report.build import build_report
 
+    # report_payload() assembles the per-library table and writes its CSV, because scqc_cli
+    # rebuilds this payload after the graph finishes and would otherwise write over anything
+    # added here. This step reports the file; it does not produce it.
     payload = pipeline.report_payload(stopped=None)
-    samples = [s.get("sample") for s in pipeline.samples if s.get("sample")]
-    per_sample, per_sample_csv = _per_sample_thresholds(pipeline, samples)
-    payload["per_sample"] = per_sample
     payload.update(task.params.get("extra", {}))
+    per_sample = payload.get("per_sample") or {}
     out_html = pipeline.results / "reports" / "qc_report.html"
     out_json = pipeline.results / "reports" / "report.json"
     build_report(payload, out_html, out_json)
-    return {"outputs": [str(out_html), str(out_json), str(per_sample_csv)],
+    outputs = [str(out_html), str(out_json)]
+    if per_sample.get("source"):
+        outputs.append(str(per_sample["source"]))
+    return {"outputs": outputs,
             "metrics": {"findings": len(pipeline.findings),
-                        "per_sample_rows": len(per_sample["rows"]),
-                        "per_sample_columns": len(per_sample["columns"])},
+                        "per_sample_rows": len(per_sample.get("rows") or []),
+                        "per_sample_columns": len(per_sample.get("columns") or [])},
             "versions": {}}
 
 

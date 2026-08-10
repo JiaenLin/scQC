@@ -402,6 +402,13 @@ class Pipeline:
             },
             "gates": list(self.findings),
             "steps": self._step_records(),
+            # ASSEMBLED HERE, not by the report task, because the report is built from TWO call
+            # sites: the `report` task, and scqc_cli.finish() afterwards - the second exists so a
+            # run that STOPPED still leaves a document. The task set this key and finish() then
+            # rebuilt the payload without it and wrote over the top, so the section was absent
+            # from every report while the code that produced it ran correctly every time. One
+            # payload builder, both callers.
+            "per_sample": self._per_sample_block(),
             "provenance": self.prov.snapshot(
                 self.project / "decisions.yml"
                 if (self.project / "decisions.yml").exists() else None),
@@ -409,6 +416,24 @@ class Pipeline:
                             for k in sorted(stat) if stat[k] == "blocked"][:20]
                            or ["none recorded"]),
         }
+
+    def _per_sample_block(self) -> dict | None:
+        """Every threshold this run derived, one row per library. None if it cannot be built.
+
+        Imported inside the function because `steps` imports this module; the same shape
+        `_step_records` uses. None rather than a partial block: the report states an absent
+        section as a defect, and a half-filled one would not be stated at all.
+        """
+        from . import steps as _s
+
+        samples = [s.get("sample") for s in self.samples if s.get("sample")]
+        if not samples:
+            return None
+        try:
+            block, _path = _s._per_sample_thresholds(self, samples)
+        except Exception:                                             # noqa: BLE001
+            return None
+        return block
 
     def _step_records(self) -> list:
         """One record per canonical step, aggregating every task that belongs to it.
