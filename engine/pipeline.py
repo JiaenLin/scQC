@@ -88,6 +88,33 @@ class Pipeline:
         self.work = self.project / "work"
         self.results = self.project / "results"
         self.logs = self.project / "logs"
+
+        # SCRATCH GOES TO LOCAL DISK, not the shared filesystem.
+        #
+        # `work/` holds the run manifest and small artefacts and belongs beside the project, on
+        # whatever storage the project is on. But the big intermediates are pure inter-process
+        # handoffs - a 233 MB MatrixMarket triple written by Python and read straight back by R,
+        # which nothing downstream ever opens - and on a cluster the project sits on NFS.
+        #
+        # Measured: ten doublet tasks writing and re-reading ~1.5 GB across NFS ran at 20-30% CPU
+        # over ten minutes each; the same work is 2.2 minutes when nothing else contends. The
+        # processes were waiting on the network, not computing, on a node with 4 TB of idle local
+        # ext4. Concurrency made that worse rather than better, because ten tasks then contend
+        # for one network mount.
+        #
+        # SCQC_SCRATCH overrides; otherwise TMPDIR, otherwise /tmp - and if none of those is
+        # usable the shared work dir is used, because a slow run beats a run that cannot start.
+        import os as _os
+        import tempfile as _tf
+        base = _os.environ.get("SCQC_SCRATCH") or _os.environ.get("TMPDIR") or _tf.gettempdir()
+        try:
+            self.scratch = Path(base) / f"scqc_{self.project.name}"
+            self.scratch.mkdir(parents=True, exist_ok=True)
+            probe = self.scratch / ".writable"
+            probe.write_text("x", encoding="utf-8")
+            probe.unlink()
+        except OSError:
+            self.scratch = self.work
         for d in (self.work, self.results / "tables", self.results / "figures",
                   self.results / "reports", self.results / "objects", self.logs):
             d.mkdir(parents=True, exist_ok=True)

@@ -205,9 +205,23 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     ))
 
     # --- step 5: thresholds, derived per library and applied as one cohort constant.
+    # Step 5 measures each library independently and then proposes ONE cohort constant from the
+    # ten results. The measurement was a serial loop inside the single 05_quality task, which no
+    # amount of --jobs could parallelise - concurrency releases tasks, not iterations. It is now
+    # ten tasks and a barrier, the same shape as step 4.
+    for s in by_sample:
+        tasks.append(Task(
+            key=f"05_quality/{s}", step="05_quality", sample=s, fn=steps._quality_measure,
+            needs=("04_doublet_health",),
+            params={"sample": s, "python_exe": python_exe,
+                    "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
+                    "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip()},
+            cpus=4, memory_gb=32, walltime_h=2,
+        ))
+
     tasks.append(Task(
         key="05_quality", step="05_quality", fn=steps._quality_stage,
-        needs=("04_doublet_health",),
+        needs=tuple(f"05_quality/{s}" for s in by_sample),
         params={"samples": list(by_sample), "python_exe": python_exe,
                 "light_floor": tools.get("light_floor", 200),
                 "decisions": pipeline.decisions},

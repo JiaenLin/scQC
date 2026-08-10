@@ -129,7 +129,7 @@ def _ingest(task, pipeline, log):
             log=pipeline.work / f"{sample}_ingest_stats.log",
             python_exe=python_exe,
             expected_genes=task.params.get("expected_genes"),
-            tmp_dir=pipeline.work / f"{sample}_extract",
+            tmp_dir=pipeline.scratch / f"{sample}_extract",
             executor=pipeline.executor)
         # run_summary_stats returns {'outputs','metrics','versions'}; plan_one wants verify()'s
         # keyword arguments. verify_kwargs is the same selector the in-process path uses, so the
@@ -444,7 +444,9 @@ def _doublets(task, pipeline, log):
     from adapters import doublets as db
 
     p = task.params
-    mtx = pipeline.work / f"{p['sample']}_dbl_mtx"
+    # Local scratch: this triple is written by Python and read straight back by R, and nothing
+    # downstream opens it. On NFS it was the whole cost of step 4.
+    mtx = pipeline.scratch / f"{p['sample']}_dbl_mtx"
     out_csv = _tables(pipeline) / f"{p['sample']}_doublets.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]))
@@ -523,57 +525,73 @@ def _scanpy(pipeline, op, h5, prefix, params, log, python_exe):
 VALLEY_METRICS = ("umi", "genes")
 
 
-def _quality_stage(task, pipeline, log):
-    """Measure both count valleys and the mitochondrial quartiles, per library, in one pass.
+def _quality_measure(task, pipeline, log):
+    """Measure ONE library: both count valleys and the mitochondrial quartiles, in one pass.
 
-    This called the valley op with `{"metric": "umi"}` and the op requires `metrics` (a LIST),
-    plus `sample`, `mt_prefix` and `ribo_pattern` - none of which were passed. It failed on the
-    first library of the first real cohort, having never run.
-
-    The mismatch is invisible to the wiring test: params cross this seam as a DICT, so comparing
-    call sites against signatures cannot see a wrong key or a missing one. That is what makes
-    this seam worth spelling out here rather than assembling inline.
+    Split out of _quality_stage, which looped over every library inside a single task. Concurrency
+    releases TASKS, not iterations, so ten libraries were measured one after another whatever
+    --jobs said - and the measurement is the expensive half of step 5: reading the object and
+    running calculate_qc_metrics over a 39k x 34k sparse matrix. The KDE that follows is cheap.
     """
-    rows = {r["sample"]: r for r in pipeline.samples}
+    p = task.params
+    for k in ("mt_prefix", "ribo_pattern"):
+        if not p.get(k):
+            raise Refusal(
+                f"05_quality ({p['sample']}): `{k}` is not declared. It is species-specific and "
+                f"nothing here will guess it: mouse and human differ in case alone for the "
+                f"mitochondrial prefix, and a wrong one gives every cell pct_counts_mt == 0, "
+                f"which is indistinguishable from a clean library and passes every mitochondrial "
+                f"gate.\n"
+                f"    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl]\n"
+                f"    human: mt_prefix=MT-  ribo_pattern=^RP[SL]\n"
+                f"    Add them as samplesheet columns. Matching is case-sensitive by design.")
+    s = p["sample"]
+    res = _scanpy(pipeline, "valley",
+                  pipeline.results / "objects" / f"{s}_ambient.h5",
+                  pipeline.scratch / f"{s}_qc",
+                  {"sample": s, "metrics": list(VALLEY_METRICS),
+                   "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"]},
+                  log, p["python_exe"])
+    m = res.get("metrics", {}) or {}
+    got, bim = m.get("valleys") or {}, m.get("bimodal") or {}
+    for metric in VALLEY_METRICS:
+        print(f"    {s:<14}{metric:<7}valley {str(got.get(metric)):>8}   "
+              f"bimodal {bim.get(metric)}")
+    # Carried on the task RESULT so the barrier reads it from the manifest rather than from a
+    # shared mutable the workers would race on.
+    return {"outputs": list(res.get("outputs", [])),
+            "metrics": {"valleys": got, "bimodal": bim,
+                        "mito_quartiles": m.get("mito_quartiles")},
+            "versions": res.get("versions", {})}
+
+
+def _quality_stage(task, pipeline, log):
+    """The barrier: one cohort constant per count axis, plus the per-library mito ceilings.
+
+    Reads what the ten `05_quality/<sample>` tasks measured. Nothing is measured here, so this is
+    cheap and runs once - which is the point of splitting it out.
+    """
     valleys = {m: [] for m in VALLEY_METRICS}
     mito_stats = {}
-
-    # DECLARED, per the adapter's own position: "mt_prefix and ribo_pattern are species-specific
-    # and this module will not choose them". Mouse and human differ in case alone, which is the
-    # kind of difference that yields a plausible zero rather than an error - so the engine does
-    # not choose either. A wrong prefix still fails loudly downstream (zero matched
-    # mitochondrial genes raises), but failing loudly is the backstop, not the plan.
-    missing_decl = [s for s in task.params["samples"]
-                    if not str(rows.get(s, {}).get("mt_prefix") or "").strip()
-                    or not str(rows.get(s, {}).get("ribo_pattern") or "").strip()]
-    if missing_decl:
-        raise Refusal(
-            "05_quality: `mt_prefix` and `ribo_pattern` are not declared for "
-            f"{', '.join(missing_decl)}. They are species-specific and nothing here will guess "
-            "them: mouse and human differ in case alone for the mitochondrial prefix, and a "
-            "wrong one gives every cell pct_counts_mt == 0, which is indistinguishable from a "
-            "clean library and passes every mitochondrial gate.\n"
-            "    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl]\n"
-            "    human: mt_prefix=MT-  ribo_pattern=^RP[SL]\n"
-            "    Add them as samplesheet columns. Matching is case-sensitive by design.")
-
+    missing = []
     for s in task.params["samples"]:
-        res = _scanpy(pipeline, "valley",
-                      pipeline.results / "objects" / f"{s}_ambient.h5",
-                      pipeline.work / f"{s}_qc",
-                      {"sample": s,
-                       "metrics": list(VALLEY_METRICS),
-                       "mt_prefix": str(rows[s]["mt_prefix"]).strip(),
-                       "ribo_pattern": str(rows[s]["ribo_pattern"]).strip()},
-                      log, task.params["python_exe"])
-        m = res.get("metrics", {})
-        got, bim = m.get("valleys") or {}, m.get("bimodal") or {}
+        r = pipeline.results_by_key.get(f"05_quality/{s}")
+        met = (getattr(r, "metrics", None) or {}) if r is not None else {}
+        got, bim = met.get("valleys") or {}, met.get("bimodal") or {}
+        if not got:
+            missing.append(s)
+            continue
         for metric in VALLEY_METRICS:
             valleys[metric].append({"sample": s, "value": got.get(metric),
                                     "bimodal": bim.get(metric)})
-        q = m.get("mito_quartiles")
+        q = met.get("mito_quartiles")
         if q:
             mito_stats[s] = q
+    if missing:
+        raise Refusal(
+            f"05_quality: no measurement was recorded for {', '.join(missing)}. A library whose "
+            f"valley was never measured cannot contribute to a cohort constant, and treating its "
+            f"absence as agreement lets the other libraries decide on its behalf.")
 
     out = {"outputs": [], "metrics": {}, "versions": {}}
     for metric in VALLEY_METRICS:
@@ -664,7 +682,7 @@ def _cluster(task, pipeline, log):
     p = task.params
     return _scanpy(pipeline, "cluster",
                    pipeline.results / "objects" / f"{p['sample']}_ambient.h5",
-                   pipeline.work / f"{p['sample']}_clusters",
+                   pipeline.scratch / f"{p['sample']}_clusters",
                    {"resolution": p["resolution"], "seed": p["seed"]},
                    log, p["python_exe"])
 
@@ -808,6 +826,6 @@ def step_text(step: str) -> tuple:
 __all__ = [
     "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
     "_ambient_audit", "_cellcall",
-    "_doublets", "_doublet_health", "_quality", "_quality_stage", "_cluster",
+    "_doublets", "_doublet_health", "_quality", "_quality_measure", "_quality_stage", "_cluster",
     "_cluster_flags", "_apply", "_report",
 ]
