@@ -7,8 +7,8 @@ threshold from applying it.**
 [![Status](https://img.shields.io/badge/status-0.1.0-blue.svg)](#status)
 
 Most QC pipelines take thresholds as arguments. scQC treats them as findings: it measures what it
-can from your data, refuses to guess what it cannot, and requires a recorded human decision — in
-that person's own words — before anything is removed.
+can from your data, refuses to guess what it cannot, and records who set every threshold it
+applies — the data, or a person in their own words — so the two can never be confused later.
 
 > **Read [Status](#status) before you plan a run.** At `0.1.0` scQC runs a cohort end to end —
 > `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
@@ -282,7 +282,7 @@ row below was checked against the tree rather than remembered.
 | ✅ **Built** | Decisions are read. `decisions.yml` is parsed and validated, and `--mode apply` refuses on a missing or incomplete one, naming every problem at once rather than one per run. |
 | ⚠️ **Not built — the figures** | `report/figures.py` exists and the report expects F1–F9, but no step supplies one. Each absence is reported as a defect rather than omitted. The five sections and the nine figures in [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) remain a specification. |
 | ⚠️ **Not fed — freshness** | `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be current. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
-| ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, puts the removal through a gate that needs the operator's own words recorded against *these* thresholds, audits the result, and only then writes the filtered cohort object. Measure, gate, write — in that order, so nothing is materialised before the approval is checked. |
+| ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, verifies the ledger against the mask, audits the result, and only then writes the filtered cohort object. Measure, record, write — in that order, so nothing is materialised before what left has been written down. Where `decisions.yml` supplies an approval, it is additionally matched against the action the current thresholds derive. |
 | ✅ **Built** | Content-addressed outputs. Each run writes under `results/<digest>/`, named from the samplesheet's content, the declared parameters and the mode. A run that would produce something different lands somewhere different, so nothing is overwritten by one that disagrees with it. |
 | ⚠️ **Not measured** | Run-to-run tolerance for the stochastic steps. Recorded as `UNMEASURED`; the pipeline will not assert a tolerance it has not measured. |
 | ⚠️ **n = 1 cohort** | One tissue, one species, one platform. Every threshold is an existence proof, not a range. See [CALIBRATION.md](CALIBRATION.md). |
