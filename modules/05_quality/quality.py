@@ -106,17 +106,48 @@ class Proposal:
         return "\n".join(s)
 
 def derive(valleys, metric, light_floor=None) -> Proposal:
-    """Turn per-library valleys into a proposed cohort constant, refusing what cannot be right."""
+    """Turn per-library valleys into a proposed cohort constant, refusing what cannot be right.
+
+    A SHALLOW VALLEY CHANGES WHAT THE FLOOR IS CALLED, NOT WHETHER YOU GET ONE.
+
+    This used to REFUSE the moment any library failed the bimodality test, and that was wrong in
+    a way worth naming: it discarded the very information it had just computed. The depth test
+    answers "is this minimum a measurement or a judgement?", which is a question about the
+    PROVENANCE of the number, not about whether the number is usable.
+
+    On a real ten-library cohort, four had a deep valley stable across kernel bandwidths and six
+    had a shallow saddle whose minimum still landed at 268-378 UMI - squarely inside the bounds,
+    and agreeing with the four to within 100 UMI. Refusing all ten because six were shoulders
+    would have stopped a pipeline that had just measured the right answer.
+
+    It is also not what the field does. Published cardiac and lung atlases choose a bounded floor
+    and treat the UMI curve as a CONSIDERATION - "excluded barcodes with less than 200 detected
+    genes" (doi:10.1101/2020.01.21.20018358); "CellRanger count metrics ... in addition to the
+    UMI curves" (doi:10.1016/j.celrep.2024.115091). None derives the floor automatically, and the
+    serious per-cell QC happens after clustering, within cell types.
+
+    THE BOUNDS ARE THE GUARD. A valley outside them is still refused, and that is what catches
+    the real failure: on the same cohort, two libraries' minima wandered to ~1,040 UMI under a
+    narrower kernel, which the upper bound rejects on sight. Depth is not needed to catch those.
+
+    So `bimodal` now classifies rather than gates. Nothing is loosened - `min_valley_depth` is
+    unchanged and still splits that cohort at its natural break (0.090 | 0.133) - and the
+    libraries that failed it are NAMED in the proposal, so a reader is told the constant rests on
+    a shoulder rather than a dip in those.
+    """
     bounds = UMI_BOUNDS if metric == "umi" else GENE_BOUNDS
 
-    bad = [v for v in valleys if not v.bimodal]
-    if bad:
+    shoulders = [v.sample for v in valleys if not v.bimodal]
+    if shoulders and len(shoulders) == len(valleys):
+        # Every library a shoulder is a different claim from some. There is then no library whose
+        # minimum was ever shown to separate two modes, so the cohort constant would be a median
+        # of numbers none of which was a measurement, presented as if derived.
         raise ThresholdRefusal(
-            f"{metric}: {len(bad)} library(ies) are NOT bimodal "
-            f"({', '.join(v.sample for v in bad)}). A density minimum exists in any smooth "
-            f"curve; without two modes it is the flank of the only one, and returning it as a "
-            f"threshold dresses an arbitrary cut as a measurement. Choose the cut explicitly and "
-            f"record it as a judgement, as the mitochondrial ceiling is.")
+            f"{metric}: NO library is bimodal ({', '.join(shoulders)}). A density minimum exists "
+            f"in any smooth curve; without two modes anywhere in the cohort there is nothing to "
+            f"take a median OF, and the result would be a judgement wearing a derivation's "
+            f"clothes. Choose the cut explicitly and record it as one, as the mitochondrial "
+            f"ceiling's bound is.")
 
     per = {v.sample: v.value for v in valleys}
     out = [v for s, v in per.items() if not (bounds[0] <= v <= bounds[1])]
@@ -152,9 +183,27 @@ def derive(valleys, metric, light_floor=None) -> Proposal:
             f"better than others. It is still preferred to a per-library threshold, which would "
             f"make the filter a technical property varying across the design, but the poorest-fit "
             f"library should be looked at")
+    # The provenance of the number, stated where a reader will meet it. A constant resting partly
+    # on shoulders is usable and is not a measurement, and the difference has to survive into the
+    # report - it is the difference between "the data put the floor here" and "we put the floor
+    # here, and the data did not object".
+    if shoulders:
+        notes.append(
+            f"DECLARED, informed by the curve - NOT a pure measurement. {len(shoulders)} of "
+            f"{len(valleys)} libraries have a shoulder rather than a dip at their minimum "
+            f"({', '.join(sorted(shoulders))}), so for those the position is a judgement the "
+            f"density did not contradict. The remaining {len(valleys) - len(shoulders)} carry a "
+            f"valley deep enough to be called measured, and the constant sits inside "
+            f"{bounds[0]}-{bounds[1]} either way. Record it as a judgement, not as a derivation")
+    else:
+        notes.append(
+            f"DERIVED - every one of {len(valleys)} libraries carries a valley deep enough to "
+            f"separate two modes")
     notes.append("PROPOSED, not applied. The constant is a cohort decision and needs approval; "
                  "the per-library valleys decide what it should be, they are not applied "
                  "themselves")
+    p.shoulders = tuple(sorted(shoulders))
+    p.provenance = "declared_informed" if shoulders else "derived"
     return p
 
 def mito_ceiling_note() -> str:
