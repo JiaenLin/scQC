@@ -280,6 +280,48 @@ for node in ast.walk(_steps_tree):
                      f"nothing else checks it.")
 print(f"H. scanpy op call sites checked against declared requirements: {_seam}")
 
+# ---- I. the PBS executor reads the log the JOB wrote, not the one PBS was asked to deliver.
+#
+# `#PBS -o <path>` names a path ON THE HOST THAT SUBMITTED THE JOB. When the orchestrator is
+# itself a job, tasks land on other nodes, and PBS must copy each output file back between two
+# compute nodes once the job ends. Where that copy does not work there is no error anywhere: the
+# job reports Exit_status = 0, its real output is correct on disk, and the file simply never
+# appears. It failed only for tasks that landed on a different node from the orchestrator, so
+# seven of ten libraries succeeded and three did not - which reads as a staging delay and is not
+# one. A 60 s wait was added for it and could not have helped; nothing was on the way.
+#
+# The job now redirects its own output to the log on shared storage. Constructing `{log}.out` as
+# a path is the signature of the old assumption coming back, so it is what this checks.
+_ex_src = (ROOT / "engine" / "executor.py").read_text(encoding="utf-8")
+_shell_fn = None
+for _cls in [n for n in ast.walk(ast.parse(_ex_src))
+             if isinstance(n, ast.ClassDef) and n.name == "PBSExecutor"]:
+    for _fn in [n for n in _cls.body if isinstance(n, ast.FunctionDef) and n.name == "shell"]:
+        _shell_fn = _fn
+if _shell_fn is None:
+    fails.append("I: PBSExecutor.shell() could not be found in engine/executor.py")
+else:
+    if "exec > " not in (ast.get_source_segment(_ex_src, _shell_fn) or ""):
+        fails.append("I: the generated PBS script does not redirect its own output to the log. "
+                     "Without it the executor is relying on PBS to copy the file between hosts, "
+                     "which on this cluster fails silently.")
+    # Whatever gets read is what the adapters are handed and what an exit status is judged from.
+    # Naming the source by expression rather than by spelling: only `log` - the path the job
+    # writes to itself - may be read here.
+    _read = [n for n in ast.walk(_shell_fn)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "read_text"]
+    if not _read:
+        fails.append("I: PBSExecutor.shell() reads no output at all.")
+    for _r in _read:
+        _from = _r.func.value
+        if not (isinstance(_from, ast.Name) and _from.id == "log"):
+            fails.append(
+                f"I: engine/executor.py:{_r.lineno} reads output from something other than `log`. "
+                f"The only other candidate is the path PBS was asked to DELIVER, and a delivered "
+                f"file that never arrives is indistinguishable from a job that printed nothing.")
+    print(f"I. PBS output reads, all from the job's own log: {len(_read)}")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

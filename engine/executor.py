@@ -163,12 +163,34 @@ class LocalExecutor:
         return out
 
 
+#: Written by the generated job script as its last line, and the authoritative exit status.
+#:
+#: `qstat -xf` reports Exit_status only while the job remains in history (24 h here, and not at
+#: all on some configurations). A watcher that treats "I could not find out" as zero reports a
+#: failed task as a clean one, which is the single worst thing this module can do. The job states
+#: its own outcome inside the log, so the answer survives the scheduler forgetting the job.
+_RC_MARK = "# scqc-pbs-exit="
+_RC_RE = re.compile(r"^# scqc-pbs-exit=(-?\d+)\s*$", re.M)
+
+
 class PBSExecutor:
     """Submit to PBS Pro and wait.
 
     Written for a cluster where the login node cannot run the work itself. It polls rather than
     blocking on `qsub -W block=true`, because a blocking qsub that loses its connection leaves a
     job running with nothing watching it.
+
+    THE JOB WRITES ITS OWN LOG; PBS DOES NOT DELIVER IT. `#PBS -o` names a path *on the host that
+    submitted the job*, so when the orchestrator is itself a job on compute1002 and a task lands on
+    compute1001, PBS must copy the file between two compute nodes after the job ends. On this
+    cluster that copy fails and nothing says so: `Exit_status = 0`, the work correct on disk, and
+    an output file that never appears. It failed intermittently - only for tasks that happened to
+    land on a different node from the orchestrator - which reads exactly like a staging delay and
+    is not one. Waiting cannot fix it, because there is nothing on the way.
+
+    So the generated script redirects its own output to the log path on shared storage and this
+    class reads that file. Nothing is copied between hosts. `#PBS -o/-e` are still set, so the
+    scheduler's own noise has somewhere to go, and are no longer read.
     """
 
     name = "pbs"
@@ -279,12 +301,30 @@ class PBSExecutor:
         if self.project:
             lines.append(f"#PBS -P {self.project}")
         lines.append("set -euo pipefail")
+        # Everything this script emits - the command's output, and the shell's own report of a
+        # child that was killed - goes straight to the log on shared storage. `exec` rather than a
+        # redirect on the command alone, because "Killed" for an out-of-memory child is printed by
+        # bash, not by the child, and that message is the whole diagnosis when it happens.
+        lines.append(f"exec > {shlex.quote(str(log))} 2>&1")
         for k, v in (env or {}).items():
             lines.append(f"export {k}={shlex.quote(str(v))}")
         if cwd:
             lines.append(f"cd {shlex.quote(str(cwd))}")
-        lines.append(" ".join(shlex.quote(str(c)) for c in cmd))
+        lines.append("rc=0")
+        lines.append(" ".join(shlex.quote(str(c)) for c in cmd) + " || rc=$?")
+        # A leading newline so the marker starts a line even when the command's last line had no
+        # terminator, which is what makes it findable.
+        lines.append(f"printf '\\n{_RC_MARK}%s\\n' \"$rc\"")
+        lines.append('exit "$rc"')
         script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # A log left by an earlier attempt would otherwise be read as this attempt's output if this
+        # one dies before its first line - a previous run's success, reported for a job that failed.
+        for stale in (log, Path(f"{log}.out"), Path(f"{log}.err")):
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass
 
         sub = subprocess.run([self.qsub, str(script)], capture_output=True, text=True,
                              env={**os.environ, **self.pbs_env})
@@ -320,33 +360,36 @@ class PBSExecutor:
             time.sleep(wait)
             wait = min(wait * 2, self.poll_s)
 
-        # PBS COPIES THE OUTPUT BACK AFTER THE JOB LEAVES THE QUEUE, not before. Reading
-        # immediately gives an empty file or no file at all, and an adapter that parses stdout
-        # then sees a truncated stream: the doublet adapter refused ten jobs that had in fact run,
-        # because the version banner it prints before scoring was not in what we handed it.
-        #
-        # So wait for the file to be staged back. A job that produced no output at all is a
-        # different thing from one whose output has not arrived yet, and only waiting can tell
-        # them apart.
-        staged = Path(f"{log}.out")
-        alt = Path(f"{log}.err")
-        for _ in range(60):
-            if staged.exists() or alt.exists():
+        # The compute node wrote the log itself, on storage this host can see. Nothing has to
+        # arrive from anywhere, so this is only NFS attribute caching - seconds, not minutes.
+        for _ in range(30):
+            if log.exists():
                 break
             time.sleep(1.0)
-
-        out = ""
-        for cand in (staged, alt):
-            if cand.exists():
-                out += cand.read_text(encoding="utf-8", errors="replace")
-        if not out.strip():
+        if not log.exists():
             raise TaskFailure(
-                f"PBS job {job} finished but wrote no output to {staged}.\n"
-                f"    The file was waited for; it never appeared. Either the job produced "
-                f"nothing, or the site stages output somewhere else - check `qstat -xf {job}` "
-                f"for Output_Path. Refusing rather than treating an empty stream as a clean run.")
-        log.write_text(out, encoding="utf-8")
-        code = int(exit_status.group(1)) if exit_status else 0
+                f"PBS job {job} finished but {log} does not exist.\n"
+                f"    The job script redirects its own output there before doing anything, so the "
+                f"job died before its first line - a rejected resource request, a prologue "
+                f"failure, or a path the compute node cannot write. The scheduler's own account "
+                f"is in {log}.out and `qstat -xf {job}`.")
+
+        out = log.read_text(encoding="utf-8", errors="replace")
+        # The job's own word first; the scheduler's only if the job did not get to speak. Neither
+        # present means the outcome is unknown, and unknown is not success.
+        marks = list(_RC_RE.finditer(out))
+        if marks:
+            code = int(marks[-1].group(1))
+            out = out[:marks[-1].start()].rstrip("\n") + ("\n" if marks[-1].start() else "")
+        elif exit_status:
+            code = int(exit_status.group(1))
+        else:
+            raise TaskFailure(
+                f"PBS job {job}: the log stops before the job recorded an exit status, and qstat "
+                f"no longer holds one either, so whether it succeeded is unknown.\n"
+                f"  log: {log}\n"
+                f"    A job killed for walltime or memory ends exactly like this. Refusing rather "
+                f"than assuming zero.")
         if code != 0:
             tail = "\n".join(out.strip().splitlines()[-15:])
             raise TaskFailure(f"PBS job {job} exited {code}\n  log: {log}\n{tail}")
