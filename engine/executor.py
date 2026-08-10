@@ -320,10 +320,31 @@ class PBSExecutor:
             time.sleep(wait)
             wait = min(wait * 2, self.poll_s)
 
+        # PBS COPIES THE OUTPUT BACK AFTER THE JOB LEAVES THE QUEUE, not before. Reading
+        # immediately gives an empty file or no file at all, and an adapter that parses stdout
+        # then sees a truncated stream: the doublet adapter refused ten jobs that had in fact run,
+        # because the version banner it prints before scoring was not in what we handed it.
+        #
+        # So wait for the file to be staged back. A job that produced no output at all is a
+        # different thing from one whose output has not arrived yet, and only waiting can tell
+        # them apart.
+        staged = Path(f"{log}.out")
+        alt = Path(f"{log}.err")
+        for _ in range(60):
+            if staged.exists() or alt.exists():
+                break
+            time.sleep(1.0)
+
         out = ""
-        for cand in (Path(f"{log}.out"), Path(f"{log}.err")):
+        for cand in (staged, alt):
             if cand.exists():
                 out += cand.read_text(encoding="utf-8", errors="replace")
+        if not out.strip():
+            raise TaskFailure(
+                f"PBS job {job} finished but wrote no output to {staged}.\n"
+                f"    The file was waited for; it never appeared. Either the job produced "
+                f"nothing, or the site stages output somewhere else - check `qstat -xf {job}` "
+                f"for Output_Path. Refusing rather than treating an empty stream as a clean run.")
         log.write_text(out, encoding="utf-8")
         code = int(exit_status.group(1)) if exit_status else 0
         if code != 0:
