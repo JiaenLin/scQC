@@ -2095,6 +2095,26 @@ def _op_valley(adata, params, out_prefix) -> tuple:
         records.append({"sample": sample, "metric": m, "valley": value, "bimodal": bimodal,
                         "note": valley_note(diag), "diagnostics": diag})
 
+    # The mitochondrial ceiling is derived from QUARTILES, not from a valley - that distribution
+    # is unimodal, so the valley route does not apply to it (see modules/05_quality). Four numbers
+    # are returned rather than the per-nucleus array, so nothing crossing the task boundary scales
+    # with cell count.
+    #
+    # Computed HERE, in the same pass and on the same object the valleys came from, so the ceiling
+    # and the floors are provably derived on the same population. Deriving it in a separate step
+    # is how the two come to describe different cell sets without either of them saying so.
+    mito = None
+    if "pct_counts_mt" in adata.obs.columns:
+        _v = sorted(float(x) for x in _float_array(adata.obs["pct_counts_mt"]) if x == x)
+        if len(_v) >= 4:
+            def _q(p):
+                h = (len(_v) - 1) * p
+                lo_i = int(h)
+                hi_i = min(lo_i + 1, len(_v) - 1)
+                return _v[lo_i] + (h - lo_i) * (_v[hi_i] - _v[lo_i])
+            mito = {"n": len(_v), "median": _q(0.5), "q1": _q(0.25), "q3": _q(0.75),
+                    "max": _v[-1]}
+
     valleys = write_valleys_csv(records, str(out_prefix) + ".valleys.csv")
     density = write_density_csv(records, str(out_prefix) + ".valley_density.csv")
     jpath = Path(str(out_prefix) + ".valleys.json")
@@ -2102,7 +2122,10 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     metrics = {"sample": sample,
                "valleys": {r["metric"]: r["valley"] for r in records},
                "bimodal": {r["metric"]: r["bimodal"] for r in records},
-               "notes": {r["metric"]: r["note"] for r in records}}
+               "notes": {r["metric"]: r["note"] for r in records},
+               # None when obs carries no pct_counts_mt, or the library is too small to place a
+               # quartile. Absent is reported as absent; step 5 refuses rather than defaulting.
+               "mito_quartiles": mito}
     return [valleys, density, jpath], metrics
 
 

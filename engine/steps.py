@@ -354,7 +354,7 @@ def _scanpy(pipeline, op, h5, prefix, params, log, python_exe):
 
 
 def _quality_stage(task, pipeline, log):
-    valleys = []
+    valleys, mito_stats = [], {}
     for s in task.params["samples"]:
         res = _scanpy(pipeline, "valley",
                       pipeline.results / "objects" / f"{s}_ambient.h5",
@@ -362,6 +362,9 @@ def _quality_stage(task, pipeline, log):
                       log, task.params["python_exe"])
         m = res.get("metrics", {})
         valleys.append({"sample": s, "value": m.get("valley"), "bimodal": m.get("bimodal")})
+        q = m.get("mito_quartiles")
+        if q:
+            mito_stats[s] = q
 
     unknown = [v["sample"] for v in valleys if v["value"] is None or v["bimodal"] is None]
     if unknown:
@@ -372,7 +375,69 @@ def _quality_stage(task, pipeline, log):
     sub = Task(key=task.key, step=task.step, fn=_quality,
                params={"valleys": valleys, "metric": "umi",
                        "light_floor": task.params.get("light_floor")})
-    return _quality(sub, pipeline, log)
+    out = _quality(sub, pipeline, log)
+    out = _mito_ceiling_stage(task, pipeline, mito_stats, out)
+    return out
+
+
+def _mito_ceiling_stage(task, pipeline, mito_stats, out):
+    """Derive the per-library mitochondrial ceiling alongside the count floors.
+
+    Runs in the SAME step as the floors and off the SAME per-library pass, because the one thing
+    that must be true of all three thresholds is that they describe the same population. Kept a
+    separate function only so its refusals name the ceiling rather than the floors.
+    """
+    q = step_module("quality")
+    samples = list(task.params["samples"])
+    missing = [s for s in samples if s not in mito_stats]
+    if missing:
+        # Not defaulted and not skipped. A library with no mitochondrial summary is not a library
+        # with no mitochondrial contamination, and filtering it on the cohort's other ceilings is
+        # the borrowed-threshold failure this whole module exists to prevent.
+        raise Refusal(
+            f"05_quality (mitochondrial ceiling): no quartile summary for "
+            f"{', '.join(missing)}. Either obs carries no pct_counts_mt - check the mt_prefix "
+            f"matched anything - or the library has too few cells to place a quartile. Refusing "
+            f"rather than deriving a ceiling for it from the other libraries.")
+
+    assay = task.params.get("assay", "snrna")
+    bounds = task.params.get("mito_bounds")
+    declared_by = task.params.get("mito_bound_declared_by")
+    try:
+        d = q.derive_mito_ceiling_from_quartiles(
+            mito_stats, assay=assay,
+            bounds=tuple(bounds) if bounds else None, declared_by=declared_by)
+    except Exception as e:                                                # noqa: BLE001
+        raise Refusal(f"05_quality (mitochondrial ceiling): {e}") from None
+
+    lo, hi = d["bounds"]
+    ceil = d["ceilings"]
+    print(f"    mitochondrial ceiling: per library "
+          f"{min(m.ceiling for m in ceil.values()):.2f}-{max(m.ceiling for m in ceil.values()):.2f}% "
+          f"(bound {lo}-{hi}%, {assay})")
+    for n in d["notes"]:
+        print(f"      {n}")
+
+    import csv
+    p = _tables(pipeline) / "mito_ceiling_per_sample.csv"
+    with open(p, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["sample", "n", "median", "q1", "q3", "iqr", "derived", "ceiling", "clamped",
+                    "iqr_mult", "assay", "bound_lo", "bound_hi"])
+        for s in samples:
+            m = ceil[s]
+            w.writerow([s, m.n, f"{m.median:.6f}", f"{m.q1:.6f}", f"{m.q3:.6f}",
+                        f"{m.iqr:.6f}", f"{m.derived:.6f}", f"{m.ceiling:.6f}", m.clamped,
+                        d["mult"], assay, lo, hi])
+
+    out = dict(out)
+    out["outputs"] = list(out.get("outputs", [])) + [str(p)]
+    out["metrics"] = dict(out.get("metrics", {}))
+    out["metrics"].update({
+        "mito_ceiling_lo": min(m.ceiling for m in ceil.values()),
+        "mito_ceiling_hi": max(m.ceiling for m in ceil.values()),
+        "mito_bound_binds": sum(1 for m in ceil.values() if m.clamped)})
+    return out
 
 
 # --------------------------------------------------------------------------------------------
