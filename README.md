@@ -55,7 +55,8 @@ a workflow convenience:
   then stop. The apply task is not placed in the task graph at all, so there is no code path from
   this mode to a deletion.
 - **apply** — the default. Run every step, then measure each removal criterion per barcode, write
-  the removal ledger, and materialise the filtered object.
+  the removal ledger, and materialise the filtered objects — **one per library and one combined**,
+  each retained nucleus carrying its cluster and that cluster's flags from step 6.
 
 ```bash
 scqc run --project ./my-study --mode evidence   # measures everything, removes nothing
@@ -145,7 +146,14 @@ upgrading the pipeline cannot disturb an existing result.
 | 4 | doublets | score per sample, before quality filtering; flag only | — |
 | 5 | quality | derive count floors and the per-library mitochondrial ceiling | — |
 | 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet | — |
-| 7 | **apply** | measure every criterion, write the ledger, then write the filtered object | **yes — only here** |
+| 7 | **apply** | measure every criterion, write the ledger, then write the filtered objects | **yes — only here** |
+
+Apply mode writes `objects/cohort.deliverable.h5ad` and
+`objects/cohort_per_sample/<sample>.filtered.h5ad`. Every retained nucleus carries `sample`,
+`cluster`, `cluster_FLAG`, `cluster_WATCH` and the continuous values behind them, so nothing
+downstream has to re-cluster to recover what step 6 found — and a re-clustering of the filtered
+object would not give the same answer anyway, since criterion D is a tautology once the doublets
+are gone.
 
 🔬 **[How each filter is calculated](docs/FILTERS.md)** — the exact procedure for the UMI floor,
 the gene floor, the mitochondrial ceiling, doublets and the cluster check: what each is derived

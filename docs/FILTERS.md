@@ -334,6 +334,38 @@ fail_mito_ceiling          above that library's mitochondrial ceiling
 fail_doublet               called a doublet by the detector
 ```
 
+### What apply mode writes
+
+Both shapes, because they answer different questions:
+
+| path | what it is |
+|---|---|
+| `objects/cohort.deliverable.h5ad` | every library, filtered, in one object |
+| `objects/cohort_per_sample/<sample>.filtered.h5ad` | one filtered object per library |
+| `tables/removal_ledger.csv` | one row per **removed** barcode, with every criterion that fired on it |
+
+The combined object is what integration and differential testing read. The per-library objects are
+what annotation reads — and this pipeline's cluster check is per library precisely because
+identity is decided there.
+
+Every retained nucleus carries what step 6 found about its cluster:
+
+| `obs` column | |
+|---|---|
+| `sample` | the library it came from |
+| `cluster` | its cluster in that library's clustering, as a **label** — a cluster id reads as a number and is not one |
+| `cluster_FLAG`, `cluster_WATCH` | that cluster's verdicts, as `True` / `False` / **absent** |
+| `cluster_pct_doublet`, `cluster_median_pct_mt` | the continuous values behind them |
+
+Absent is a third state and is preserved as such. A barcode step 6 never labelled, or a cluster
+missing from the profile, leaves these `None` — not `False` and not `0`. *"This cluster was not
+flagged"* and *"this barcode was never examined"* are different facts, and a deliverable that
+conflates them claims a cluster check that did not happen.
+
+Carrying the flags forward is not a convenience. Without them the next stage has to re-cluster to
+ask a question step 6 already answered — and re-clustering a *filtered* object does not give the
+same answer, because criterion D is a tautology once the doublets have been removed.
+
 Each threshold is recorded as **ADJUDICATED** (declared in `decisions.yml`, with an approver and
 their own words) or **DERIVED** (what the pipeline measured). A run without a decisions file uses
 the derived values and says so; a proposal is never later read as a decision.

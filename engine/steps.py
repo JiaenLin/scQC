@@ -1431,12 +1431,13 @@ def _apply(task, pipeline, log):
     # --- and only now is a matrix touched.
     keep_lists = []
     for s in samples:
+        kept = [r["barcode"] for r in percell if r["sample"] == s and flag(r, "keep")]
         kp = pipeline.scratch / f"{s}_apply.keep.txt"
-        kp.write_text("\n".join(r["barcode"] for r in percell
-                                if r["sample"] == s and flag(r, "keep")) + "\n",
-                      encoding="utf-8")
-        keep_lists.append({"sample": s, "keep_csv": str(kp),
-                           "h5ad": str(pipeline.results / "objects" / f"{s}_ambient.h5")})
+        kp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        keep_lists.append({
+            "sample": s, "keep_csv": str(kp),
+            "h5ad": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
+            "annotations_csv": _cluster_annotations(pipeline, ap, s, kept, rows)})
     res = _scanpy(pipeline, "apply_write", pipeline.results / "objects" / f"{samples[0]}_ambient.h5",
                   pipeline.results / "objects" / "cohort",
                   {"libraries": keep_lists}, log, task.params["python_exe"])
@@ -1449,11 +1450,64 @@ def _apply(task, pipeline, log):
             f"populations, and the one on disk is not the one that was approved.")
     print(f"    delivered {delivered:,} of {n_in:,}; {n_removed:,} removed, ledger at {ledger}")
     print(f"    ceilings: {ceiling_basis}")
+    written = res.get("metrics") or {}
+    print(f"    per-library objects: {len(written.get('per_sample_objects') or [])}"
+          f"   obs carries: {', '.join(written.get('obs_columns') or [])}")
     return {"outputs": [str(p) for p in res.get("outputs", [])] + [str(ledger)],
             "metrics": {"n_in": n_in, "n_delivered": delivered, "n_removed": n_removed,
                         "action": action, "ceilings": ceiling_basis,
+                        "authorised_by": authorised_by,
+                        "per_sample_objects": written.get("per_sample_objects") or [],
+                        "obs_columns": written.get("obs_columns") or [],
                         **{f"n_{c}": sum(1 for x in masks[c] if x) for c in criteria}},
             "versions": res.get("versions", {})}
+
+
+def _cluster_annotations(pipeline, ap, sample, kept, profile) -> str:
+    """A per-barcode annotation table for one library: its cluster, and that cluster's flags.
+
+    Step 6 clusters each library and flags each cluster, and until this existed none of it reached
+    the deliverable. The per-cell assignment was computed and discarded, so anything downstream
+    had to re-cluster to ask a question step 6 had already answered - and re-clustering a
+    filtered object does not even give the same answer, because criterion D is a tautology once
+    the doublets are gone.
+
+    The join is barcode -> cluster, from step 6's own labels, then cluster -> flags through
+    `apply.annotate_kept`, which is the module's own function for exactly this and had never been
+    called by anything.
+
+    A barcode step 6 did not label, or a cluster absent from the profile, yields empty cells. An
+    empty cell is not `False`: "this cluster was not flagged" and "this barcode was never
+    examined" are different facts, and a deliverable that conflates them says a cluster check
+    happened where none did.
+    """
+    import csv as _csv
+
+    r = pipeline.results_by_key.get(f"06_cluster/{sample}")
+    labels_path = next((o for o in (getattr(r, "outputs", None) or [])
+                        if str(o).endswith(".cluster_labels.csv")), None)
+    if labels_path is None:
+        raise Refusal(
+            f"07_apply ({sample}): step 6 recorded no per-barcode cluster labels, so its result "
+            f"cannot be carried onto the nuclei it describes. The deliverable would be written "
+            f"having never been cluster-checked, and nothing in it would say so.")
+
+    with open(labels_path, encoding="utf-8", newline="") as fh:
+        of_barcode = {str(row["barcode"]): row.get("cluster") or None
+                      for row in _csv.DictReader(fh)}
+
+    obs_rows = [{"barcode": b, "sample": sample, "cluster": of_barcode.get(b)} for b in kept]
+    ap.annotate_kept(obs_rows, profile, cluster_key="cluster", sample_key="sample")
+
+    out = pipeline.scratch / f"{sample}_apply.annotations.csv"
+    fields = ["barcode", "cluster", "cluster_FLAG", "cluster_WATCH",
+              "cluster_pct_doublet", "cluster_median_pct_mt"]
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        for row in obs_rows:
+            w.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fields})
+    return str(out)
 
 
 def so_apply_criteria():

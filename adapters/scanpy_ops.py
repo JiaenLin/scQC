@@ -2358,7 +2358,23 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
                            marker_topn=int(params.get("marker_topn", MARKER_TOPN)),
                            marker_method=str(params.get("marker_method", "wilcoxon")))
     profile = write_profile_csv(rows, str(out_prefix) + ".cluster_profile.csv")
-    outputs = [profile]
+
+    # WHICH BARCODE IS IN WHICH CLUSTER, written out rather than discarded.
+    #
+    # The profile is one row per (sample, cluster) and cannot be joined back to a barcode, so
+    # without this the per-cell assignment leiden just computed dies with the process - and the
+    # next stage re-clusters to ask a question this step has already answered. It is a two-column
+    # table rather than a second copy of the matrix: the labels are what is needed downstream, and
+    # the matrix is already on disk.
+    labels = Path(str(out_prefix) + ".cluster_labels.csv")
+    with labels.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["barcode", "sample", "cluster"])
+        col = adata.obs[key]
+        for b, c in zip(adata.obs_names, col):
+            w.writerow([str(b), params.get("sample") or "", "" if _unknown(c) else str(c)])
+
+    outputs = [profile, labels]
     if params.get("write_h5ad"):
         h5 = Path(str(out_prefix) + ".clustered.h5ad")
         adata.write_h5ad(str(h5))
@@ -2501,6 +2517,37 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     return [path], metrics
 
 
+#: Annotation columns that are LABELS, never quantities. A cluster id reads as a number and is
+#: not one: coercing "10" to 10.0 turns an identifier into an arithmetic type, and anything that
+#: then sorts or averages it produces a result with no meaning and no error.
+_ANNOTATION_LABELS = ("cluster", "sample")
+
+
+def _annotation_value(column: str, raw):
+    """One annotation cell, with its type back and its unknowns intact.
+
+    Read from a CSV, so everything arrives as text. An EMPTY cell is unknown and becomes None -
+    never False and never 0.0. `x or None` was the first version of this and it is wrong in a way
+    worth naming: a genuine 0.0 is falsy, so a cluster measured at 0% doublet came out as a
+    cluster nobody measured.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if text == "":
+        return None
+    if column in _ANNOTATION_LABELS:
+        return text
+    if text == "True":
+        return True
+    if text == "False":
+        return False
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
 def _op_apply_write(adata, params, out_prefix) -> tuple:
     """Materialise the deliverable: the kept barcodes of every library, in ONE object.
 
@@ -2517,7 +2564,14 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
         raise TaskFailure("required parameter 'libraries' must be a non-empty list of "
                           "{sample, h5ad, keep_csv} entries.")
     out_h5 = Path(str(out_prefix) + ".deliverable.h5ad")
+    # BOTH SHAPES, because they answer different questions and the per-library subsets exist in
+    # memory a moment before the concatenation anyway. The combined object is what integration and
+    # differential testing read; the per-library ones are what annotation reads, and this
+    # pipeline's cluster check is per library precisely because identity is decided there.
+    per_sample_dir = Path(str(out_prefix) + "_per_sample")
+    per_sample_dir.mkdir(parents=True, exist_ok=True)
     parts, per_lib, var_ref, var_from = [], [], None, None
+    written_per_sample = []
     for entry in libs:
         s = str(entry.get("sample"))
         keep_path = Path(str(entry.get("keep_csv")))
@@ -2545,7 +2599,35 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                 f"that was approved.")
         sub = a[np.asarray([str(b) in set(wanted) for b in a.obs_names], dtype=bool)].copy()
         sub.obs["sample"] = pd.Categorical([s] * sub.n_obs)
+
+        # WHAT STEP 6 FOUND, CARRIED ONTO THE NUCLEI IT FOUND IT ABOUT. Step 6 clusters each
+        # library and flags each cluster, and until now none of that reached the deliverable: the
+        # per-cell assignment was computed and discarded, so the next stage had to re-cluster to
+        # ask a question already answered. A barcode with no annotation is left None, never a
+        # blank string or a False - "this cluster was not flagged" and "this barcode was not in
+        # the table" are different facts.
+        ann_csv = entry.get("annotations_csv")
+        if ann_csv:
+            ann_path = Path(str(ann_csv))
+            if not ann_path.exists():
+                raise TaskFailure(
+                    f"{s}: annotations_csv {ann_path} does not exist. It is the only route by "
+                    f"which step 6's result reaches the object; writing the deliverable without "
+                    f"it would silently produce one that has never been cluster-checked.")
+            with ann_path.open(encoding="utf-8", newline="") as fh:
+                reader = csv.DictReader(fh)
+                cols = [c for c in (reader.fieldnames or []) if c != "barcode"]
+                table = {str(r["barcode"]): r for r in reader}
+            for c in cols:
+                sub.obs[c] = pd.Series(
+                    [_annotation_value(c, table.get(str(b), {}).get(c))
+                     for b in sub.obs_names],
+                    index=sub.obs_names, dtype=object)
+
         per_lib.append({"sample": s, "n_in": int(a.n_obs), "n_kept": int(sub.n_obs)})
+        one = per_sample_dir / f"{s}.filtered.h5ad"
+        sub.write_h5ad(str(one))
+        written_per_sample.append(one)
         parts.append(sub)
         del a
 
@@ -2569,8 +2651,11 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                 "the criteria that removed it",
     }
     combined.write_h5ad(str(out_h5))
-    return [out_h5], {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),
-                      "libraries": per_lib}
+    return ([out_h5] + written_per_sample,
+            {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),
+             "libraries": per_lib,
+             "per_sample_objects": [str(p) for p in written_per_sample],
+             "obs_columns": sorted(map(str, combined.obs.columns))})
 
 
 def main(argv=None) -> int:
