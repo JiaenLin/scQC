@@ -173,10 +173,34 @@ class Pipeline:
 
         self.state = RunState(self.work / "state.json")
         self.prov = Provenance(ROOT)
-        self.findings: list[dict] = []       # every gate finding, for section 1 of the report
         self.results_by_key: dict = {}
 
+        # GATE FINDINGS SURVIVE A SKIP, because a skipped task's findings are still true.
+        #
+        # They used to live only here, in memory, for the length of one process. A re-run skips
+        # completed tasks, so no gate re-ran, so the list was empty - and an empty gate list
+        # means "supplied, nothing raised". A report rebuilt on a finished run therefore came
+        # out PASS with zero findings over a cohort whose original run raised thirteen REVIEWs,
+        # and it looked exactly like a clean run, which is the only kind of wrong a reader
+        # cannot see.
+        #
+        # Keyed by STEP, which is what gate() is given. A step that actually re-runs replaces
+        # its own findings the first time it gates in this run; a step that is skipped keeps
+        # what it recorded when it last ran.
+        self._findings_by_step: dict = dict(self.state.data.get("findings_by_step") or {})
+        self._gated_this_run: set = set()
+
     # ------------------------------------------------------------------ gates
+
+    @property
+    def findings(self) -> list:
+        """Every gate finding this cohort has, in step order - re-run or restored alike.
+
+        A property rather than a list, so there is one place the report can get them and no
+        caller can hold a copy that a later step's gate does not reach.
+        """
+        return [f for step in sorted(self._findings_by_step)
+                for f in self._findings_by_step[step]]
 
     def gate(self, step: str, findings, verdict: str) -> None:
         """Record a gate's output and stop the run if it refused.
@@ -185,14 +209,22 @@ class Pipeline:
         The distinction is preserved all the way into the report rather than collapsed to
         pass/fail, because collapsing it trains a reader to ignore both.
         """
+        # First gate of this run for this step replaces what the step recorded last time; later
+        # gates of the same step append to it. A step whose tasks were all skipped never reaches
+        # here and keeps the findings it stored when it did run.
+        if step not in self._gated_this_run:
+            self._gated_this_run.add(step)
+            self._findings_by_step[step] = []
         for f in findings:
-            self.findings.append({
+            self._findings_by_step[step].append({
                 "step": step,
                 "check": getattr(f, "check", "?"),
                 "severity": getattr(f, "severity", "ok"),
                 "message": getattr(f, "message", str(f)),
                 "detail": list(getattr(f, "detail", []) or []),
             })
+        self.state.data["findings_by_step"] = self._findings_by_step
+        self.state.flush()
         if verdict == "REFUSE":
             worst = [f for f in findings if getattr(f, "severity", "") == "REFUSE"]
             raise Refusal(

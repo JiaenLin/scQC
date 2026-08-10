@@ -1726,8 +1726,25 @@ def _cut(value: str, label: str, how: str) -> str:
 
 
 def _column(per_sample, key):
-    """One column of the per-library table, as a list of values."""
-    return [r.get(key) for r in (per_sample.get("rows") or []) if isinstance(r, dict)]
+    """One column of the per-library table, as a list of values.
+
+    A row is `{"sample": ..., "cells": {key: value}}` - the values are nested, and reading them
+    off the row itself returns None for every column, which renders as an empty table and as a
+    threshold of "not recorded" beside a figure that plainly shows one.
+    """
+    return [(r.get("cells") or {}).get(key)
+            for r in (per_sample.get("rows") or []) if isinstance(r, dict)]
+
+
+def _numbers(values) -> list:
+    """Only the values that are numbers. NOT STATED is a sentinel string, not a quantity."""
+    out = []
+    for v in values:
+        try:
+            out.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _one_value(values):
@@ -1736,7 +1753,7 @@ def _one_value(values):
     A constant that is not constant is not a constant, and printing the first of several
     different numbers as though it applied to every library is the error this prevents.
     """
-    seen = {v for v in values if v is not None and v != ""}
+    seen = set(_numbers(values))
     return next(iter(seen)) if len(seen) == 1 else None
 
 
@@ -1844,9 +1861,8 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     # ---------------------------------------------------------------- the spine
     umi_cut = _one_value(_column(per_sample, "umi_floor_proposed"))
     gene_cut = _one_value(_column(per_sample, "gene_floor_proposed"))
-    mito = [x for x in _column(per_sample, "mito_ceiling_pct") if x is not None]
-    mito_txt = (f"{min(float(m) for m in mito):.2f}–{max(float(m) for m in mito):.2f}%"
-                if mito else "not recorded")
+    mito = _numbers(_column(per_sample, "mito_ceiling_pct"))
+    mito_txt = f"{min(mito):.2f}–{max(mito):.2f}%" if mito else "not recorded"
     rows = [
         ("Counts per nucleus", "F7", f"≥ {_fmt(umi_cut)}", "UMI floor",
          "DERIVED · cohort constant"),
@@ -1908,13 +1924,17 @@ def render_html(doc: dict, figure_uris: dict) -> str:
             f"<span class='scope'>{_e(c.get('scope', ''))}</span></th>" for c in cols) + "</tr>"
         trs = []
         for r in rws:
+            cells_of = r.get("cells") or {}
+            clamped = str(cells_of.get("mito_clamped", "")).strip().lower()
             tds = [f"<td>{_e(str(r.get('sample', '')))}</td>"]
             for c in cols:
                 key = c.get("key")
-                val = r.get(key)
-                mark = ""
-                if key == "mito_ceiling_pct" and str(r.get("mito_clamped", "")).lower()                         in ("true", "upper", "lower", "1"):
-                    mark = " ▲"
+                val = cells_of.get(key)
+                # The ceiling was decided by the declared bound rather than by this library's
+                # own distribution. Marked because the two are different kinds of number in the
+                # same column, and nothing else on the row says which this one is.
+                mark = (" ▲" if key == "mito_ceiling_pct"
+                        and clamped in ("true", "upper", "lower", "1") else "")
                 cls = " class='flag'" if mark else ""
                 tds.append(f"<td{cls}>{_e('' if val is None else str(val))}{mark}</td>")
             trs.append("<tr>" + "".join(tds) + "</tr>")
