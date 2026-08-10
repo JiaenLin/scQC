@@ -431,6 +431,11 @@ class Pipeline:
             # from every report while the code that produced it ran correctly every time. One
             # payload builder, both callers.
             "per_sample": self._per_sample_block(),
+            # Figures, for the same reason and the same way. Assembled at the report task, they
+            # were assembled correctly, printed as assembled, and then finish() rebuilt the
+            # payload without them and wrote a figure-less document over the top - the identical
+            # failure this comment already described, reproduced one key lower.
+            **self._figures_block(),
             "provenance": self.prov.snapshot(
                 self.project / "decisions.yml"
                 if (self.project / "decisions.yml").exists() else None),
@@ -438,6 +443,20 @@ class Pipeline:
                             for k in sorted(stat) if stat[k] == "blocked"][:20]
                            or ["none recorded"]),
         }
+
+    def _figures_block(self) -> dict:
+        """The figure data this run's tables can support, and a reason for every figure they
+        cannot. Never raises: a figure that cannot be assembled must not be able to stop the
+        document, which is the only record of the run it would have illustrated."""
+        from report.collect import collect as _collect
+
+        try:
+            figures, notes = _collect(self.results / "tables", samplesheet_rows=self.samples)
+        except Exception as exc:                                          # noqa: BLE001
+            return {"figures": {},
+                    "figure_notes": {"*": f"the figure assembler failed: "
+                                          f"{type(exc).__name__}: {exc}"}}
+        return {"figures": figures, "figure_notes": notes}
 
     def _per_sample_block(self) -> dict | None:
         """Every threshold this run derived, one row per library. None if it cannot be built.

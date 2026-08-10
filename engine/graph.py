@@ -330,6 +330,5 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         ))
         last = "07_apply"
 
-    tasks.append(Task(key="report", step="report", fn=steps._report, needs=(last,),
-                      params={"extra": {}}))
+    tasks.append(Task(key="report", step="report", fn=steps._report, needs=(last,), params={}))
     return tasks

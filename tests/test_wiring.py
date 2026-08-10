@@ -403,6 +403,41 @@ if not _builders:
 print(f"J. build_report call sites, all fed by report_payload(): "
       f"{sum(1 for _, ok in _builders if ok)} of {len(_builders)}")
 
+# ---- J2. the report task does not ADD to the payload it was given.
+#
+# The other half of J, and the half that actually keeps happening. finish() rebuilds the payload
+# after the graph and writes last, so anything the report TASK adds to its own copy is silently
+# discarded - the task's log says the section was assembled, and the document does not have it.
+#
+# It has now happened twice for the same reason: once for the per-library threshold table, and
+# once for the figures, where seven were assembled, printed as assembled, and rendered nowhere.
+# Both times the code was correct and ran; both times the addition went in at the wrong layer.
+# A section belongs to report_payload(), which both callers use, or it does not exist.
+_report_fn = next((f for f in ast.walk(ast.parse((ROOT / "engine" / "steps.py")
+                                                 .read_text(encoding="utf-8")))
+                   if isinstance(f, ast.FunctionDef) and f.name == "_report"), None)
+if _report_fn is None:
+    fails.append("J2: engine/steps.py has no _report function; this check is not testing "
+                 "anything.")
+else:
+    _mutations = []
+    for _n in ast.walk(_report_fn):
+        if isinstance(_n, ast.Assign):
+            for _t in _n.targets:
+                if isinstance(_t, ast.Subscript) and isinstance(_t.value, ast.Name) \
+                        and _t.value.id == "payload":
+                    _mutations.append(_n.lineno)
+        if isinstance(_n, ast.Call) and isinstance(_n.func, ast.Attribute) \
+                and isinstance(_n.func.value, ast.Name) and _n.func.value.id == "payload" \
+                and _n.func.attr in ("update", "setdefault"):
+            _mutations.append(_n.lineno)
+    for _ln in sorted(set(_mutations)):
+        fails.append(f"J2: engine/steps.py:{_ln} adds to the payload inside the report task. "
+                     f"scqc_cli.finish() rebuilds the payload afterwards and writes last, so "
+                     f"this addition reaches the task's own document and no other. Put it in "
+                     f"report_payload(), which both callers go through.")
+    print(f"J2. payload additions inside the report task: {len(set(_mutations))}")
+
 # ---- K. every step_module() the engine asks for is one the engine can load.
 #
 # `step_module("audit_removal")` raised KeyError at runtime because the module was never added to

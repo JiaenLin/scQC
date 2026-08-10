@@ -675,23 +675,18 @@ def _round(v, n):
 
 def _report(task, pipeline, log):
     from report.build import build_report
-    from report.collect import collect as collect_figures
 
     # report_payload() assembles the per-library table and writes its CSV, because scqc_cli
     # rebuilds this payload after the graph finishes and would otherwise write over anything
     # added here. This step reports the file; it does not produce it.
     payload = pipeline.report_payload(stopped=None)
-    payload.update(task.params.get("extra", {}))
 
-    # THE FIGURES. Everything below this line existed and was never called: report/figures.py
-    # draws twelve, report/build.py renders whatever the payload describes, and the payload
-    # described none of them - so every finished run produced a report that printed "NOT
-    # PRODUCED" twelve times over a complete set of tables.
-    figures, figure_notes = collect_figures(
-        _tables(pipeline), samplesheet_rows=pipeline.samples)
-    payload.setdefault("figures", {}).update(figures)
-    payload["figure_notes"] = figure_notes
-    print(f"    figures: {len(figures)} assembled ({', '.join(sorted(figures))})")
+    # The figures come from report_payload(), like every other section - NOT assembled here.
+    # Assembling them here worked and was still wrong: finish() rebuilds the payload after the
+    # graph and wrote a figure-less document over the top of this one.
+    figures = payload.get("figures") or {}
+    figure_notes = payload.get("figure_notes") or {}
+    print(f"    figures: {len(figures)} assembled ({', '.join(sorted(figures)) or 'none'})")
     for fid in sorted(figure_notes):
         print(f"      {fid} not produced: {figure_notes[fid]}")
 
