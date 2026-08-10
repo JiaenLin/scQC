@@ -1036,20 +1036,116 @@ def _cluster_flags(task, pipeline, log):
 # step 7 - the only step that removes anything
 
 
+#: `mito_ceiling_pct: per_library` in decisions.yml means "apply what step 5 derived for each
+#: library", rather than one number for all ten. It is a word and not a number because that is
+#: what is being approved: a single cohort ceiling and a per-library fence are different
+#: decisions, and on the calibration cohort the difference is a removal that falls 2.35x more
+#: heavily on one arm of the design than the other against 1.23x - the rule-one Q3 quantity.
+PER_LIBRARY = "per_library"
+
+
+def _ceilings_for(pipeline, samples, declared):
+    """(ceiling per sample, how it was decided). Refuses rather than defaulting.
+
+    A single declared number is applied to every library. `per_library` reads step 5's own table,
+    which is the only place the derived fences exist.
+    """
+    if str(declared).strip().lower() != PER_LIBRARY:
+        try:
+            v = float(declared)
+        except (TypeError, ValueError):
+            raise Refusal(
+                f"07_apply: quality.mito_ceiling_pct is {declared!r}, which is neither a number "
+                f"nor {PER_LIBRARY!r}. There is no default: one cohort ceiling and a per-library "
+                f"fence remove different populations.") from None
+        return {s: v for s in samples}, f"one declared ceiling of {v:g}% for every library"
+
+    import csv as _csv
+    p = _tables(pipeline) / "mito_ceiling_per_sample.csv"
+    if not p.exists():
+        raise Refusal(
+            f"07_apply: {PER_LIBRARY} was approved but {p} does not exist, so there is nothing "
+            f"to apply. Run step 5 in evidence mode first - the ceilings are derived there.")
+    with p.open(encoding="utf-8", newline="") as fh:
+        got = {r["sample"]: float(r["ceiling"]) for r in _csv.DictReader(fh) if r.get("ceiling")}
+    missing = [s for s in samples if s not in got]
+    if missing:
+        raise Refusal(
+            f"07_apply: {p} has no ceiling for {', '.join(missing)}. A library filtered on "
+            f"another library's ceiling is filtered on a threshold nobody derived for it.")
+    lo, hi = min(got[s] for s in samples), max(got[s] for s in samples)
+    return {s: got[s] for s in samples}, (f"the per-library fence step 5 derived, "
+                                          f"{lo:.2f}-{hi:.2f}% across {len(samples)} libraries")
+
+
+#: What step 7 cannot proceed without, and what each one is for. Read by the measure tasks and by
+#: the apply task, so an incomplete decisions file is refused identically wherever it is noticed.
+APPLY_REQUIRES = {
+    "quality.umi_floor": "the UMI floor",
+    "quality.gene_floor": "the gene floor",
+    "quality.mito_ceiling_pct": "the mitochondrial ceiling",
+}
+
+
+def _apply_thresholds(task, pipeline, samples):
+    """(resolved decisions, ceiling per sample, how the ceilings were decided).
+
+    Resolved when the task RUNS, not when the graph is built: with `per_library` the ceilings come
+    from step 5's table, and on a clean run that file does not exist yet while the graph is being
+    assembled. Both step-7 tasks come through here, so they cannot resolve differently.
+    """
+    from .decisions import validate
+
+    resolved = validate(task.params["decisions"], APPLY_REQUIRES)
+    ceilings, basis = _ceilings_for(pipeline, samples, resolved["quality.mito_ceiling_pct"])
+    return resolved, ceilings, basis
+
+
+def _apply_measure(task, pipeline, log):
+    """Measure every applied criterion for ONE library. Removes nothing, writes no object."""
+    p = task.params
+    _require_gene_patterns("07_apply", p)
+    s = p["sample"]
+    resolved, ceilings, _basis = _apply_thresholds(task, pipeline, [s])
+    return _scanpy(pipeline, "apply_measure",
+                   pipeline.results / "objects" / f"{s}_ambient.h5",
+                   pipeline.scratch / f"{s}_apply",
+                   {"sample": s,
+                    "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
+                    "umi_floor": resolved["quality.umi_floor"],
+                    "gene_floor": resolved["quality.gene_floor"],
+                    "mito_ceiling_pct": ceilings[s],
+                    "light_floor": p["light_floor"],
+                    "doublet_csv": p["doublet_csv"],
+                    "doublet_key": "doublet_class", "doublet_positive": "doublet"},
+                   log, p["python_exe"])
+
+
 def _apply(task, pipeline, log):
     import csv as _csv
 
-    from .decisions import action_string, validate
+    from .decisions import action_string
 
     ap = step_module("apply")
-    required = {
-        "quality.umi_floor": "the UMI floor",
-        "quality.gene_floor": "the gene floor",
-        "quality.mito_ceiling_pct": "the mitochondrial ceiling",
-    }
-    resolved = validate(task.params["decisions"], required)
+    samples = list(task.params["samples"])
+    resolved, _ceilings, ceiling_basis = _apply_thresholds(task, pipeline, samples)
     apply_block = (task.params["decisions"].get("apply") or {})
-    action = apply_block.get("action") or action_string(resolved)
+    # THE ACTION THE OPERATOR APPROVED, AND THE ACTION THE THRESHOLDS AUTHORISE, ARE TWO
+    # DIFFERENT STRINGS, and the gate exists to compare them. Falling back to the derived one
+    # when `apply.action` is blank would have the gate check a value against itself: every
+    # approval would match, including one given for a different set of thresholds. The
+    # decisions template says so in as many words - "changing any threshold above changes this
+    # string, which invalidates the approval - by design".
+    declared_action = str(apply_block.get("action") or "").strip()
+    verbatim = str(apply_block.get("verbatim") or "")
+    action = action_string(resolved)
+    if not declared_action:
+        raise Refusal(
+            "07_apply: apply.action is empty in decisions.yml. It must hold the exact action the "
+            "approval was given for, because that is what the current thresholds are checked "
+            "against. With it blank there is nothing to check and the approval would match "
+            "whatever this run happened to derive.\n"
+            f"    This run's thresholds authorise: {action}")
 
     # Read through step 6's own reader, not csv.DictReader. `preflight` compares pct_doublet
     # against a float and tests FLAG with `is True`; from a raw DictReader every cell is a string,
@@ -1063,18 +1159,109 @@ def _apply(task, pipeline, log):
             rows = cf.read_profile_csv(prof)
         except cf.ClusterRefusal as e:
             raise Refusal(f"07_apply: step 6's profile cannot be read: {e}") from None
-    for f in ap.preflight(rows, kept_total=0):
-        pipeline.findings.append({"step": "07_apply", "check": f.check, "severity": f.severity,
-                                  "message": f.message, "detail": []})
+    # --- what the per-library measurements found. One table per library, covering every
+    # barcode it saw - kept and removed alike - because a record of only the survivors cannot
+    # be audited against anything.
+    percell: list = []
+    absent = []
+    for s in samples:
+        r = pipeline.results_by_key.get(f"07_measure/{s}")
+        got = [o for o in (getattr(r, "outputs", None) or []) if str(o).endswith(".percell.csv")]
+        if not got:
+            absent.append(s)
+            continue
+        with open(got[0], encoding="utf-8", newline="") as fh:
+            percell.extend(dict(row, _src=str(got[0])) for row in _csv.DictReader(fh))
+    if absent:
+        raise Refusal(
+            f"07_apply: no per-cell criteria table was recorded for {', '.join(absent)}. A "
+            f"library whose criteria were never measured cannot be filtered, and delivering the "
+            f"other nine as though it had been is a cohort missing a library that says so "
+            f"nowhere.")
 
-    raise Refusal(
-        "07_apply is not wired to a written object.\n"
-        f"    The decisions file is complete and authorises: {action}\n"
-        "    The pre-flight ran and its findings are in the report. What does NOT exist yet is\n"
-        "    the combined object this step would filter, so nothing is written.\n"
-        "    Refusing rather than producing a deliverable that would not carry its own removal\n"
-        "    ledger - an unrecoverable removal is the one outcome this pipeline exists to make\n"
-        "    impossible.")
+    def flag(row, col):
+        return str(row.get(col, "")).strip().lower() == "true"
+
+    criteria = list(so_apply_criteria())
+    n_in = len(percell)
+    ids = [f"{r['sample']}|{r['barcode']}" for r in percell]
+    masks = {c: [flag(r, c) for r in percell] for c in criteria}
+    removed_mask = [flag(r, "removed") for r in percell]
+    n_removed = sum(1 for x in removed_mask if x)
+
+    # The pre-flight is told the real retained total, not a placeholder: its whole job is to say
+    # what share of the DELIVERABLE sits in a cluster step 6 flagged.
+    for f in ap.preflight(rows, kept_total=n_in - n_removed):
+        pipeline.findings.append({"step": "07_apply", "check": f.check, "severity": f.severity,
+                                  "message": f.message, "detail": list(f.detail or [])})
+
+    # --- the ledger, BEFORE the gate. One row per removed barcode, listing every criterion that
+    # fired on it, so what left can be named afterwards and re-read from the input.
+    record = ap.build_removal_record(ids, masks)
+    ledger = _tables(pipeline) / "removal_ledger.csv"
+    ap.write_removal_record(record, ledger)
+
+    # --- THE GATE. Nothing has been filtered yet; this is what decides whether anything will be.
+    try:
+        kept = ap.apply_removal(
+            n_in=n_in, removed_mask_sum=n_removed, action=action,
+            user_verbatim=verbatim,
+            # Keyed by the DECLARED action. If a threshold moved since the approval was given,
+            # the derived `action` is not this key and the gate refuses for that reason.
+            approvals={declared_action: verbatim} if verbatim.strip() else {},
+            record=record, record_path=str(ledger))
+    except ap.ApplyRefusal as e:
+        raise Refusal(f"07_apply: {e}") from None
+
+    # --- the audit, on the completed decision and still before anything is written.
+    au = step_module("audit_removal")
+    table = {c: [flag(r, c) for r in percell] for c in criteria}
+    table.update({
+        "cellbender_cell": [flag(r, "cellbender_cell") for r in percell],
+        "keep": [flag(r, "keep") for r in percell],
+        "removed": removed_mask,
+        "total_counts": [float(r["total_counts"]) if r.get("total_counts") else 0.0
+                         for r in percell],
+        "doublet_scored": [flag(r, "doublet_scored") for r in percell],
+    })
+    findings = au.audit(table, criteria=criteria, scored_col="doublet_scored",
+                        light_floor=task.params["light_floor"],
+                        quality_floor=float(resolved["quality.umi_floor"]),
+                        doublet_criterion="fail_doublet")
+    pipeline.gate("07_apply", findings, au.verdict(findings))
+
+    # --- and only now is a matrix touched.
+    keep_lists = []
+    for s in samples:
+        kp = pipeline.scratch / f"{s}_apply.keep.txt"
+        kp.write_text("\n".join(r["barcode"] for r in percell
+                                if r["sample"] == s and flag(r, "keep")) + "\n",
+                      encoding="utf-8")
+        keep_lists.append({"sample": s, "keep_csv": str(kp),
+                           "h5ad": str(pipeline.results / "objects" / f"{s}_ambient.h5")})
+    res = _scanpy(pipeline, "apply_write", pipeline.results / "objects" / f"{samples[0]}_ambient.h5",
+                  pipeline.results / "objects" / "cohort",
+                  {"libraries": keep_lists}, log, task.params["python_exe"])
+
+    delivered = (res.get("metrics") or {}).get("n_delivered")
+    if delivered != int(kept):
+        raise Refusal(
+            f"07_apply: the gate approved {int(kept):,} observations and the object written "
+            f"holds {delivered:,}. The deliverable and the ledger describe different "
+            f"populations, and the one on disk is not the one that was approved.")
+    print(f"    delivered {delivered:,} of {n_in:,}; {n_removed:,} removed, ledger at {ledger}")
+    print(f"    ceilings: {ceiling_basis}")
+    return {"outputs": [str(p) for p in res.get("outputs", [])] + [str(ledger)],
+            "metrics": {"n_in": n_in, "n_delivered": delivered, "n_removed": n_removed,
+                        "action": action, "ceilings": ceiling_basis,
+                        **{f"n_{c}": sum(1 for x in masks[c] if x) for c in criteria}},
+            "versions": res.get("versions", {})}
+
+
+def so_apply_criteria():
+    """The applied criteria, named by the adapter that writes them rather than repeated here."""
+    from adapters.scanpy_ops import APPLY_CRITERIA
+    return APPLY_CRITERIA
 
 
 # --------------------------------------------------------------------------------------------
@@ -1150,5 +1337,5 @@ __all__ = [
     "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
     "_ambient_audit", "_cellcall",
     "_doublets", "_doublet_health", "_quality", "_quality_measure", "_quality_stage", "_cluster",
-    "_cluster_flags", "_apply", "_report",
+    "_cluster_flags", "_apply", "_apply_measure", "_ceilings_for", "_report",
 ]

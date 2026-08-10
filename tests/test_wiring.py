@@ -186,23 +186,43 @@ _SHAPES = {
     "accepted matrix, ambient supplied": [_row("A", **_AMB), _row("B", **_AMB)],
     "mixed: one supplied, one not":      [_row("A", **_AMB), _row("B")],
 }
+#
+# BOTH MODES, because apply mode adds the only tasks that remove anything and no test built it.
+# The graph must ASSEMBLE without resolving a threshold: with a per-library ceiling those come
+# from step 5's table, which does not exist while a clean run's graph is being built, so
+# resolving during construction refuses a correct run for a file three steps from being written.
+# Building it here with empty decisions is what catches that.
 _bad = 0
-for _label, _rows in _SHAPES.items():
+_combos = [(lbl, rows, mode) for lbl, rows in _SHAPES.items() for mode in ("evidence", "apply")]
+for _label, _rows, _mode in _combos:
     _P.samples = _rows
+    _P.mode = _mode
+    _P.decisions = {}
     _ing = {r["sample"]: {"mode": "accept"} for r in _rows}
     try:
         _built = graph.main_stage(_P, "python", {}, _ing)
     except Exception as e:                                            # noqa: BLE001
-        fails.append(f"F: graph does not build for {_label!r}: {type(e).__name__}: {e}")
+        fails.append(f"F: graph does not build for {_label!r} in {_mode} mode: "
+                     f"{type(e).__name__}: {e}")
         continue
     _keys = {t.key for t in _built}
     for _t in _built:
         for _n in (_t.needs or ()):
             if _n not in _keys:
-                fails.append(f"F: [{_label}] task {_t.key!r} needs {_n!r}, which is not in this "
-                             f"stage. Stage one has already run; drop the edge.")
+                fails.append(f"F: [{_label}/{_mode}] task {_t.key!r} needs {_n!r}, which is not "
+                             f"in this stage. Stage one has already run; drop the edge.")
                 _bad += 1
-print(f"F. cross-stage dependency edges over {len(_SHAPES)} cohort shapes: {_bad}")
+    # Evidence mode has no path to a removal, and that is structural rather than a flag: the
+    # tasks are ABSENT, so this asserts absence rather than that something defaults to off.
+    _removers = sorted(k for k in _keys if k.startswith("07_"))
+    if _mode == "evidence" and _removers:
+        fails.append(f"F: [{_label}] evidence mode placed {_removers} in the graph. Evidence "
+                     f"mode must have no task that can remove, not a task that declines to.")
+    if _mode == "apply" and not _removers:
+        fails.append(f"F: [{_label}] apply mode placed no step-7 task, so nothing can apply.")
+_P.mode = "evidence"
+print(f"F. cross-stage dependency edges over {len(_combos)} cohort shape / mode combinations: "
+      f"{_bad}")
 
 # ---- G. no getattr() default on an adapter object the engine owns.
 #
@@ -375,6 +395,37 @@ if not _builders:
     fails.append("J: no call to build_report() was found; this check is not testing anything.")
 print(f"J. build_report call sites, all fed by report_payload(): "
       f"{sum(1 for _, ok in _builders if ok)} of {len(_builders)}")
+
+# ---- K. every step_module() the engine asks for is one the engine can load.
+#
+# `step_module("audit_removal")` raised KeyError at runtime because the module was never added to
+# _STEP_MODULES - a decision module that exists, is tested, and is unreachable from the engine.
+# It is the same seam as check A, one level up: check A compares a call against a signature, this
+# compares a NAME against the registry, and neither side is wrong on its own.
+#
+# It surfaces only when the step actually runs, which for step 7 means only under `--mode apply`
+# with a complete decisions file - the least-travelled path in the pipeline and the only one that
+# removes anything.
+try:
+    from engine.pipeline import _STEP_MODULES
+    _asked = set()
+    for _py in sorted((ROOT / "engine").glob("*.py")):
+        for _n in ast.walk(ast.parse(_py.read_text(encoding="utf-8"))):
+            if (isinstance(_n, ast.Call) and isinstance(_n.func, ast.Name)
+                    and _n.func.id == "step_module" and _n.args
+                    and isinstance(_n.args[0], ast.Constant)):
+                _asked.add(_n.args[0].value)
+    _unregistered = sorted(_asked - set(_STEP_MODULES))
+    _absent = sorted(k for k, p in _STEP_MODULES.items() if not Path(p).exists())
+    for _u in _unregistered:
+        fails.append(f"K: the engine calls step_module({_u!r}), which is not in _STEP_MODULES. "
+                     f"It raises KeyError when that step runs, not when the graph is built.")
+    for _a in _absent:
+        fails.append(f"K: _STEP_MODULES registers {_a!r} at a path that does not exist.")
+    print(f"K. step_module names asked for, all registered and present: "
+          f"{len(_asked) - len(_unregistered)} of {len(_asked)}")
+except Exception as e:                                                # noqa: BLE001
+    fails.append(f"K: could not check the step-module registry: {type(e).__name__}: {e}")
 
 print("=" * 74)
 if fails:

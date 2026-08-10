@@ -267,11 +267,39 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
 
     last = "06_cluster_flags"
     if pipeline.mode == "apply":
-        # Placed ONLY in apply mode. In evidence mode this task does not exist, so there is no
+        # Placed ONLY in apply mode. In evidence mode these tasks do not exist, so there is no
         # code path from `--mode evidence` to a deletion - not a flag that defaults to safe.
+        #
+        # TWO STAGES, because the gate has to run between them. `07_measure/<s>` computes every
+        # criterion per barcode and writes a table; `07_apply` builds the ledger, puts it through
+        # the gate, audits the result and only then materialises a filtered object. An op that
+        # measured and wrote in one pass would have removed before the approval was checked.
+        # The thresholds are NOT resolved here. With `per_library` they come from step 5's table,
+        # which on a clean run does not exist while the graph is being built - resolving now
+        # would refuse a correct run for a file that is three steps from being written. Each task
+        # resolves its own when it runs, through the same function, so they cannot disagree.
+        measure_keys = []
+        for s in by_sample:
+            k = f"07_measure/{s}"
+            tasks.append(Task(
+                key=k, step="07_apply", sample=s, fn=steps._apply_measure,
+                needs=("06_cluster_flags", f"04_doublets/{s}"),
+                params={"sample": s, "python_exe": python_exe,
+                        "decisions": pipeline.decisions,
+                        "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
+                        "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
+                        "light_floor": tools.get("light_floor", 200),
+                        "doublet_csv": str(pipeline.results / "tables"
+                                           / f"{s}_doublets.csv")},
+                cpus=4, memory_gb=32, walltime_h=2,
+            ))
+            measure_keys.append(k)
         tasks.append(Task(
-            key="07_apply", step="07_apply", fn=steps._apply, needs=("06_cluster_flags",),
-            params={"decisions": pipeline.decisions, "samples": list(by_sample)},
+            key="07_apply", step="07_apply", fn=steps._apply,
+            needs=tuple(measure_keys) + ("06_cluster_flags",),
+            params={"decisions": pipeline.decisions, "samples": list(by_sample),
+                    "python_exe": python_exe, "light_floor": tools.get("light_floor", 200)},
+            cpus=8, memory_gb=48, walltime_h=4,
         ))
         last = "07_apply"
 

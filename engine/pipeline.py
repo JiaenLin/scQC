@@ -49,6 +49,7 @@ _STEP_MODULES = {
     "quality": ROOT / "modules" / "05_quality" / "quality.py",
     "cluster_flags": ROOT / "modules" / "06_cluster_check" / "cluster_flags.py",
     "apply": ROOT / "modules" / "07_apply" / "apply.py",
+    "audit_removal": ROOT / "modules" / "07_apply" / "audit_removal.py",
 }
 _loaded: dict = {}
 # Tasks now run concurrently, so the cache below is read and written from several threads. Without

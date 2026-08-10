@@ -154,7 +154,11 @@ VALLEY_METRIC_COLUMNS = {
 ABSENT = "not installed"
 
 #: Operations `run_scanpy_op()` and the script entry point understand.
-OPS = ("qc", "valley", "cluster")
+OPS = ("qc", "valley", "cluster", "apply_measure", "apply_write")
+
+#: Ops that do not read an input object. `apply_write` takes a LIST of objects in its params and
+#: `main()` would otherwise load one of them for nothing - a hundred megabytes to be discarded.
+OPS_WITHOUT_INPUT = ("apply_write",)
 
 # Values below this maximum, in a matrix that is not integral, are the signature of data that has
 # already been log1p'd. Running normalize_total on it produces an embedding that looks entirely
@@ -2370,6 +2374,205 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
     return outputs, metrics
 
 
+#: The applied criteria, in the order they are written to the per-cell table. The names are the
+#: column names, not a convention the reader has to reconstruct: `audit_removal.audit()` is told
+#: which columns are criteria and checks that `removed` decomposes into exactly them.
+APPLY_CRITERIA = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
+                  "fail_mito_ceiling", "fail_doublet")
+
+
+def _op_apply_measure(adata, params, out_prefix) -> tuple:
+    """Every applied criterion, per barcode, for ONE library. Removes NOTHING and writes no object.
+
+    This is the measuring half of step 7 and it exists separately for one reason: the removal
+    gate has to run before anything is materialised. An op that filtered and wrote in one pass
+    would have performed the removal before the operator's approval was checked, and an approval
+    checked afterwards is a record, not a gate.
+
+    So this writes a table covering EVERY barcode in the object - kept and removed alike - with
+    one boolean per criterion. `build_removal_record()` turns that into the ledger, the gate
+    checks the ledger against the mask, and only then does `apply_write` touch a matrix.
+
+    Every criterion is TRUE or FALSE for every barcode, never unknown: `build_removal_record()`
+    refuses an unknown, because an observation removed on a criterion nobody evaluated has not
+    been judged. Where that cannot honestly be done the op refuses instead - see the light-floor
+    check below.
+    """
+    import csv as _csv
+
+    import numpy as np
+
+    sample = _require_str(params, "sample")
+    for k in ("umi_floor", "gene_floor", "mito_ceiling_pct", "light_floor"):
+        if k not in params or _unknown(params[k]):
+            raise TaskFailure(
+                f"required parameter {k!r} was not supplied. Step 7 applies it; there is no "
+                f"default for a threshold that removes observations.")
+    if "doublet_csv" not in params:
+        raise TaskFailure(
+            "parameter 'doublet_csv' must be present, and may be null. Omitting it and declaring "
+            "no doublet calls produce the same table, and the difference is whether the doublet "
+            "criterion was evaluated or merely absent.")
+    umi_floor = float(params["umi_floor"])
+    gene_floor = float(params["gene_floor"])
+    ceiling = float(params["mito_ceiling_pct"])
+    light_floor = float(params["light_floor"])
+
+    if "total_counts" not in adata.obs.columns:
+        qc_metrics(adata, _require_str(params, "mt_prefix"), _require_str(params, "ribo_pattern"),
+                   allow_empty_mt=bool(params.get("allow_empty_mt", False)),
+                   allow_empty_ribo=bool(params.get("allow_empty_ribo", False)),
+                   layer=params.get("layer"),
+                   allow_transformed=bool(params.get("allow_transformed", False)))
+
+    scored = np.zeros(adata.n_obs, dtype=bool)
+    is_doublet = np.zeros(adata.n_obs, dtype=bool)
+    if not _unknown(params.get("doublet_csv")):
+        key = str(params.get("doublet_key") or "doublet_class")
+        attach_doublet_calls(
+            adata, params["doublet_csv"], key=key,
+            barcode_column=str(params.get("doublet_barcode_column", "barcode")),
+            class_column=str(params.get("doublet_class_column", "doublet_class")))
+        scored, is_doublet = _doublet_masks(adata, key, params.get("doublet_positive"))
+
+    counts = _float_array(adata.obs["total_counts"])
+    genes = _float_array(adata.obs["n_genes_by_counts"])
+    mt = _float_array(adata.obs["pct_counts_mt"])
+
+    # The object holds what the denoiser produced; a barcode left with no counts is not a cell it
+    # called. Recorded as its own criterion rather than folded into the UMI floor, or the ledger
+    # would say a droplet was removed for being shallow when it was never a cell.
+    is_cell = np.asarray([c == c and c > 0 for c in counts], dtype=bool)
+    fail_cell = ~is_cell
+    fail_umi = np.asarray([not (c == c and c >= umi_floor) for c in counts], dtype=bool)
+    fail_gene = np.asarray([not (g == g and g >= gene_floor) for g in genes], dtype=bool)
+    # A barcode with no mitochondrial value fails NOTHING here. It is already removed by the cell
+    # criterion (no counts means no percentage), and inventing a failure for it would put a
+    # criterion in the ledger that was never evaluated.
+    fail_mito = np.asarray([m == m and m > ceiling for m in mt], dtype=bool)
+    fail_doublet = np.asarray(is_doublet, dtype=bool)
+
+    fails = {"fail_not_cellbender_cell": fail_cell, "fail_umi_floor": fail_umi,
+             "fail_gene_floor": fail_gene, "fail_mito_ceiling": fail_mito,
+             "fail_doublet": fail_doublet}
+    removed = np.zeros(adata.n_obs, dtype=bool)
+    for v in fails.values():
+        removed |= v
+    keep = ~removed
+
+    # A KEPT BARCODE THAT WAS NEVER DOUBLET-SCORED IS A HOLE IN THE FILTER, and it is silent:
+    # `fail_doublet` reads False for it, which in the ledger means "this criterion did not remove
+    # it" and on the page is indistinguishable from "it was examined and found to be a singlet".
+    # It cannot arise while the UMI floor sits above the light floor, which is the usual case -
+    # so it would appear only when someone lowered one of them, which is exactly when nobody is
+    # looking at the interaction between the two.
+    if not _unknown(params.get("doublet_csv")):
+        holes = int(np.sum(keep & ~scored))
+        if holes:
+            raise TaskFailure(
+                f"{sample}: {holes:,} barcodes would be KEPT that were never scored for "
+                f"doublets. The doublet detector saw only barcodes at or above the light floor "
+                f"({light_floor:g} UMI) and the applied UMI floor is {umi_floor:g}, so the gap "
+                f"between them reaches the deliverable unexamined. In the ledger those barcodes "
+                f"read as having passed the doublet criterion. Raise the UMI floor to the light "
+                f"floor or above, or score the detector over the lower population.")
+
+    path = Path(str(out_prefix) + ".percell.csv")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
+                    "pct_counts_mt", "doublet_scored", *APPLY_CRITERIA, "removed", "keep"])
+        for i, b in enumerate(adata.obs_names):
+            w.writerow([str(b), sample, bool(is_cell[i]),
+                        "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
+                        "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
+                        "" if mt[i] != mt[i] else f"{mt[i]:.6f}",
+                        bool(scored[i]),
+                        *[bool(fails[c][i]) for c in APPLY_CRITERIA],
+                        bool(removed[i]), bool(keep[i])])
+
+    metrics = {"sample": sample, "n_in": int(adata.n_obs), "n_keep": int(keep.sum()),
+               "n_removed": int(removed.sum()),
+               "thresholds": {"umi_floor": umi_floor, "gene_floor": gene_floor,
+                              "mito_ceiling_pct": ceiling, "light_floor": light_floor},
+               "n_doublet_scored": int(scored.sum()),
+               **{f"n_{c}": int(fails[c].sum()) for c in APPLY_CRITERIA}}
+    return [path], metrics
+
+
+def _op_apply_write(adata, params, out_prefix) -> tuple:
+    """Materialise the deliverable: the kept barcodes of every library, in ONE object.
+
+    Reached only after the gate has passed, which is why it takes a keep-list rather than a
+    threshold - re-deriving the mask here would mean the object was filtered by something other
+    than what was approved, and the two could differ without either being wrong on its own terms.
+    """
+    import anndata
+    import numpy as np
+    import pandas as pd
+
+    libs = params.get("libraries")
+    if not isinstance(libs, list) or not libs:
+        raise TaskFailure("required parameter 'libraries' must be a non-empty list of "
+                          "{sample, h5ad, keep_csv} entries.")
+    out_h5 = Path(str(out_prefix) + ".deliverable.h5ad")
+    parts, per_lib, var_ref, var_from = [], [], None, None
+    for entry in libs:
+        s = str(entry.get("sample"))
+        keep_path = Path(str(entry.get("keep_csv")))
+        wanted = [ln.strip() for ln in
+                  keep_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        a = _load(str(entry.get("h5ad")))
+        # The var axis is not re-derived, it is CHECKED. anndata.concat with an outer join fills
+        # a gene absent from one library with zeros, which is fabricated data wearing the shape
+        # of a measurement; an inner join silently narrows the feature space instead.
+        if var_ref is None:
+            var_ref, var_from = list(map(str, a.var_names)), s
+        elif list(map(str, a.var_names)) != var_ref:
+            raise TaskFailure(
+                f"{s} and {var_from} do not carry the same genes in the same order "
+                f"({a.n_vars:,} against {len(var_ref):,}). Concatenating them would either "
+                f"invent zeros for the genes one of them lacks or quietly drop them. Re-quantify "
+                f"against one reference.")
+        present = set(map(str, a.obs_names))
+        missing = [b for b in wanted if b not in present]
+        if missing:
+            raise TaskFailure(
+                f"{s}: {len(missing):,} approved barcodes are not in {entry.get('h5ad')} "
+                f"(first: {', '.join(missing[:3])}). The keep-list and the object have come "
+                f"apart; filtering anyway would deliver a different population from the one "
+                f"that was approved.")
+        sub = a[np.asarray([str(b) in set(wanted) for b in a.obs_names], dtype=bool)].copy()
+        sub.obs["sample"] = pd.Categorical([s] * sub.n_obs)
+        per_lib.append({"sample": s, "n_in": int(a.n_obs), "n_kept": int(sub.n_obs)})
+        parts.append(sub)
+        del a
+
+    combined = parts[0] if len(parts) == 1 else anndata.concat(
+        parts, axis=0, join="inner", merge="same", label=None, index_unique=None)
+    if combined.obs_names.has_duplicates:
+        raise TaskFailure(
+            "the combined object has duplicate barcodes, so a row in the removal ledger cannot "
+            "be matched back to one observation. Prefix each library's barcodes before this "
+            "point.")
+    # COLUMNS, not a list of dicts. HDF5 has no record type for the latter and h5py fails on it
+    # with "Can't implicitly convert non-string objects to strings", at the end of the only step
+    # that removes anything - after the gate has passed and the filtering is done. Three parallel
+    # arrays write natively and read back without a parser.
+    combined.uns["scqc_apply"] = {
+        "library": [str(x["sample"]) for x in per_lib],
+        "library_n_in": [int(x["n_in"]) for x in per_lib],
+        "library_n_kept": [int(x["n_kept"]) for x in per_lib],
+        "n_delivered": int(combined.n_obs),
+        "note": "filtered by an approved keep-list; the ledger names every barcode removed and "
+                "the criteria that removed it",
+    }
+    combined.write_h5ad(str(out_h5))
+    return [out_h5], {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),
+                      "libraries": per_lib}
+
+
 def main(argv=None) -> int:
     """Run one operation in this process. Invoked by `run_scanpy_op` under the analysis python.
 
@@ -2398,8 +2601,9 @@ def main(argv=None) -> int:
     if not isinstance(params, dict):
         raise TaskFailure(f"{a.params} does not hold a JSON object")
 
-    adata = _load(a.h5ad)
-    handler = {"qc": _op_qc, "valley": _op_valley, "cluster": _op_cluster}[a.op]
+    adata = None if a.op in OPS_WITHOUT_INPUT else _load(a.h5ad)
+    handler = {"qc": _op_qc, "valley": _op_valley, "cluster": _op_cluster,
+               "apply_measure": _op_apply_measure, "apply_write": _op_apply_write}[a.op]
     outputs, metrics = handler(adata, params, a.out_prefix)
 
     missing = [str(p) for p in outputs if not Path(p).exists()]
