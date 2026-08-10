@@ -15,7 +15,8 @@
 #   setup/install_env.sh --prefix ~/scqc-env --all
 #   setup/install_env.sh --prefix ~/scqc-env --with-cellbender --with-doublet
 #
-# Requires conda, mamba or micromamba; the search order is below. Nothing is installed outside
+# Uses micromamba by default and FETCHES it if absent; conda is a last resort. Nothing is
+# installed outside
 # --prefix.
 
 set -euo pipefail
@@ -52,10 +53,22 @@ done
 [[ -n "$PREFIX" ]] || { echo "ERROR: --prefix is required" >&2; usage 1; }
 
 # --- find a package manager --------------------------------------------------------------------
-# Three places, in order of preference. The third matters: on a module-based HPC conda is
-# installed but deliberately absent from the default PATH, so a PATH-only check reports "not
-# installed" on a machine where it is one `module load` away. That is a false negative on exactly
-# the class of system this pipeline is meant to run on.
+# MICROMAMBA IS THE DEFAULT, and it is fetched rather than required.
+#
+# The order here is not a taste. conda's classic solver was OOM-KILLED solving r-base 4.3 plus
+# Bioconductor on a login node with 465 GB free and no ulimit - the appetite is the solver's, not
+# the machine's. The failure arrives as the single word `Killed`, which reads like an
+# administrative kill rather than a resolver that ran out of room, and it took the entire
+# rdoublet environment down with it. micromamba solved the identical specification without
+# incident on the same node minutes later.
+#
+# So when no libmamba-based solver is present, one is DOWNLOADED. micromamba is a single static
+# binary with no dependencies and no installer, which makes bootstrapping it cheaper than
+# documenting a prerequisite and far cheaper than debugging a classic-solver OOM on someone
+# else's cluster. It lands in --prefix/bin; nothing is installed outside --prefix.
+#
+# conda stays as a last resort, with a warning, because a host with no outbound network needs
+# some route and a slow solve beats no solve.
 CONDA=""
 CONDA_VIA="PATH"
 
@@ -64,12 +77,66 @@ find_on_path() {
     # through SCQC_CONDA and guard it with `[ -x "$MM" ]`; `-x conda` tests the relative path
     # ./conda, which does not exist, so a bare name made every optional component abort with
     # "package manager 'conda' is not executable" on a machine where conda WAS on PATH.
+    #
+    # conda is deliberately absent from this list - it is tried only after a bootstrap attempt.
     local c p
-    for c in mamba micromamba conda; do
+    for c in micromamba mamba; do
         p="$(command -v "$c" 2>/dev/null)" || continue
         [[ -n "$p" && -x "$p" ]] && { CONDA="$p"; return 0; }
     done
     return 1
+}
+
+bootstrap_micromamba() {
+    # Fetch the static binary into --prefix/bin. Returns non-zero on any failure so the caller
+    # falls through to conda; a cluster with no outbound network is a normal thing to be.
+    local arch os target url tmp
+    case "$(uname -s)" in
+        Linux)  os=linux ;;
+        Darwin) os=osx ;;
+        *) return 1 ;;
+    esac
+    case "$(uname -m)" in
+        x86_64) arch=64 ;;
+        aarch64|arm64) if [[ $os == osx ]]; then arch=arm64; else arch=aarch64; fi ;;
+        *) return 1 ;;
+    esac
+    target="$PREFIX/bin/micromamba"
+    if [[ -x "$target" ]]; then
+        CONDA="$target"; CONDA_VIA="bootstrapped earlier"; return 0
+    fi
+    url="https://micro.mamba.pm/api/micromamba/${os}-${arch}/latest"
+    mkdir -p "$PREFIX/bin"
+    tmp="$(mktemp -d)"
+    echo "note: no micromamba or mamba on PATH - fetching micromamba into $PREFIX/bin" >&2
+    if command -v curl >/dev/null 2>&1; then
+        curl -sSL --max-time 300 "$url" | tar -xj -C "$tmp" bin/micromamba 2>/dev/null || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- --timeout=300 "$url" | tar -xj -C "$tmp" bin/micromamba 2>/dev/null || true
+    else
+        rm -rf "$tmp"; return 1
+    fi
+    if [[ -f "$tmp/bin/micromamba" ]] && mv "$tmp/bin/micromamba" "$target"; then
+        chmod +x "$target"; rm -rf "$tmp"
+        # PROVEN, not assumed. A binary that downloaded but will not execute here - wrong libc, a
+        # noexec mount, a truncated transfer - must fall through now rather than fail later in
+        # the middle of building an environment.
+        if "$target" --version >/dev/null 2>&1; then
+            CONDA="$target"; CONDA_VIA="bootstrapped into $PREFIX/bin"; return 0
+        fi
+        echo "note: the fetched micromamba will not execute here; falling back" >&2
+        return 1
+    fi
+    rm -rf "$tmp"
+    return 1
+}
+
+find_conda_last_resort() {
+    local p
+    p="$(command -v conda 2>/dev/null)" || return 1
+    [[ -n "$p" && -x "$p" ]] || return 1
+    CONDA="$p"
+    return 0
 }
 
 find_installed() {
@@ -97,23 +164,39 @@ find_via_module() {
     command -v module >/dev/null 2>&1 || type module >/dev/null 2>&1 || return 1
     for m in $(module avail 2>&1 | tr ' ' '\n' \
                | grep -iE '^(anaconda|miniconda|miniforge|conda|mamba)' | sort -u); do
-        if module load "$m" >/dev/null 2>&1 && find_on_path; then
+        # `find_on_path || find_conda_last_resort`, not `find_on_path` alone. find_on_path stopped
+        # looking for conda when micromamba became the default, so a module that provides only
+        # conda would load successfully and then be reported as not found - the exact false
+        # negative on module-based HPCs this function exists to prevent.
+        if module load "$m" >/dev/null 2>&1 && { find_on_path || find_conda_last_resort; }; then
             CONDA_VIA="module load $m"
-            echo "note: loaded environment module '$m' to find conda" >&2
+            echo "note: loaded environment module '$m' to find a package manager" >&2
             return 0
         fi
     done
     return 1
 }
 
-find_on_path || find_installed || find_via_module || {
+case "$PREFIX" in
+    /*|~*) : ;;
+    *) echo "ERROR: --prefix must be an absolute path (got '$PREFIX')" >&2; exit 1 ;;
+esac
+PREFIX="${PREFIX/#\~/$HOME}"
+
+# PREFIX is resolved BEFORE the package manager is, because the bootstrap installs into it. The
+# order was the other way round while conda was the fallback and nothing needed --prefix to find
+# a solver.
+find_on_path || bootstrap_micromamba || find_installed || find_via_module \
+    || find_conda_last_resort || {
     cat >&2 <<'ERR'
-ERROR: no conda, mamba or micromamba could be found.
+ERROR: no micromamba, mamba or conda could be found, and micromamba could not be fetched.
 
 Searched:
-  1. $PATH
-  2. common install prefixes (~/miniforge3, /opt/miniconda3, /apps/anaconda3, ...)
-  3. environment modules matching anaconda/miniconda/miniforge/conda/mamba
+  1. $PATH for micromamba or mamba
+  2. https://micro.mamba.pm (needs curl or wget and outbound network)
+  3. common install prefixes (~/miniforge3, /opt/miniconda3, /apps/anaconda3, ...)
+  4. environment modules matching anaconda/miniconda/miniforge/conda/mamba
+  5. $PATH for conda
 
 On an HPC, conda is often present but not on the default PATH. Try:
   module avail 2>&1 | grep -i conda
@@ -124,11 +207,22 @@ ERR
     exit 1
 }
 
-case "$PREFIX" in
-    /*|~*) : ;;
-    *) echo "ERROR: --prefix must be an absolute path (got '$PREFIX')" >&2; exit 1 ;;
+# A classic-solver conda is usable but is the configuration that failed here, so say so once,
+# now, rather than leaving the reader to interpret the word `Killed` an hour into a build.
+case "$CONDA" in
+    *micromamba|*mamba) : ;;
+    *)
+        echo "WARNING: falling back to conda ($CONDA)." >&2
+        echo "         Its classic solver was OOM-killed building r-base + Bioconductor on a" >&2
+        echo "         node with 465 GB free. If an environment dies with the single word" >&2
+        echo "         'Killed', that is the solver, not the scheduler - install micromamba" >&2
+        echo "         and re-run rather than reducing the specification." >&2
+        ;;
 esac
-PREFIX="${PREFIX/#\~/$HOME}"
+
+# micromamba requires a root prefix and has no default. Kept inside --prefix so nothing is
+# written outside it, matching what the header promises.
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$PREFIX/mamba}"
 
 # Environments are NOT relocatable: conda writes the absolute prefix into script shebangs and
 # into compiled shared-library paths. Moving one afterwards produces an environment whose
