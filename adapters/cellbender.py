@@ -1255,9 +1255,21 @@ def resolve_cell_barcodes(h5_path: str | Path,
     csv_path = Path(cell_barcodes_csv) if cell_barcodes_csv is not None \
         else expected_products(h5_path)["cell_barcodes_csv"]
     csv_route = "absent"
+    naming_note = None
     if csv_path.exists():
         from_csv = cell_barcodes_from_csv(csv_path)
+        # RECONCILED BEFORE THE TWO ROUTES ARE COMPARED, not after.
+        #
+        # The probability route derives its barcodes from the OBJECT, so it is already in the
+        # object's naming; the CSV is in the denoiser's. Comparing them unreconciled makes the
+        # cross-check fire on two descriptions of one cell call - it reported 38,285 against
+        # 38,285 with every barcode differing, which is a total naming mismatch presenting as a
+        # total disagreement about which cells exist. Reconciling afterwards, as this first did,
+        # is too late for the check that runs in between.
+        from_csv, naming_note = reconcile_barcode_naming(barcodes, from_csv)
         csv_route = f"read {len(from_csv):,} barcodes"
+        if naming_note:
+            csv_route += f"; {naming_note}"
 
     from_prob = None
     if h5_path.suffix == ".h5" and not h5_path.is_dir():
@@ -1305,11 +1317,10 @@ def resolve_cell_barcodes(h5_path: str | Path,
             f"produced nothing, and everything computed over the 'cells' scope would divide by "
             f"it. Routes: {routes}")
 
-    mapped, naming = reconcile_barcode_naming(barcodes, call["barcodes"])
-    if naming:
-        call["barcodes"] = mapped
-        call["naming"] = naming
-        call["source"] += f" ({naming})"
+    # The CSV route was reconciled where it was read, above; the probability route comes from the
+    # object and needs none. This records what was done so the result says how it got there.
+    if naming_note:
+        call["naming"] = naming_note
     return call
 
 
