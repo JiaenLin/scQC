@@ -83,8 +83,15 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         h5 = pipeline.results / "objects" / f"{s}_ambient.h5"
         if s in supplied_of:
             continue
-        needs = (f"00_align/{s}",) if f"00_align/{s}" in {t.key for t in tasks} \
-            else (f"00_ingest/{s}",)
+        # `needs` may only name tasks in THIS stage. Stage one - ingest - has already run to
+        # completion before this function is called, so a dependency on it is both unresolvable
+        # and unnecessary: the ordering it would express is already guaranteed.
+        #
+        # This read `else (f"00_ingest/{s}",)`, which is a cross-stage edge and stops the run with
+        # "depends on unknown task(s)". It never fired because it only applies to samples whose
+        # matrix is ACCEPTED rather than aligned - and until this cohort, no run had ever supplied
+        # a matrix. A latent break on the path a reusable pipeline is most likely to be used on.
+        needs = (f"00_align/{s}",) if f"00_align/{s}" in {t.key for t in tasks} else ()
         k = f"01_ambient/{s}"
         tasks.append(Task(
             key=k, step="01_ambient", sample=s, fn=steps._ambient, needs=needs,
@@ -105,7 +112,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # a blank field in the report.
         tasks.append(Task(
             key="01_ambient_supplied", step="01_ambient", fn=steps._ambient_supplied,
-            needs=tuple(f"00_ingest/{s}" for s in supplied_of),
+            # No `needs`: stage one has already completed, and a supplied matrix depends on
+            # nothing built in this stage.
             params={"supplied": supplied_of,
                     "assay": {s: assay.get(s) for s in supplied_of}},
             outputs=tuple(str(pipeline.results / "objects" / f"{s}_ambient.h5")

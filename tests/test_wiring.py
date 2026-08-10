@@ -157,6 +157,53 @@ for py in sorted((ROOT / "engine").glob("*.py")):
 print(f"E. engine calls into in-process adapter entry points: {len(offenders)}")
 fails.extend(offenders)
 
+# ---- F. every `needs` resolves inside its own stage.
+#
+# Stage one (ingest) runs to completion before stage two is built, so a stage-two task naming a
+# stage-one key is unresolvable and the run stops with "depends on unknown task(s)". The ordering
+# such an edge tries to express is already guaranteed by the two-stage structure.
+#
+# This was a latent break for every sample whose matrix is ACCEPTED rather than aligned, and it
+# never fired because no run had ever supplied a matrix - which is the path a reusable pipeline is
+# most likely to be used on. Built for three cohort shapes, since the graph differs between them.
+class _P:
+    results = Path("/tmp/r"); work = Path("/tmp/w"); project = Path("/tmp/p")
+    decisions: dict = {}
+    mode = "evidence"
+    samples: list = []
+
+
+def _row(s, **extra):
+    return {"sample": s, "platform": "singleron", "species": "mus_musculus",
+            "reference": "mus_musculus/ensembl_112_filtered", "assay": "snrna",
+            "matrix": f"/d/{s}", "diet": "chow" if s.endswith("1") else "hfd", **extra}
+
+
+_AMB = {"ambient_h5": "/cb/x.h5", "ambient_tool": "CellBender", "ambient_version": "0.3.2",
+        "ambient_params": "--fpr 0", "ambient_produced_by": "a prior run"}
+_SHAPES = {
+    "accepted matrix, ambient run here": [_row("A"), _row("B")],
+    "accepted matrix, ambient supplied": [_row("A", **_AMB), _row("B", **_AMB)],
+    "mixed: one supplied, one not":      [_row("A", **_AMB), _row("B")],
+}
+_bad = 0
+for _label, _rows in _SHAPES.items():
+    _P.samples = _rows
+    _ing = {r["sample"]: {"mode": "accept"} for r in _rows}
+    try:
+        _built = graph.main_stage(_P, "python", {}, _ing)
+    except Exception as e:                                            # noqa: BLE001
+        fails.append(f"F: graph does not build for {_label!r}: {type(e).__name__}: {e}")
+        continue
+    _keys = {t.key for t in _built}
+    for _t in _built:
+        for _n in (_t.needs or ()):
+            if _n not in _keys:
+                fails.append(f"F: [{_label}] task {_t.key!r} needs {_n!r}, which is not in this "
+                             f"stage. Stage one has already run; drop the edge.")
+                _bad += 1
+print(f"F. cross-stage dependency edges over {len(_SHAPES)} cohort shapes: {_bad}")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")
@@ -164,3 +211,4 @@ if fails:
         print("  -", f)
     raise SystemExit(1)
 print("wiring OK - the seam between engine and adapters is consistent")
+
