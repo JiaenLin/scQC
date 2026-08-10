@@ -2570,6 +2570,38 @@ def _annotation_value(column: str, raw):
         return text
 
 
+def _annotation_column(values: list):
+    """One annotation column, typed from its own values, with unknown still unknown.
+
+    Every column used to be assigned as `dtype=object`, which is not writable: anndata
+    encodes an object column as a STRING array, so writing the deliverable died on the
+    first numeric one - `total_counts` - with "Can't implicitly convert non-string objects
+    to strings", and the three-valued flags and any None-bearing label column were queued
+    up behind it to fail the same way.
+
+    The dtype is inferred from the values rather than from a list of column names, because
+    the columns are whatever the annotation table carries and a hardcoded list silently
+    mistypes any column added later. Each choice keeps missing distinct from present:
+
+        bool   -> pandas nullable boolean   unknown is pd.NA, which is not False
+        number -> float64                   unknown is NaN, which is not 0.0
+        other  -> categorical               unknown is NaN, which is not ""
+
+    All three round-trip through h5ad with the unknowns intact, so "this cluster was not
+    flagged" and "this barcode was never examined" stay different facts in the delivered
+    object and not only in the table it was built from.
+    """
+    import numpy as np
+    import pandas as pd
+
+    known = [v for v in values if v is not None]
+    if known and all(isinstance(v, bool) for v in known):
+        return pd.array([None if v is None else bool(v) for v in values], dtype="boolean")
+    if known and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in known):
+        return pd.array([np.nan if v is None else float(v) for v in values], dtype="float64")
+    return pd.Categorical([None if v is None else str(v) for v in values])
+
+
 def _op_apply_write(adata, params, out_prefix) -> tuple:
     """Materialise the deliverable: the kept barcodes of every library, in ONE object.
 
@@ -2641,10 +2673,9 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                 cols = [c for c in (reader.fieldnames or []) if c != "barcode"]
                 table = {str(r["barcode"]): r for r in reader}
             for c in cols:
-                sub.obs[c] = pd.Series(
+                sub.obs[c] = _annotation_column(
                     [_annotation_value(c, table.get(str(b), {}).get(c))
-                     for b in sub.obs_names],
-                    index=sub.obs_names, dtype=object)
+                     for b in sub.obs_names])
 
         per_lib.append({"sample": s, "n_in": int(a.n_obs), "n_kept": int(sub.n_obs)})
         one = per_sample_dir / f"{s}.filtered.h5ad"
