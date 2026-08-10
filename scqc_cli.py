@@ -446,7 +446,13 @@ def cmd_run(a) -> int:
     print()
 
     def finish(code: int, stopped=None) -> int:
-        html = project / "results" / "reports" / "qc_report.html"
+        # UNDER THE RUN'S OWN DIRECTORY, not beside it. This wrote to
+        # `<project>/results/reports/`, outside the content-addressed directory the rest of the
+        # run writes into - so the report escaped the layout that guarantees nothing is
+        # overwritten, and every subsequent run replaced it whatever its parameters had been. The
+        # one artifact a reader opens first was the one artifact with no run identity.
+        html = pipe.results / "reports" / "qc_report.html"
+        html.parent.mkdir(parents=True, exist_ok=True)
         try:
             from report.build import build_report
             # The reason the run stopped is the single most useful line in the document, so it
@@ -457,7 +463,7 @@ def cmd_run(a) -> int:
                        if r.status.value in ("refused", "failed")]
                 stopped = "; ".join(bad) or None
             build_report(pipe.report_payload(stopped=stopped), html,
-                         project / "results" / "reports" / "report.json")
+                         pipe.results / "reports" / "report.json")
             print(f"\nreport   : {html}")
         except Exception as e:                                        # noqa: BLE001
             print(f"\nreport   : COULD NOT BE WRITTEN - {type(e).__name__}: {e}",

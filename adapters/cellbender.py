@@ -1071,7 +1071,7 @@ def _load_dense_source(path: Path) -> dict:
             ids.append(row[0])
             names.append(row[1] if len(row) > 1 else row[0])
         barcodes = [r[0] for r in _read_tsv(bcs)]
-    elif p.suffix == ".h5ad":
+    elif p.suffix == ".h5ad" or is_anndata_h5(p):
         import anndata
 
         ad = anndata.read_h5ad(str(p))
@@ -1127,8 +1127,36 @@ def _gene_stats_dense(src: dict, keep_cols: Sequence[int]) -> dict:
     return {"sums": sums, "detected": det, "total": total, "n_cols_used": len(keep_cols)}
 
 
+def is_anndata_h5(path: str | Path) -> bool:
+    """Is this HDF5 file an AnnData object, whatever it is called?
+
+    THE EXTENSION IS NOT THE FORMAT. A pipeline that accepts a denoised object and stores it under
+    its own name - `<sample>_ambient.h5` - has an .h5ad wearing a .h5 suffix, and every reader that
+    dispatches on the suffix then opens it as a CellRanger matrix and finds nothing it recognises.
+    That is exactly the failure this function exists to stop: the error it produced named a missing
+    matrix group, which reads as a corrupt file rather than as a reader sent down the wrong branch.
+
+    AnnData writes `X`, `obs` and `var` at the top level; a CellRanger matrix writes a single group
+    holding `data`, `indices`, `indptr` and `barcodes`. Distinguishing them is one read of the top
+    level, and no heuristic beyond that is needed.
+    """
+    p = Path(path)
+    if p.is_dir() or not p.exists():
+        return False
+    try:
+        import h5py
+    except ImportError:
+        return p.suffix == ".h5ad"
+    try:
+        with h5py.File(p, "r") as f:
+            keys = set(f.keys())
+    except (OSError, ValueError):
+        return False
+    return {"X", "obs", "var"} <= keys
+
+
 def _header_of(path: Path) -> dict:
-    if path.is_dir() or path.suffix == ".h5ad":
+    if path.is_dir() or path.suffix == ".h5ad" or is_anndata_h5(path):
         src = _load_dense_source(path)
         return {"path": str(path), "shape": src["shape"], "barcodes": src["barcodes"],
                 "gene_ids": src["gene_ids"], "gene_names": src["gene_names"], "_dense": src}
