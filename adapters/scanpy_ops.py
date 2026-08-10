@@ -117,6 +117,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from engine.fs import VISIBILITY_TIMEOUT_S, await_visible  # noqa: E402  (see the note above)
 from engine.task import TaskFailure  # noqa: E402  (see the sys.path note above)
 
 #: Must equal `TOPN` in modules/06_cluster_check/cluster_flags.py. That module's criterion C is
@@ -2039,9 +2040,14 @@ def run_scanpy_op(op, h5ad_in, out_prefix, params, log, executor, python_exe=Non
     executor.shell(cmd, log=Path(log), timeout_s=timeout_s)
 
     # --- AFTER: it exists, it is ours, and every file it names is the one it wrote.
-    if not metrics_path.exists():
+    #
+    # Waited for rather than checked. The op ran on another machine and these paths are on shared
+    # storage; a file written a moment ago can be invisible here while the client's directory
+    # cache lasts, and "it wrote nothing" is then said about a run that wrote everything.
+    if await_visible([metrics_path]):
         raise TaskFailure(
-            f"{op} exited 0 but wrote no metrics file at {metrics_path} (any earlier one was "
+            f"{op} exited 0 but wrote no metrics file at {metrics_path}, and none appeared within "
+            f"{VISIBILITY_TIMEOUT_S}s (any earlier one was "
             f"removed before the run: {', '.join(removed) or 'none present'}). A step that "
             f"succeeds and produces nothing is the failure this layer refuses to pass on. "
             f"Log: {log}")
@@ -2054,9 +2060,12 @@ def run_scanpy_op(op, h5ad_in, out_prefix, params, log, executor, python_exe=Non
             f"output this invocation wrote from one that was already there. Log: {log}")
 
     outputs, missing, mismatched = [], [], []
+    # One wait for the whole set rather than one per file, so a slow filesystem costs the step
+    # its timeout once instead of once per output.
+    invisible = set(await_visible(record["outputs"]))
     for o in record["outputs"]:
         p = Path(o)
-        if not p.exists():
+        if str(o) in invisible or not p.exists():
             missing.append(p)
             continue
         want = signatures.get(str(o))

@@ -86,11 +86,13 @@ from typing import Iterable, Mapping, Optional, Sequence
 # a test, or by a runner that has not put the repository root on sys.path - and a locally
 # defined stand-in for TaskFailure would break `except TaskFailure` in the orchestrator.
 try:  # pragma: no cover - whichever import path is in use is the one exercised
+    from engine.fs import VISIBILITY_TIMEOUT_S, await_visible
     from engine.task import TaskFailure
 except ImportError:  # pragma: no cover
     _ROOT = str(Path(__file__).resolve().parents[1])
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
+    from engine.fs import VISIBILITY_TIMEOUT_S, await_visible
     from engine.task import TaskFailure
 
 __all__ = [
@@ -1266,12 +1268,16 @@ def run_scdblfinder(rscript, mtx_dir, out_csv, dbr, dbr_sd, seed, log, executor,
     versions = parse_versions(output)
     r_metrics = parse_r_metrics(output)
 
-    if not out_path.exists():
+    # The detector ran on another node and this path is on shared storage, so a file written a
+    # moment ago is not necessarily visible here yet. Waited for before it is called missing: on
+    # the first clean run two of ten libraries were failed for a CSV that was on disk, complete
+    # and correct, the entire time.
+    if await_visible([out_path]):
         raise TaskFailure(
-            f"{r_script.name} exited 0 but {out_path} does not exist. The path was emptied "
-            f"before the run, so this is not a stale-file question: the adapter writes a "
-            f".partial file and renames it, and a missing output means it never reached the "
-            f"write. Log: {log_path}")
+            f"{r_script.name} exited 0 but {out_path} does not exist, and did not appear within "
+            f"{VISIBILITY_TIMEOUT_S}s. The path was emptied before the run, so this is not a "
+            f"stale-file question: the adapter writes a .partial file and renames it, and a "
+            f"missing output means it never reached the write. Log: {log_path}")
     if out_path.stat().st_size == 0:
         raise TaskFailure(f"{out_path} is empty. Log: {log_path}")
     # Corroboration only. The removal above is the proof of authorship; an mtime is stamped by

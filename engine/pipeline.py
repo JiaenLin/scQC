@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 from .executor import bind_resources, clear_resources
+from .fs import VISIBILITY_TIMEOUT_S, await_visible
 from .provenance import Provenance
 from .state import RunState
 from .task import Refusal, Status, Task, TaskFailure, TaskResult, first_line
@@ -331,11 +332,16 @@ class Pipeline:
         try:
             out = task.fn(task=task, pipeline=self, log=log) or {}
             produced = [str(p) for p in out.get("outputs", [])]
-            missing = [p for p in produced if not Path(p).exists()]
+            # Waited for, not merely checked: the task ran on another node and the project is on
+            # NFS, so a file written seconds ago can be invisible here for as long as the client
+            # caches the directory. See engine/fs.py - a correct run reported as a failure is
+            # worse than a slow one.
+            missing = await_visible(produced)
             if missing:
                 raise TaskFailure(
-                    f"reported outputs that do not exist: {missing}. A step that claims a "
-                    f"file it did not write fails here, not three steps later.")
+                    f"reported outputs that do not exist: {missing}. Waited "
+                    f"{VISIBILITY_TIMEOUT_S}s for them in case the filesystem was behind. A step "
+                    f"that claims a file it did not write fails here, not three steps later.")
             with self._prov_lock:
                 for name, ver in (out.get("versions") or {}).items():
                     self.prov.observe(name, ver)
