@@ -523,7 +523,17 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as e:                                            # noqa: BLE001
+        # The TRACEBACK is printed, not just the type and message.
+        #
+        # Refusals and SystemExit are the designed, user-facing errors and they say what to do.
+        # Anything reaching here is a BUG, and for a bug the message alone is often useless:
+        # `KeyError: 'sample'` names a key that appears in a dozen places and points at none of
+        # them. A report that omits what a reader needs in order to act sends them somewhere
+        # else - a whole diagnosis was spent on a healthy environment for exactly this reason.
+        import traceback
         print(f"scqc: {type(e).__name__}: {e}", file=sys.stderr)
+        print("scqc: this is a bug in the pipeline, not a refusal. Traceback:", file=sys.stderr)
+        traceback.print_exc()
         return 1
 
 
