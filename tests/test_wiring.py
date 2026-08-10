@@ -236,6 +236,50 @@ for py in sorted((ROOT / "engine").glob("*.py")):
 print(f"G. getattr-with-default on repo-owned adapter objects: {len(_getattr_defaults)}")
 fails.extend(_getattr_defaults)
 
+# ---- H. every scanpy op gets the params it declares as required.
+#
+# Params cross the `_scanpy` seam as a DICT, so check A - which compares call sites against
+# function signatures - cannot see a missing or misnamed key. Step 5 called the valley op with
+# {"metric": "umi"} where it requires `metrics` (a LIST), `sample`, `mt_prefix` and
+# `ribo_pattern`. It failed on the first library of the first real cohort, having never run.
+#
+# The requirement is read from the adapter's own idiom, `_require_*(params, "X")`, so this check
+# cannot drift from what the ops actually enforce. It does NOT catch a key required by some other
+# means - `metrics` is validated by hand - and that limit is stated rather than papered over: it
+# would have caught three of those four, and the first refusal exposes the rest.
+_ops_src = (ROOT / "adapters" / "scanpy_ops.py").read_text(encoding="utf-8")
+_ops_tree = ast.parse(_ops_src)
+_required: dict = {}
+for fn in [n for n in ast.walk(_ops_tree)
+           if isinstance(n, ast.FunctionDef) and n.name.startswith("_op_")]:
+    need = set()
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id.startswith("_require_") and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name) and node.args[0].id == "params"
+                and isinstance(node.args[1], ast.Constant)):
+            need.add(node.args[1].value)
+    _required[fn.name[len("_op_"):]] = need
+
+_steps_tree = ast.parse((ROOT / "engine" / "steps.py").read_text(encoding="utf-8"))
+_seam = 0
+for node in ast.walk(_steps_tree):
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "_scanpy" and len(node.args) >= 5):
+        continue
+    op_node, params_node = node.args[1], node.args[4]
+    if not isinstance(op_node, ast.Constant) or not isinstance(params_node, ast.Dict):
+        continue
+    op = op_node.value
+    given = {k.value for k in params_node.keys if isinstance(k, ast.Constant)}
+    absent = sorted(_required.get(op, set()) - given)
+    _seam += 1
+    if absent:
+        fails.append(f"H: engine/steps.py:{node.lineno} calls the {op!r} op without "
+                     f"{absent}, which _op_{op} requires. Params cross this seam as a dict, so "
+                     f"nothing else checks it.")
+print(f"H. scanpy op call sites checked against declared requirements: {_seam}")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

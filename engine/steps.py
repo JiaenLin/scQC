@@ -517,31 +517,83 @@ def _scanpy(pipeline, op, h5, prefix, params, log, python_exe):
                             log=log, executor=pipeline.executor, python_exe=python_exe)
 
 
+#: The valley op measures BOTH count axes in one pass over each object. Step 5 derives a floor per
+#: metric, and a metric silently not measured yields a cohort whose floor for it was never
+#: proposed - which reads identically to one that was proposed and accepted.
+VALLEY_METRICS = ("umi", "genes")
+
+
 def _quality_stage(task, pipeline, log):
-    valleys, mito_stats = [], {}
+    """Measure both count valleys and the mitochondrial quartiles, per library, in one pass.
+
+    This called the valley op with `{"metric": "umi"}` and the op requires `metrics` (a LIST),
+    plus `sample`, `mt_prefix` and `ribo_pattern` - none of which were passed. It failed on the
+    first library of the first real cohort, having never run.
+
+    The mismatch is invisible to the wiring test: params cross this seam as a DICT, so comparing
+    call sites against signatures cannot see a wrong key or a missing one. That is what makes
+    this seam worth spelling out here rather than assembling inline.
+    """
+    rows = {r["sample"]: r for r in pipeline.samples}
+    valleys = {m: [] for m in VALLEY_METRICS}
+    mito_stats = {}
+
+    # DECLARED, per the adapter's own position: "mt_prefix and ribo_pattern are species-specific
+    # and this module will not choose them". Mouse and human differ in case alone, which is the
+    # kind of difference that yields a plausible zero rather than an error - so the engine does
+    # not choose either. A wrong prefix still fails loudly downstream (zero matched
+    # mitochondrial genes raises), but failing loudly is the backstop, not the plan.
+    missing_decl = [s for s in task.params["samples"]
+                    if not str(rows.get(s, {}).get("mt_prefix") or "").strip()
+                    or not str(rows.get(s, {}).get("ribo_pattern") or "").strip()]
+    if missing_decl:
+        raise Refusal(
+            "05_quality: `mt_prefix` and `ribo_pattern` are not declared for "
+            f"{', '.join(missing_decl)}. They are species-specific and nothing here will guess "
+            "them: mouse and human differ in case alone for the mitochondrial prefix, and a "
+            "wrong one gives every cell pct_counts_mt == 0, which is indistinguishable from a "
+            "clean library and passes every mitochondrial gate.\n"
+            "    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl]\n"
+            "    human: mt_prefix=MT-  ribo_pattern=^RP[SL]\n"
+            "    Add them as samplesheet columns. Matching is case-sensitive by design.")
+
     for s in task.params["samples"]:
         res = _scanpy(pipeline, "valley",
                       pipeline.results / "objects" / f"{s}_ambient.h5",
-                      pipeline.work / f"{s}_qc", {"metric": "umi"},
+                      pipeline.work / f"{s}_qc",
+                      {"sample": s,
+                       "metrics": list(VALLEY_METRICS),
+                       "mt_prefix": str(rows[s]["mt_prefix"]).strip(),
+                       "ribo_pattern": str(rows[s]["ribo_pattern"]).strip()},
                       log, task.params["python_exe"])
         m = res.get("metrics", {})
-        valleys.append({"sample": s, "value": m.get("valley"), "bimodal": m.get("bimodal")})
+        got, bim = m.get("valleys") or {}, m.get("bimodal") or {}
+        for metric in VALLEY_METRICS:
+            valleys[metric].append({"sample": s, "value": got.get(metric),
+                                    "bimodal": bim.get(metric)})
         q = m.get("mito_quartiles")
         if q:
             mito_stats[s] = q
 
-    unknown = [v["sample"] for v in valleys if v["value"] is None or v["bimodal"] is None]
-    if unknown:
-        raise Refusal(
-            f"05_quality: no valley was established for {', '.join(unknown)}. A library with no "
-            f"measured valley cannot contribute to a cohort constant, and treating its absence "
-            f"as agreement lets the other libraries decide on its behalf.")
-    sub = Task(key=task.key, step=task.step, fn=_quality,
-               params={"valleys": valleys, "metric": "umi",
-                       "light_floor": task.params.get("light_floor")})
-    out = _quality(sub, pipeline, log)
-    out = _mito_ceiling_stage(task, pipeline, mito_stats, out)
-    return out
+    out = {"outputs": [], "metrics": {}, "versions": {}}
+    for metric in VALLEY_METRICS:
+        unknown = [v["sample"] for v in valleys[metric]
+                   if v["value"] is None or v["bimodal"] is None]
+        if unknown:
+            raise Refusal(
+                f"05_quality ({metric}): no valley was established for {', '.join(unknown)}. A "
+                f"library with no measured valley cannot contribute to a cohort constant, and "
+                f"treating its absence as agreement lets the other libraries decide on its "
+                f"behalf.")
+        sub = Task(key=task.key, step=task.step, fn=_quality,
+                   params={"valleys": valleys[metric], "metric": metric,
+                           "light_floor": task.params.get("light_floor")})
+        r = _quality(sub, pipeline, log)
+        out["outputs"] += list(r.get("outputs", []))
+        for k, v in (r.get("metrics") or {}).items():
+            out["metrics"][f"{metric}_{k}"] = v
+
+    return _mito_ceiling_stage(task, pipeline, mito_stats, out)
 
 
 def _mito_ceiling_stage(task, pipeline, mito_stats, out):
