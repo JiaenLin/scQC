@@ -222,7 +222,11 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             needs=("01_ambient_audit",),
             params={"sample": s, "python_exe": python_exe,
                     "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
-                    "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip()},
+                    "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
+                    # The floor the MITOCHONDRIAL quartiles are taken above. The count valleys in
+                    # the same pass do not use it and must not: they need the debris mode this
+                    # would delete.
+                    "light_floor": tools.get("light_floor", 200)},
             cpus=4, memory_gb=32, walltime_h=2,
         ))
 

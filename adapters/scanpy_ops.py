@@ -2173,12 +2173,45 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     # are returned rather than the per-nucleus array, so nothing crossing the task boundary scales
     # with cell count.
     #
-    # Computed HERE, in the same pass and on the same object the valleys came from, so the ceiling
-    # and the floors are provably derived on the same population. Deriving it in a separate step
-    # is how the two come to describe different cell sets without either of them saying so.
+    # THE CEILING AND THE FLOORS ARE DERIVED ON DIFFERENT POPULATIONS, AND THAT IS THE POINT.
+    #
+    # It is the same pass over the same object, which is what keeps them comparable - but the
+    # ceiling takes only the barcodes at or above `mito_floor_umi`, and the valleys take all of
+    # them. The two quantities need opposite things:
+    #
+    #   a valley is a boundary BETWEEN TWO MODES, so it needs both modes present. Pre-cutting at
+    #   a count floor deletes most of the debris mode, and the minimum then lands inside the
+    #   nucleus mode or disappears - measured, on this cohort: one library's UMI valley moves from
+    #   279 to 1,018 and another's stops existing.
+    #
+    #   a PERCENTAGE needs a denominator big enough to mean something. A 30-UMI droplet with 10
+    #   mitochondrial counts reads 33%, and a fence built on Q3 is set by exactly those. Over
+    #   every called barcode this cohort's ceilings come out 1.14x-1.71x higher than over the
+    #   floored population, in 7 of 10 libraries, and always higher.
+    #
+    # This ran without the floor until 2026-08-10 and produced ceilings for a population the
+    # ceiling is never applied to: every barcode it added is removed by the count floor first.
+    mito_floor = params.get("mito_floor_umi")
+    if "mito_floor_umi" not in params or _unknown(mito_floor):
+        raise TaskFailure(
+            "required parameter 'mito_floor_umi' was not supplied - the count floor the "
+            "mitochondrial quartiles are taken above. It has no default: a ceiling derived over "
+            "every called barcode is set by droplets too shallow for a percentage to mean "
+            "anything, and it is looser than the one derived over the population it is applied "
+            "to. Pass the light floor. It does NOT apply to the valleys, which need the debris "
+            "mode this would delete.")
+    mito_floor = float(mito_floor)
     mito = None
     if "pct_counts_mt" in adata.obs.columns:
-        _v = sorted(float(x) for x in _float_array(adata.obs["pct_counts_mt"]) if x == x)
+        if "total_counts" not in adata.obs.columns:
+            raise TaskFailure(
+                "obs['total_counts'] is absent, so the mitochondrial quartiles cannot be "
+                "restricted to the barcodes above the floor, and taking them over everything is "
+                "the defect this parameter exists to prevent.")
+        _mt = _float_array(adata.obs["pct_counts_mt"])
+        _tc = _float_array(adata.obs["total_counts"])
+        _v = sorted(float(m) for m, c in zip(_mt, _tc)
+                    if m == m and c == c and c >= mito_floor)
         if len(_v) >= 4:
             def _q(p):
                 h = (len(_v) - 1) * p
@@ -2187,6 +2220,13 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                 return _v[lo_i] + (h - lo_i) * (_v[hi_i] - _v[lo_i])
             mito = {"n": len(_v), "median": _q(0.5), "q1": _q(0.25), "q3": _q(0.75),
                     "max": _v[-1]}
+    # Recorded whether or not quartiles were placed, so a reader can never see a ceiling without
+    # seeing the population it was taken over.
+    mito_pop = {"floor_umi": mito_floor,
+                "n_at_or_above": (mito or {}).get("n"),
+                "n_all_with_a_value": int(sum(1 for x in _float_array(adata.obs["pct_counts_mt"])
+                                              if x == x))
+                if "pct_counts_mt" in adata.obs.columns else None}
 
     # THE DENOISER'S CELL CALL, read from THIS object rather than from a file beside it.
     #
@@ -2225,7 +2265,8 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                "notes": {r["metric"]: r["note"] for r in records},
                # None when obs carries no pct_counts_mt, or the library is too small to place a
                # quartile. Absent is reported as absent; step 5 refuses rather than defaulting.
-               "mito_quartiles": mito}
+               "mito_quartiles": mito,
+               "mito_population": mito_pop}
     metrics["n_called_by_denoiser"] = len(called)
     return [valleys, density, jpath, cells_path], metrics
 

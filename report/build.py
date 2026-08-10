@@ -66,6 +66,10 @@ Every key is optional; every absence is stated on the page. Nothing below has a 
                      "generated": iso, "newest_input": iso,
                      "inputs": {label: {"path": path, "mtime": iso}}},
       "open_items": [{"item": str, "closes_when": str, "blocked_on": str}, ...],
+      "per_sample": {"source": path,       # every threshold, one row per library
+                     "columns": [{"key": str, "label": str,
+                                  "scope": "per library"|"cohort constant", "step": str}, ...],
+                     "rows":    [{"sample": str, <key>: any, ...}, ...]},
     }
 
 FRESHNESS IS COMPUTED HERE AND ENFORCED ELSEWHERE
@@ -1109,6 +1113,77 @@ def build_open_items(payload, defects: list) -> dict:
     return {"stated": True, "items": out}
 
 
+def build_per_sample(payload, defects: list) -> dict:
+    """Every threshold this run derived, one row per library.
+
+    A pipeline that derives some thresholds per library and others for the cohort produces a
+    result nobody can check without knowing WHICH IS WHICH, and that distinction survives nowhere
+    in a report organised by step: a per-library ceiling and a cohort floor both appear as "a
+    number step 5 produced". So each column carries its scope, and a cohort constant is repeated
+    down its column rather than shown once - a reader comparing two libraries must be able to see
+    which numbers differ because the libraries differ.
+
+    A cell nothing recorded stays NOT STATED. It must not read as a zero, and it must not read as
+    a threshold that was applied.
+    """
+    block = _get(payload, "per_sample")
+    if block is MISSING or _unknown(block):
+        _defect(defects, "section 3 · per-library thresholds",
+                "no per-library threshold table was supplied. Which thresholds vary by library "
+                "and which are one cohort constant is not derivable from the rest of this "
+                "document, and it decides how every number in it may be compared.")
+        return {"stated": False, "columns": [], "rows": [], "source": NOT_STATED}
+
+    cols = []
+    for i, c in enumerate(_as_list(_get(block, "columns"))):
+        key = _get(c, "key")
+        if not _stated(key):
+            _defect(defects, "section 3 · per-library thresholds",
+                    f"column {i} has no key, so its cells cannot be read.")
+            continue
+        scope = _get(c, "scope")
+        if not _stated(scope):
+            _defect(defects, "section 3 · per-library thresholds",
+                    f"column {key!r} does not say whether it is per library or a cohort "
+                    f"constant. Without that the column cannot be interpreted.", severity="notice")
+        cols.append({"key": str(key), "label": _text(_get(c, "label"), str(key)),
+                     "scope": _text(scope), "step": _text(_get(c, "step"), "")})
+
+    rows = []
+    for r in _as_list(_get(block, "rows")):
+        sample = _get(r, "sample")
+        if not _stated(sample):
+            _defect(defects, "section 3 · per-library thresholds",
+                    "a row carries no sample name, so its numbers belong to no library.")
+            continue
+        cells = {}
+        for c in cols:
+            v = _get(r, c["key"])
+            cells[c["key"]] = NOT_STATED if (v is MISSING or _unknown(v)) else v
+        rows.append({"sample": str(sample), "cells": cells})
+
+    if not rows:
+        _defect(defects, "section 3 · per-library thresholds",
+                "the per-library table has no rows. An empty table and an absent one read the "
+                "same on the page and are not the same claim.")
+    source = _get(block, "source")
+    if not _stated(source):
+        _defect(defects, "section 3 · per-library thresholds",
+                "the per-library table names no file. Every number in this report must be "
+                "traceable to something a reader can open.")
+    # Which columns actually VARY is the question the table exists to answer, so it is answered
+    # here rather than left to the reader to scan for.
+    varying = []
+    for c in cols:
+        seen = {str(r["cells"][c["key"]]) for r in rows}
+        if len(seen) > 1:
+            varying.append(c["key"])
+    return {"stated": True, "columns": cols, "rows": rows, "source": _text(source),
+            "varying": varying,
+            "n_per_library": sum(1 for c in cols if c["scope"] == "per library"),
+            "n_cohort": sum(1 for c in cols if c["scope"] == "cohort constant")}
+
+
 # ---------------------------------------------------------------------------------- assembly
 
 
@@ -1136,6 +1211,7 @@ def assemble(payload, *, now=None) -> dict:
         "verdict": verdict,
         "parameters": parameters,
         "steps": steps,
+        "per_sample": build_per_sample(payload, defects),
         "provenance": provenance,
         "open_items": open_items,
         "figures": {},
@@ -1274,6 +1350,15 @@ white-space:pre;margin:10px 0}
 table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}
 th,td{border:1px solid var(--rule);padding:6px 8px;text-align:left;vertical-align:top}
 th{background:var(--wash);font-weight:600}
+/* The per-library table is wider than the page on purpose - twenty-odd thresholds is what
+   there are. It scrolls inside its own box rather than shrinking the type or dropping columns. */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:4px;margin:10px 0}
+table.wide{margin:0;font-size:12px;white-space:nowrap;width:auto;min-width:100%}
+table.wide th,table.wide td{border-left:none;border-right:1px solid var(--rule)}
+table.wide tr td:first-child,table.wide tr th:first-child{position:sticky;left:0;
+background:var(--paper);border-right:2px solid var(--ink)}
+table.wide tr th:first-child{background:var(--wash)}
+td.ns{color:var(--muted);font-style:italic}
 .badge{display:inline-block;padding:3px 10px;border-radius:3px;color:#fff;font-weight:700;
 font-size:12px;letter-spacing:.04em}
 .b-REFUSE{background:var(--refuse)}.b-REVIEW{background:var(--review)}
@@ -1658,6 +1743,41 @@ def render_html(doc: dict, figure_uris: dict) -> str:
         if c["reasons"]:
             parts.append(f"<div class='notice'><strong>{_e(c['name'])}</strong><ul class='det'>"
                          + "".join(f"<li>{_e(r)}</li>" for r in c["reasons"]) + "</ul></div>")
+
+    # ------------------------------------------- every threshold, per library
+    ps = doc["per_sample"]
+    parts.append("<h2>Every threshold this run derived, per library</h2>")
+    if not ps["stated"]:
+        parts.append("<div class='defect'><strong>Defect.</strong> No per-library threshold "
+                     "table was supplied. Which thresholds vary by library and which are one "
+                     "cohort constant is not derivable from the rest of this document, and it "
+                     "decides how every number in it may be compared.</div>")
+    else:
+        parts.append(
+            f"<p>{len(ps['rows'])} librar{'y' if len(ps['rows']) == 1 else 'ies'}, "
+            f"<strong>{ps['n_per_library']}</strong> quantities derived per library and "
+            f"<strong>{ps['n_cohort']}</strong> proposed once for the cohort. A cohort constant "
+            f"repeats down its column on purpose: two libraries can only be compared by someone "
+            f"who can see which numbers differ because the libraries do.</p>")
+        head = ("<tr><th>library</th>"
+                + "".join(f"<th>{_e(c['label'])}</th>" for c in ps["columns"]) + "</tr>")
+        scope = ("<tr><td class='src'>scope</td>"
+                 + "".join(f"<td class='src'>{_e(c['scope'])}</td>" for c in ps["columns"])
+                 + "</tr>")
+        body = "".join(
+            "<tr><td><strong>" + _e(r["sample"]) + "</strong></td>"
+            + "".join(
+                "<td class='"
+                + ("ns" if r["cells"][c["key"]] == NOT_STATED else "")
+                + f"'>{_e(r['cells'][c['key']])}</td>" for c in ps["columns"])
+            + "</tr>" for r in ps["rows"])
+        parts.append("<div class='scroll'><table class='wide'>" + head + scope + body
+                     + "</table></div>")
+        constant = [c for c in ps["columns"] if c["key"] not in ps["varying"]]
+        if constant:
+            parts.append("<p class='src'>identical in every library: "
+                         + _e(", ".join(c["label"] for c in constant)) + "</p>")
+        parts.append(f"<p class='src'>source: {_e(ps['source'])}</p>")
 
     # ---------------------------------------------------------------- 5 open items
     parts.append("<h2>5 · Open items</h2>")

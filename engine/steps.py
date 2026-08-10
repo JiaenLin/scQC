@@ -402,16 +402,151 @@ def _quality(task, pipeline, log):
 # the report - always last, and always produced
 
 
+#: Every threshold and every count this pipeline derives, one column each, with the SCOPE that
+#: says who it was derived for. A cohort constant repeated down the column is not clutter: a
+#: reader comparing two libraries has to be able to see, without going anywhere else, which
+#: numbers differ because the libraries differ and which are the same by construction.
+#:
+#: `key` is looked up in the row dict built below; `scope` is one of:
+#:    per library      measured or derived for that library alone
+#:    cohort constant  one value proposed for every library
+PER_SAMPLE_COLUMNS = (
+    ("cells_aligner", "aligner cells", "per library", "02_cells"),
+    ("cells_denoiser", "denoiser cells", "per library", "05_quality"),
+    ("cells_lost", "cells lost at the call", "per library", "02_cells"),
+    ("light_floor_umi", "light floor (UMI)", "cohort constant", "04_doublets"),
+    ("doublets_scored", "scored for doublets", "per library", "04_doublets"),
+    ("doublets_called", "called doublet", "per library", "04_doublets"),
+    ("doublet_rate_pct", "doublet rate %", "per library", "04_doublets"),
+    ("umi_valley", "UMI valley", "per library", "05_quality"),
+    ("umi_bimodal", "UMI bimodal", "per library", "05_quality"),
+    ("umi_floor_proposed", "UMI floor proposed", "cohort constant", "05_quality"),
+    ("gene_valley", "gene valley", "per library", "05_quality"),
+    ("gene_bimodal", "gene bimodal", "per library", "05_quality"),
+    ("gene_floor_proposed", "gene floor proposed", "cohort constant", "05_quality"),
+    ("mito_pop_floor", "mito derived above (UMI)", "cohort constant", "05_quality"),
+    ("mito_pop_n", "mito derived over (n)", "per library", "05_quality"),
+    ("mito_q1", "mito Q1 %", "per library", "05_quality"),
+    ("mito_q3", "mito Q3 %", "per library", "05_quality"),
+    ("mito_ceiling_pct", "MITO CEILING %", "per library", "05_quality"),
+    ("mito_clamped", "ceiling clamped", "per library", "05_quality"),
+    ("clusters", "clusters", "per library", "06_cluster_check"),
+    ("clusters_flagged", "clusters flagged", "per library", "06_cluster_check"),
+)
+
+
+def _per_sample_thresholds(pipeline, samples: list) -> tuple:
+    """One row per library, one column per threshold, written to a file and returned.
+
+    Assembled from the RUN MANIFEST and from the per-sample tables the steps wrote, never
+    recomputed here: a report that derives its own numbers can disagree with the run it describes
+    and nothing would say which was right.
+
+    A value that no step recorded stays None and is rendered as such. The point of a per-library
+    table is to show which thresholds vary by library and which do not, and a blank that reads as
+    a zero destroys exactly that.
+    """
+    import csv as _csv
+
+    def metrics(key):
+        r = pipeline.results_by_key.get(key)
+        return (getattr(r, "metrics", None) or {}) if r is not None else {}
+
+    def table(path, key="sample"):
+        p = Path(path)
+        if not p.exists():
+            return {}
+        with p.open(encoding="utf-8", newline="") as fh:
+            return {r[key]: r for r in _csv.DictReader(fh) if r.get(key)}
+
+    cohort = metrics("05_quality")
+    calls = table(_tables(pipeline) / "cell_calls.csv")
+    ceilings = table(_tables(pipeline) / "mito_ceiling_per_sample.csv")
+
+    flagged: dict = {}
+    prof = _tables(pipeline) / "cluster_profile.csv"
+    if prof.exists():
+        with prof.open(encoding="utf-8", newline="") as fh:
+            for r in _csv.DictReader(fh):
+                if str(r.get("FLAG", "")).strip().lower() == "true":
+                    flagged[r.get("sample", "")] = flagged.get(r.get("sample", ""), 0) + 1
+
+    rows = []
+    for s in samples:
+        q5, d4 = metrics(f"05_quality/{s}"), metrics(f"04_doublets/{s}")
+        val, bim = q5.get("valleys") or {}, q5.get("bimodal") or {}
+        pop, cc, ce = (q5.get("mito_population") or {}), calls.get(s, {}), ceilings.get(s, {})
+        rate = d4.get("rate_over_scored")
+        rows.append({
+            "sample": s,
+            "cells_aligner": _int(cc.get("aligner")),
+            "cells_denoiser": q5.get("n_called_by_denoiser"),
+            "cells_lost": _int(cc.get("lost")),
+            "light_floor_umi": pop.get("floor_umi"),
+            "doublets_scored": d4.get("n_scored"),
+            "doublets_called": d4.get("n_called"),
+            "doublet_rate_pct": round(100 * rate, 2) if rate is not None else None,
+            "umi_valley": _round(val.get("umi"), 1),
+            "umi_bimodal": bim.get("umi"),
+            "umi_floor_proposed": cohort.get("umi_proposed"),
+            "gene_valley": _round(val.get("genes"), 1),
+            "gene_bimodal": bim.get("genes"),
+            "gene_floor_proposed": cohort.get("genes_proposed"),
+            "mito_pop_floor": pop.get("floor_umi"),
+            "mito_pop_n": pop.get("n_at_or_above"),
+            "mito_q1": _round(ce.get("q1"), 3),
+            "mito_q3": _round(ce.get("q3"), 3),
+            "mito_ceiling_pct": _round(ce.get("ceiling"), 3),
+            "mito_clamped": ce.get("clamped") or None,
+            "clusters": metrics(f"06_cluster/{s}").get("n_clusters"),
+            "clusters_flagged": flagged.get(s),
+        })
+
+    out = _tables(pipeline) / "thresholds_per_sample.csv"
+    with out.open("w", encoding="utf-8", newline="") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["sample"] + [k for k, _l, _s, _st in PER_SAMPLE_COLUMNS])
+        w.writerow(["scope"] + [sc for _k, _l, sc, _st in PER_SAMPLE_COLUMNS])
+        for r in rows:
+            w.writerow([r["sample"]] + ["" if r.get(k) is None else r.get(k)
+                                        for k, _l, _s, _st in PER_SAMPLE_COLUMNS])
+    block = {"source": str(out),
+             "columns": [{"key": k, "label": lab, "scope": sc, "step": st}
+                         for k, lab, sc, st in PER_SAMPLE_COLUMNS],
+             "rows": rows}
+    return block, out
+
+
+def _int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _round(v, n):
+    try:
+        return round(float(v), n)
+    except (TypeError, ValueError):
+        return None
+
+
 def _report(task, pipeline, log):
     from report.build import build_report
 
     payload = pipeline.report_payload(stopped=None)
+    samples = [s.get("sample") for s in pipeline.samples if s.get("sample")]
+    per_sample, per_sample_csv = _per_sample_thresholds(pipeline, samples)
+    payload["per_sample"] = per_sample
     payload.update(task.params.get("extra", {}))
     out_html = pipeline.results / "reports" / "qc_report.html"
     out_json = pipeline.results / "reports" / "report.json"
     build_report(payload, out_html, out_json)
-    return {"outputs": [str(out_html), str(out_json)],
-            "metrics": {"findings": len(pipeline.findings)}, "versions": {}}
+    return {"outputs": [str(out_html), str(out_json), str(per_sample_csv)],
+            "metrics": {"findings": len(pipeline.findings),
+                        "per_sample_rows": len(per_sample["rows"]),
+                        "per_sample_columns": len(per_sample["columns"])},
+            "versions": {}}
 
 
 # --------------------------------------------------------------------------------------------
@@ -606,7 +741,11 @@ def _quality_measure(task, pipeline, log):
                   pipeline.results / "objects" / f"{s}_ambient.h5",
                   pipeline.scratch / f"{s}_qc",
                   {"sample": s, "metrics": list(VALLEY_METRICS),
-                   "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"]},
+                   "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
+                   # The mitochondrial quartiles are taken above this floor and the VALLEYS are
+                   # not. One pass, two populations, deliberately - see _op_valley for the
+                   # measurement behind it.
+                   "mito_floor_umi": p["light_floor"]},
                   log, p["python_exe"])
     m = res.get("metrics", {}) or {}
     got, bim = m.get("valleys") or {}, m.get("bimodal") or {}
@@ -622,6 +761,10 @@ def _quality_measure(task, pipeline, log):
     return {"outputs": list(res.get("outputs", [])),
             "metrics": {"valleys": got, "bimodal": bim,
                         "mito_quartiles": m.get("mito_quartiles"),
+                        # The ceiling's population travels with the ceiling. A threshold whose
+                        # derivation population is not recorded cannot be compared with anyone
+                        # else's, which is the entire disagreement this run went and settled.
+                        "mito_population": m.get("mito_population"),
                         "called_barcodes": str(called_csv) if called_csv else None,
                         "n_called_by_denoiser": m.get("n_called_by_denoiser")},
             "versions": res.get("versions", {})}
@@ -635,6 +778,7 @@ def _quality_stage(task, pipeline, log):
     """
     valleys = {m: [] for m in VALLEY_METRICS}
     mito_stats = {}
+    mito_pop = {}
     missing = []
     for s in task.params["samples"]:
         r = pipeline.results_by_key.get(f"05_quality/{s}")
@@ -649,6 +793,7 @@ def _quality_stage(task, pipeline, log):
         q = met.get("mito_quartiles")
         if q:
             mito_stats[s] = q
+        mito_pop[s] = met.get("mito_population") or {}
     if missing:
         raise Refusal(
             f"05_quality: no measurement was recorded for {', '.join(missing)}. A library whose "
@@ -673,10 +818,10 @@ def _quality_stage(task, pipeline, log):
         for k, v in (r.get("metrics") or {}).items():
             out["metrics"][f"{metric}_{k}"] = v
 
-    return _mito_ceiling_stage(task, pipeline, mito_stats, out)
+    return _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop)
 
 
-def _mito_ceiling_stage(task, pipeline, mito_stats, out):
+def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
     """Derive the per-library mitochondrial ceiling alongside the count floors.
 
     Runs in the SAME step as the floors and off the SAME per-library pass, because the one thing
@@ -718,13 +863,19 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out):
     p = _tables(pipeline) / "mito_ceiling_per_sample.csv"
     with open(p, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
+        # `pop_floor_umi` and `pop_n_all` are not decoration. A ceiling means nothing without the
+        # population it was taken over, and the whole disagreement with the reference study was
+        # this column being absent on both sides.
         w.writerow(["sample", "n", "median", "q1", "q3", "iqr", "derived", "ceiling", "clamped",
-                    "iqr_mult", "assay", "bound_lo", "bound_hi"])
+                    "iqr_mult", "assay", "bound_lo", "bound_hi",
+                    "pop_floor_umi", "pop_n_all_called"])
         for s in samples:
             m = ceil[s]
+            pp = (mito_pop or {}).get(s) or {}
             w.writerow([s, m.n, f"{m.median:.6f}", f"{m.q1:.6f}", f"{m.q3:.6f}",
                         f"{m.iqr:.6f}", f"{m.derived:.6f}", f"{m.ceiling:.6f}", m.clamped,
-                        d["mult"], assay, lo, hi])
+                        d["mult"], assay, lo, hi,
+                        pp.get("floor_umi", ""), pp.get("n_all_with_a_value", "")])
 
     out = dict(out)
     out["outputs"] = list(out.get("outputs", [])) + [str(p)]
