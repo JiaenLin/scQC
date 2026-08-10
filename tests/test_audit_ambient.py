@@ -13,14 +13,31 @@ from pathlib import Path
 
 # The cohort this pipeline is being checked against. It is NOT part of the pipeline: point
 # COHORT_DIR at a directory you hold, whose recorded tables this suite reads.
+def _skip(reason: str) -> None:
+    """Skip: under pytest as a skip, as a script as a clean exit.
+
+    A module-level SystemExit aborts pytest's COLLECTION, and collection is shared - so
+    this file skipping itself took the entire suite down with it (INTERNALERROR, "no tests
+    ran"), which is the opposite of the docstring's promise above.
+    """
+    # Whether pytest is RUNNING, not whether it is installed - it is installed in plenty of
+    # environments that invoke this file as a script, and pytest.skip outside a pytest run
+    # raises Skipped, which is a non-zero exit and reads as a failed suite.
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(reason, allow_module_level=True)
+    print(f"SKIP: {reason}")
+    raise SystemExit(0)
+
+
 _COHORT_ENV = os.environ.get("COHORT_DIR", "").strip()
 if not _COHORT_ENV:
-    print("SKIP: set COHORT_DIR to a cohort directory to audit"); raise SystemExit(0)
+    _skip("set COHORT_DIR to a cohort directory to audit")
 _COHORT = Path(_COHORT_ENV).expanduser()
 
 COHORT = _COHORT / "results/tables"
 if not (COHORT / "cellbender_before_after_summary.csv").exists():
-    print(f"SKIP: no recorded ambient-correction tables under {COHORT}"); raise SystemExit(0)
+    _skip(f"no recorded ambient-correction tables under {COHORT}")
 
 try:
     import pandas as pd

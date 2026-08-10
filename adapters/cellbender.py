@@ -941,6 +941,30 @@ def _h5_matrix_shape(path: Path) -> tuple:
     return shape, nnz
 
 
+# Every producer in this space spells the two gene axes differently: CellRanger's .h5 uses
+# features/id and features/name, its legacy layout uses genes and gene_names, scanpy writes
+# gene_ids into var, and CellBender writes gene_id and gene_name - singular. They are the same
+# two axes throughout. A reader that knows only one spelling does not fail when it meets
+# another; it reports whatever it *did* find under the name it was looking for.
+ID_COLUMNS = ("gene_ids", "gene_id")
+SYMBOL_COLUMNS = ("gene_names", "gene_name", "gene_symbols")
+
+
+def _var_column(var, candidates: Sequence[str]) -> list | None:
+    """The first of `candidates` present in `var`, or None if the axis is genuinely absent.
+
+    None means absent and must stay None. Substituting the other axis - filling missing
+    identifiers from var_names, or missing symbols from ids - produces a gene axis that is
+    labelled as one kind of key while holding the other, and nothing downstream can detect
+    it: the audit compared Ensembl accessions against gene symbols for exactly this reason
+    and reported 33,824 of 34,290 genes as absent from the file they came from.
+    """
+    for name in candidates:
+        if name in var.columns:
+            return [str(v) for v in var[name]]
+    return None
+
+
 def read_h5_header(path: str | Path) -> dict:
     """Barcodes and gene identifiers of a CellRanger-format .h5, without the counts."""
     import h5py
@@ -962,13 +986,14 @@ def read_h5_header(path: str | Path) -> dict:
             f"{p} carries no gene names and no gene ids, so its rows cannot be identified. "
             f"Per-gene removal is reported by SYMBOL and an unlabelled matrix cannot supply one.")
     if names is None:
+        # A display label is required; an identifier axis is the best available one. The
+        # reverse substitution is NOT done: see _var_column.
         names = list(ids)
-    if ids is None:
-        ids = list(names)
-    if not (len(names) == len(ids) == shape[0]):
+    if len(names) != shape[0] or (ids is not None and len(ids) != shape[0]):
         raise TaskFailure(
-            f"{p}: {shape[0]} matrix rows but {len(ids)} gene ids and {len(names)} gene names. "
-            f"The file is internally inconsistent; nothing downstream can align to it.")
+            f"{p}: {shape[0]} matrix rows but {len(ids) if ids else 0} gene ids and "
+            f"{len(names)} gene names. The file is internally inconsistent; nothing "
+            f"downstream can align to it.")
     if len(barcodes) != shape[1]:
         raise TaskFailure(
             f"{p}: {shape[1]} matrix columns but {len(barcodes)} barcodes.")
@@ -1077,8 +1102,8 @@ def _load_dense_source(path: Path) -> dict:
         ad = anndata.read_h5ad(str(p))
         m = sp.csc_matrix(ad.X).T.tocsc()
         barcodes = [str(b) for b in ad.obs_names]
-        names = [str(v) for v in ad.var_names]
-        ids = [str(v) for v in (ad.var["gene_ids"] if "gene_ids" in ad.var else ad.var_names)]
+        names = _var_column(ad.var, SYMBOL_COLUMNS) or [str(v) for v in ad.var_names]
+        ids = _var_column(ad.var, ID_COLUMNS)
     else:
         raise TaskFailure(
             f"{p}: unsupported raw matrix format. This adapter reads a CellRanger-format .h5, a "
@@ -1483,6 +1508,11 @@ def parse_metrics(h5_path: str | Path,
     gene_key_used, den_key, raw_index, tried = None, None, None, []
     for field, label in (("gene_ids", "identifier"), ("gene_names", "symbol")):
         dk, rk = den[field], raw[field]
+        if dk is None or rk is None:
+            absent = " and ".join(n.name for n, k in ((den_path, dk), (raw_path, rk))
+                                  if k is None)
+            tried.append(f"{label}: not carried by {absent}")
+            continue
         if len(set(rk)) != len(rk):
             tried.append(f"{label}: not unique in {raw_path.name}, so it cannot be indexed by")
             continue
@@ -1541,7 +1571,7 @@ def parse_metrics(h5_path: str | Path,
             genes_gaining_counts.append(den["gene_names"][j])
         per_gene.append({
             "symbol": den["gene_names"][j],
-            "gene_id": den["gene_ids"][j],
+            "gene_id": den["gene_ids"][j] if den["gene_ids"] is not None else "",
             "fraction_removed": frac,
             "raw_detection_frac": float(raw_det[i]) / n_scope,
             "denoised_detection_frac": float(den_det[j]) / n_scope,
