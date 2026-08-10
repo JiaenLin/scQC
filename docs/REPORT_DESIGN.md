@@ -123,7 +123,18 @@ Named, each with what would close it and who it is blocked on. A run with no ope
 
 ## Figures
 
-Nine, one per step, each answering a single question a reader would otherwise have to ask.
+Twelve, each answering a single question a reader would otherwise have to ask. Nine follow the
+steps; F10 to F12 are pairs — the same data drawn twice, because a comparison is what carries the
+meaning.
+
+**F10 and F11 must share one embedding.** Re-embedding the retained nuclei changes the layout, and
+a reader comparing the two panels would be looking at a difference that may be the projection
+rather than the data. `fig_f10_umap_per_library` therefore takes coordinates and never computes
+them.
+
+**A capped axis states what it hides.** F12 clips a long tail so the bulk is legible, and prints
+the share of nuclei that fall outside. A truncated axis that does not say it is truncated reports
+a distribution nobody drew.
 
 | # | step | question it answers | form |
 |---|---|---|---|
@@ -136,6 +147,9 @@ Nine, one per step, each answering a single question a reader would otherwise ha
 | F7 | 5 quality | what did the cut change? | before/after violins, log and linear |
 | F8 | 6 clusters | are any clusters technical? | depth × mito scatter, flags coloured, thresholds drawn |
 | F9 | 7 apply | what did each criterion remove *uniquely*? | unique vs shared contribution per criterion |
+| F10 | 4 doublets | where in the manifold did the doublets sit? | one embedding per library, doublet calls coloured |
+| F11 | 7 apply | did the removed nuclei leave as a population, or scattered? | **the same embeddings**, removed nuclei coloured |
+| F12 | 5 quality | the same distributions, on the scale people work in | F7's data on a linear axis, with the share above the cap stated |
 
 **F2 and F6 are the two that matter most.** F2 is the only figure that can show a technical
 removal has become an apparent biological difference. F6 is the only one that shows a derived

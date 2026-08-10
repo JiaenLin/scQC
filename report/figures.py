@@ -66,6 +66,12 @@ PALETTE = {
     "second": "#009E73",
     "threshold": "#000000",
     "muted": "#666666",
+    # BEFORE and AFTER are a pair, and the pairing is the message: the prior state is present but
+    # recessive, the retained state carries the ink. Deliberately not two hues - a reader
+    # comparing two distributions of one quantity should not have to decode a colour legend to
+    # know which is the result. It also survives greyscale, where two hues of equal value do not.
+    "before": "#BFBFBF",
+    "after": "#2F353C",
 }
 
 #: Never-examined carries a hatch as well as a colour, because colour is not the only encoding.
@@ -986,90 +992,154 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
     return fig
 
 
-def fig_f7_before_after(distributions, *, cut=None, metric_label=None, dpi: int = DEFAULT_DPI):
+def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name):
+    """One panel of paired per-library violins. Returns (positions, n_above_cap).
+
+    PAIRED, AND LABELLED ONCE PER LIBRARY. Each library gets a `before` violin and an `after`
+    violin side by side; the axis is labelled with the library, not with four lines of state and
+    n under every shape. A reader compares within a pair first and across libraries second, and
+    the layout should make the first of those the easy one.
+    """
+    import math
+
+    data, positions, colours, ticks, tick_at = [], [], [], [], []
+    dropped = above = 0
+    for j, s in enumerate(names):
+        entry = distributions[s] or {}
+        centre = j * 2.2
+        for k, (state, colour) in enumerate((("before", PALETTE["before"]),
+                                             ("after", PALETTE["after"]))):
+            raw = entry.get(state)
+            if _unknown(raw):
+                continue
+            vals = [float(v) for v in raw if not _unknown(v)]
+            if cap is not None:
+                kept = [v for v in vals if v <= cap]
+                above += len(vals) - len(kept)
+                vals = kept
+            if log:
+                positive = [math.log10(v) for v in vals if v > 0]
+                dropped += len(vals) - len(positive)
+                vals = positive
+            if not vals:
+                continue
+            data.append(vals)
+            positions.append(centre + k * 0.85)
+            colours.append(colour)
+        ticks.append(s)
+        tick_at.append(centre + 0.42)
+
+    if not data:
+        _blank_panel(ax, "no usable values were supplied")
+        return [], 0
+
+    parts = ax.violinplot(data, positions=positions, widths=0.78, showextrema=False,
+                          showmedians=False)
+    for body, colour in zip(parts["bodies"], colours):
+        body.set_facecolor(colour)
+        body.set_alpha(1.0 if colour == PALETTE["after"] else 0.9)
+        body.set_edgecolor("none")
+
+    # THE MEDIAN IS DRAWN AND ALSO WRITTEN. A rule says where the centre is; the number says what
+    # it is, and a reader comparing libraries should not have to read a value off a log axis.
+    for vals, pos, colour in zip(data, positions, colours):
+        ordered = sorted(vals)
+        m = ordered[len(ordered) // 2]
+        ax.hlines(m, pos - 0.36, pos + 0.36, color=PALETTE["ok"], linewidth=2.0, zorder=4)
+        if colour == PALETTE["after"]:
+            shown = (10 ** m) if log else m
+            ax.annotate(f"{shown:,.0f}", (pos, m), textcoords="offset points", xytext=(0, 6),
+                        ha="center", fontsize=6.5, fontweight="bold", zorder=5)
+
+    if not _unknown(cut):
+        value = float(cut)
+        if not (log and value <= 0):
+            level = math.log10(value) if log else value
+            ax.axhline(level, color=PALETTE["refuse"], linestyle="--", linewidth=1.2, zorder=3)
+            _label(ax, max(positions), level, f" applied floor = {value:,.0f}", fontsize=6.5,
+                   ha="right", va="bottom", color=PALETTE["refuse"])
+
+    ax.set_xticks(tick_at)
+    ax.set_xticklabels(ticks, fontsize=7, rotation=32, ha="right")
+    ax.margins(y=0.14)
+    if log:
+        from matplotlib.ticker import FuncFormatter, MultipleLocator
+        lo, hi = ax.get_ylim()
+        if hi - lo >= 1.2:
+            ax.yaxis.set_major_locator(MultipleLocator(1))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{10 ** v:,.0f}"))
+        ax.set_ylabel(f"{metric_name} per nucleus", fontsize=8)
+        if dropped:
+            _panel_note(ax, f"{dropped:,} value(s) at or below zero cannot be shown on a log "
+                            f"axis", loc="upper right")
+    else:
+        ax.set_ylabel(f"{metric_name} per nucleus", fontsize=8)
+    _tidy(ax)
+    return positions, above
+
+
+def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: str = "both",
+                        cap=None, fig_id: str = "F7", dpi: int = DEFAULT_DPI):
     """F7 - what did the cut change?
 
     `distributions` maps a sample to `{"before": [...], "after": [...]}` of the metric's values.
-    Both panels show the same data: linear, because that is the space the threshold is in, and
-    log, because on a linear axis the population the cut removes is a smear against the axis and
-    invisible. A distribution that barely moves is as informative as one that does, so both
-    states are drawn even where the cut removed almost nothing.
+    One pair of violins per library: the state before the cut in grey, what survived it in black,
+    the median drawn AND printed, and the applied floor across both.
 
-    Values at or below zero cannot appear on the log panel; they are counted and the count is
-    printed, rather than being dropped where nobody can see how many went.
+    THE TWO AXES ANSWER DIFFERENT QUESTIONS AND BOTH ARE NEEDED.
+
+    A log axis shows that two populations exist and that the cut fell between them - on a linear
+    axis the population being removed is a smear against the bottom and invisible, so the figure
+    that justifies the threshold has to be the log one. A linear axis shows the scale a reader
+    actually works in, and how little of the retained distribution sits anywhere near the cut.
+
+    `scale` selects one - "log", "linear" - or "both", which stacks them. The report draws them as
+    two figures so each can carry its own caption; "both" is kept because a reader looking at one
+    figure in isolation is the case this is guarding against.
+
+    A CAPPED AXIS MUST SAY IT IS CAPPED. `cap` clips the linear panel so the bulk is legible
+    rather than compressed into the bottom decile by a long tail. The proportion of nuclei that
+    fall outside is then counted and printed on the panel. A truncated axis that does not say so
+    reports a distribution nobody drew, and a reader has no way to know the difference.
+
+    Values at or below zero cannot appear on a log axis; they are counted and the count printed,
+    rather than dropped where nobody can see how many went.
     """
     if not distributions:
         raise TaskFailure("F7 needs at least one library's before/after values")
-    import math
+    if scale not in ("both", "log", "linear"):
+        raise TaskFailure(f"F7: scale must be 'both', 'log' or 'linear', got {scale!r}")
 
     names = sorted(distributions)
-    # Read once, so the two panels cannot disagree about what the metric is called, and read
-    # through `label_text` so an unsupplied name is stated rather than printed as `nan`.
+    # Read once, so two panels cannot disagree about what the metric is called, and through
+    # `label_text` so an unsupplied name is stated rather than printed as `nan`.
     metric_name = label_text(metric_label, f"metric ({NOT_SUPPLIED} - name it)")
-    fig = _new_fig((max(6.5, 1.05 * len(names) + 3.0), 6.6), dpi)
+    panels = (("log",), ("linear",), ("log", "linear"))[("log", "linear", "both").index(scale)]
+    width = max(6.5, 0.78 * len(names) + 2.6)
+    fig = _new_fig((width, 3.4 * len(panels) + 0.5), dpi)
 
-    for panel, log in ((1, False), (2, True)):
-        ax = fig.add_subplot(2, 1, panel)
-        data, positions, colours, labels, dropped = [], [], [], [], 0
-        for j, s in enumerate(names):
-            entry = distributions[s]
-            for k, (state, colour) in enumerate((("before", PALETTE["neutral"]),
-                                                 ("after", PALETTE["ok"]))):
-                raw = entry.get(state)
-                if _unknown(raw):
-                    continue
-                vals = [float(v) for v in raw if not _unknown(v)]
-                if log:
-                    keep = [math.log10(v) for v in vals if v > 0]
-                    dropped += len(vals) - len(keep)
-                    vals = keep
-                if not vals:
-                    continue
-                data.append(vals)
-                positions.append(j * 2.4 + k * 0.9)
-                colours.append(colour)
-                labels.append(f"{s}\n{state} {n_label(len(vals))}")
-        if not data:
-            _blank_panel(ax, "no usable values were supplied")
-            continue
-        parts = ax.violinplot(data, positions=positions, widths=0.8, showextrema=False,
-                              showmedians=True)
-        # Headroom before anything is annotated, so the n and the dropped-value count sit above
-        # the distributions rather than across them.
-        ax.margins(y=0.16)
-        for body, colour in zip(parts["bodies"], colours):
-            body.set_facecolor(colour)
-            body.set_alpha(0.75)
-            body.set_edgecolor(PALETTE["muted"])
-        if "cmedians" in parts:
-            parts["cmedians"].set_color(PALETTE["threshold"])
-        if not _unknown(cut):
-            level = math.log10(float(cut)) if (log and float(cut) > 0) else float(cut)
-            if not (log and float(cut) <= 0):
-                ax.axhline(level, color=PALETTE["threshold"], linestyle="--", linewidth=1.1)
-                _label(ax, positions[-1], level, f" cut {float(cut):,.0f} ", fontsize=7,
-                       ha="right", va="bottom", color=PALETTE["threshold"])
-        ax.set_xticks(positions)
-        ax.set_xticklabels(labels, fontsize=6, rotation=90)
-        if log:
-            from matplotlib.ticker import FuncFormatter, MultipleLocator
-            # Ticks at whole decades and labelled in the original units - 1,000, not 10^3 and
-            # not 316. The locator is only forced where the data spans enough decades to carry
-            # it; below that the default spacing is left alone rather than reduced to two ticks.
-            lo, hi = ax.get_ylim()
-            if hi - lo >= 1.2:
-                ax.yaxis.set_major_locator(MultipleLocator(1))
-            ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{10 ** v:,.0f}"))
-            ax.set_ylabel(f"{metric_name} (log scale, original units)", fontsize=8)
-            note = f"{dropped:,} value(s) at or below zero cannot be shown on a log axis"
-            _panel_note(ax, note, loc="upper right")
-        else:
-            ax.set_ylabel(f"{metric_name} (linear)", fontsize=8)
-            _panel_note(ax, n_label(len(names), "libraries"), loc="upper right")
-        _tidy(ax)
+    total = 0
+    for vals in distributions.values():
+        for state in ("before", "after"):
+            raw = (vals or {}).get(state)
+            if not _unknown(raw):
+                total += sum(1 for v in raw if not _unknown(v))
 
-    _finish(fig, "F7 · the metric before and after the cut, log and linear",
-            "n is printed under every violin; the cut is drawn on both panels")
+    for i, which in enumerate(panels):
+        ax = fig.add_subplot(len(panels), 1, i + 1)
+        use_cap = cap if (which == "linear" and cap is not None) else None
+        _positions, above = _violin_row(ax, distributions, names, log=(which == "log"), cut=cut,
+                                        cap=use_cap, metric_name=metric_name)
+        if use_cap is not None:
+            share = (100.0 * above / total) if total else 0.0
+            _panel_note(ax, f"y capped at {float(use_cap):,.0f} - {share:.2f}% of plotted nuclei "
+                            f"lie above and are not drawn", loc="upper left")
+
+    axis_words = {"log": "a log axis", "linear": "a linear axis",
+                  "both": "log and linear axes"}[scale]
+    _finish(fig, f"{fig_id} - {metric_name} per library, before and after the cut, on {axis_words}",
+            "grey is every called cell, black is what was retained; the median is drawn and "
+            "printed, and the applied floor crosses every library")
     return fig
 
 
@@ -1265,6 +1335,97 @@ def fig_f9_criterion_contributions(per_criterion, *, n_removed=None, n_in=None,
 
 #: The report writer resolves a figure id to the function that draws it. Kept here rather than in
 #: the writer so a new figure is added in one place.
+
+# -------------------------------------------------------------------- F10 - per-library UMAP
+
+
+def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle=None,
+                             fig_id: str = "F10", dpi: int = DEFAULT_DPI):
+    """F10 - where in the manifold did the removed nuclei sit?
+
+    `embeddings` maps a sample to `{"x": [...], "y": [...], "doublet": [...], "removed": [...]}`,
+    one entry per barcode. `colour_by` selects `doublet` - which barcodes the detector called -
+    or `removed`, which barcodes any criterion removed.
+
+    ONE PANEL PER LIBRARY, AND NO COHORT PANEL. Libraries are embedded separately because nothing
+    in this pipeline pools them: clustering, the mitochondrial ceiling and the cluster check are
+    all per library, and a pooled embedding would be an object no step produces. Drawing one
+    would also invite a reader to read cross-library structure off a projection that no batch
+    correction has been applied to.
+
+    THE SAME COORDINATES ARE USED FOR BOTH CALLS, and that is the whole point of taking an
+    embedding as input rather than computing one here. Re-embedding the retained cells produces a
+    different layout, and a reader comparing the two would be looking at a difference that may be
+    the projection rather than the data.
+
+    What the figure can establish is whether removed nuclei are SCATTERED or CONCENTRATED. Doublets
+    that fall on the boundaries between clusters are behaving as doublets should. A coherent
+    region removed in one piece is a population leaving, which may be correct and is never
+    something to discover after the fact.
+    """
+    if not embeddings:
+        raise TaskFailure("F10 needs at least one library's embedding")
+    if colour_by not in ("doublet", "removed"):
+        raise TaskFailure(f"F10: colour_by must be 'doublet' or 'removed', got {colour_by!r}")
+
+    names = sorted(embeddings)
+    rows, cols = grid_shape(len(names))
+    fig = _new_fig((min(12.0, 2.15 * cols + 0.6), 2.05 * rows + 0.9), dpi)
+    highlight = PALETTE["refuse"] if colour_by == "doublet" else PALETTE["muted"]
+    rest = PALETTE["muted"] if colour_by == "doublet" else PALETTE["ok"]
+
+    for i, s in enumerate(names):
+        ax = fig.add_subplot(rows, cols, i + 1)
+        entry = embeddings[s] or {}
+        xs = [v for v in (entry.get("x") or [])]
+        ys = [v for v in (entry.get("y") or [])]
+        marks = [v for v in (entry.get(colour_by) or [])]
+        if not xs or not ys or len(xs) != len(ys):
+            _blank_panel(ax, f"{s}: no embedding")
+            continue
+        if len(marks) != len(xs):
+            # A flag array of the wrong length cannot be matched to a point. Drawing the cloud
+            # uncoloured says less than the data holds and says so, rather than aligning two
+            # sequences by position and hoping.
+            marks = [None] * len(xs)
+            _panel_note(ax, "flags do not match the embedding", loc="lower left")
+        on, off = [], []
+        for x, y, m in zip(xs, ys, marks):
+            if _unknown(x) or _unknown(y):
+                continue
+            (on if _tri(m) is True else off).append((float(x), float(y)))
+        if off:
+            ax.scatter([p[0] for p in off], [p[1] for p in off], s=1.4, c=rest,
+                       alpha=0.45 if colour_by == "doublet" else 0.7, linewidths=0, rasterized=True)
+        if on:
+            ax.scatter([p[0] for p in on], [p[1] for p in on], s=1.8, c=highlight,
+                       alpha=0.9 if colour_by == "doublet" else 0.3, linewidths=0, rasterized=True)
+        total = len(on) + len(off)
+        share = (100.0 * len(on) / total) if total else float("nan")
+        ax.set_title(f"{s}   {share:.1f}%" if total else f"{s}   {NOT_SUPPLIED}",
+                     fontsize=7.5, pad=3)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_edgecolor(PALETTE["muted"])
+            spine.set_linewidth(0.5)
+
+    what = ("called a doublet" if colour_by == "doublet"
+            else "removed by any criterion")
+    _finish(fig, f"{fig_id} - per-library embedding, coloured by whether a nucleus was {what}",
+            label_text(subtitle, "one embedding per library; the percentage on each panel is the "
+                                 "share highlighted. The same coordinates are used before and "
+                                 "after, so a difference between the two is the data"))
+    return fig
+
+
+#: Figure id -> the function that draws it.
+#:
+#: TWO IDS MAY SHARE A FUNCTION. The id is what the report positions, numbers and captions, so
+#: the same data shown two ways is two figures rather than one figure with two panels - a reader
+#: referring to "F12" means the linear axis and nothing else. Each entry passes its own arguments,
+#: and each function is told which id it is drawing under so its title cannot disagree with the
+#: block around it.
 FIGURE_FUNCTIONS = {
     "F1": fig_f1_barcode_rank,
     "F2": fig_f2_ambient_removal,
@@ -1275,4 +1436,7 @@ FIGURE_FUNCTIONS = {
     "F7": fig_f7_before_after,
     "F8": fig_f8_cluster_flags,
     "F9": fig_f9_criterion_contributions,
+    "F10": fig_f10_umap_per_library,
+    "F11": fig_f10_umap_per_library,
+    "F12": fig_f7_before_after,
 }

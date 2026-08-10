@@ -165,6 +165,9 @@ FIGURE_QUESTIONS = {
     "F7": "what did the cut change?",
     "F8": "are any clusters technical?",
     "F9": "what did each criterion remove uniquely?",
+    "F10": "where in the manifold did the doublets sit?",
+    "F11": "did the removed nuclei leave as a population, or scattered?",
+    "F12": "the same count distributions, on the scale people work in",
 }
 
 PARAM_CLASSES = {
