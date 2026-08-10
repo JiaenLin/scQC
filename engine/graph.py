@@ -19,6 +19,28 @@ from . import steps
 from .task import Refusal, Task, TaskFailure
 
 
+
+def _num(*candidates):
+    """The first candidate that is actually a number, else None.
+
+    A samplesheet cell arrives as a string, and an empty one arrives as "" - which is not a
+    value and must not shadow the cohort-wide flag behind it. `float("")` raises and `float(None)`
+    raises, so both are treated as absent rather than as zero; a doublet rate of 0.0 declared by
+    accident would silently disable the detector.
+    """
+    for c in candidates:
+        if c is None:
+            continue
+        s = str(c).strip()
+        if not s or s.lower() in ("na", "nan", "none", "null"):
+            continue
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def ingest_stage(pipeline, python_exe: str) -> list[Task]:
     """Stage one: validate and verify every sample. Nothing is produced, only decided."""
     out = []
@@ -166,7 +188,12 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             params={"sample": s, "h5": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
                     "rscript": tools.get("rscript", "Rscript"),
                     "light_floor": tools.get("light_floor", 200),
-                    "dbr": tools.get("dbr"), "dbr_sd": tools.get("dbr_sd"),
+                    # Per-sample first: loading concentration can differ between libraries, and
+                    # a cohort-wide rate imposed over that is a number describing no library.
+                    # Falls back to the cohort flags; neither is defaulted, and the adapter
+                    # refuses None rather than choosing a rate nobody declared.
+                    "dbr": _num(by_sample[s].get("dbr"), tools.get("dbr")),
+                    "dbr_sd": _num(by_sample[s].get("dbr_sd"), tools.get("dbr_sd")),
                     "seed": tools.get("seed", 0)},
             outputs=(str(csv),), cpus=4, memory_gb=32, walltime_h=4,
         ))

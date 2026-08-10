@@ -414,6 +414,12 @@ def cmd_run(a) -> int:
         "celescope": a.celescope, "cellranger": a.cellranger, "cellbender": a.cellbender,
         "rscript": a.rscript, "device": ("cpu" if a.cpu else "cuda"),
         "light_floor": a.light_floor, "seed": a.seed, "resolution": a.resolution,
+        # DECLARED, with no default anywhere. The doublet adapter refuses a missing dbr rather
+        # than substituting one, because an expected doublet rate is a property of how the
+        # libraries were loaded and cannot be read off the data. It reaches the graph either
+        # per-sample from the samplesheet - loading concentration can differ between libraries -
+        # or cohort-wide from these flags.
+        "dbr": a.dbr, "dbr_sd": a.dbr_sd,
     }.items() if v is not None}
     python_exe = a.python or sys.executable
 
@@ -532,6 +538,13 @@ def build_parser() -> argparse.ArgumentParser:
     r2.add_argument("--cellbender"); r2.add_argument("--rscript")
     r2.add_argument("--cpu", action="store_true", help="no GPU available")
     r2.add_argument("--light-floor", dest="light_floor", type=int, default=200)
+    # No defaults. A doublet rate nobody chose is the threshold this pipeline most objects to,
+    # and scDblFinder's own default is derived from a 10x loading model that does not transfer.
+    r2.add_argument("--dbr", type=float,
+                    help="expected doublet rate (DECLARED; per-sample `dbr` in the samplesheet "
+                         "overrides it). No default: it describes how the libraries were loaded.")
+    r2.add_argument("--dbr-sd", dest="dbr_sd", type=float,
+                    help="uncertainty on --dbr (DECLARED; per-sample `dbr_sd` overrides it)")
     r2.add_argument("--resolution", type=float, default=1.0)
     r2.add_argument("--seed", type=int, default=0)
     r2.add_argument("--force", action="store_true", help="re-run every task, ignoring the manifest")
