@@ -85,8 +85,50 @@ def _unknown(v) -> bool:
 D_DEFAULT = 70.0 # the cited method's number, not one measured here
 TOPN = 20
 
+#: The profile columns that carry numbers. A CSV carries no types: every cell arrives as a string,
+#: and a string meets `<` against a float with a TypeError - or, where the comparison happens to be
+#: between two strings, sorts lexicographically and returns a plausible wrong answer. An EMPTY cell
+#: is how the writer spells unknown, and `_unknown("")` is False, so the conversion has to happen
+#: on the way in rather than inside each threshold.
+NUMERIC_KEYS = ("n", "median_umi", "umi_frac_of_sample", "median_pct_mt", "pct_uninformative",
+                "pct_mt_markers", "pct_ribo_markers", "pct_doublet")
+
+
 class ClusterRefusal(RuntimeError):
     """Raised when the flags cannot be computed honestly."""
+
+
+def read_profile_csv(path) -> list:
+    """Profile rows from a CSV written by `write_profile_csv`, numbers as numbers.
+
+    A blank cell becomes None - the writer's own spelling of unknown, and what the three-valued
+    logic below is built to receive. Anything that is neither a number nor blank is REFUSED rather
+    than read as unknown: a column that did not survive the round trip is a defect, and quietly
+    converting it to unknown removes the only evidence of it.
+    """
+    import csv as _csv
+
+    with open(path, encoding="utf-8", newline="") as fh:
+        rows = list(_csv.DictReader(fh))
+    out = []
+    for i, row in enumerate(rows):
+        r = dict(row)
+        for k in NUMERIC_KEYS:
+            if k not in r:
+                continue
+            v = r[k]
+            if _unknown(v) or (isinstance(v, str) and not v.strip()):
+                r[k] = None
+                continue
+            try:
+                r[k] = int(v) if k == "n" else float(v)
+            except (TypeError, ValueError):
+                raise ClusterRefusal(
+                    f"{path}, row {i + 2}: {k} = {v!r} is neither a number nor an empty cell. "
+                    f"An empty cell means not computed and is read as such; anything else is a "
+                    f"column that did not survive being written and read back.") from None
+        out.append(r)
+    return out
 
 def _tri(v):
     """Normalise one operand to True, False or None, whatever type carries it.

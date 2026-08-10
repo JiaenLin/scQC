@@ -1440,6 +1440,70 @@ def _resolve_uninformative(adata, uninformative_genes, mt_key, ribo_key,
     return all_set, mt_set, ribo_set, present, source
 
 
+def attach_doublet_calls(adata, csv_path, *, key, barcode_column="barcode",
+                         class_column="doublet_class"):
+    """Put a per-barcode doublet call into `obs[key]`. Attached, never applied.
+
+    Criterion D is computable at exactly one point in this pipeline: on an object carrying the
+    doublet calls ATTACHED and NOT applied (modules/06_cluster_check/cluster_flags.py, first
+    section). After a removal every cluster is 0% doublet by construction and D passes for the
+    wrong reason. The detector runs in a different environment and leaves a CSV beside the object,
+    so something has to bring the two together, and this is it.
+
+    A barcode absent from the CSV was never scored - it sat below the light floor - and is left
+    None rather than filled with "singlet". `_doublet_masks` then drops it from BOTH sides of D's
+    ratio, instead of counting a cell nobody examined as a cell that passed.
+
+    ZERO OVERLAP IS REFUSED, and that is the point of the function existing rather than a one-line
+    merge. In this project's own cohort the object's barcodes carried a `<sample>_` prefix and a
+    detector's CSV did not: the same run, described two ways, intersecting in NO barcodes. The
+    merge would have succeeded and written None into every cell, and criterion D would then have
+    read "not evaluated" for the entire cohort - which on the page is very hard to tell from a
+    cohort that was evaluated and had no doublet-driven clusters.
+    """
+    import pandas as pd
+
+    p = Path(csv_path)
+    if not p.exists():
+        raise TaskFailure(
+            f"doublet_csv {p} does not exist. Criterion D is measured from it; running without it "
+            f"reports D as unknown for every cluster, so the file is required once it is named.")
+    with p.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        cols = list(reader.fieldnames or [])
+        for need in (barcode_column, class_column):
+            if need not in cols:
+                raise TaskFailure(
+                    f"{p} has no {need!r} column. Its columns are: {', '.join(cols) or '(none)'}. "
+                    f"Measure the structure rather than assume it - a renamed column here becomes "
+                    f"a criterion silently not evaluated.")
+        calls = {}
+        for row in reader:
+            v = row[class_column]
+            calls[str(row[barcode_column])] = (
+                None if _unknown(v) or not str(v).strip() else str(v).strip())
+
+    names = [str(b) for b in adata.obs_names]
+    attached = sum(1 for b in names if b in calls)
+    if calls and not attached:
+        raise TaskFailure(
+            f"none of the {len(calls):,} barcodes in {p.name} appear in this object's obs_names. "
+            f"First few in the file: {', '.join(list(calls)[:3])}. First few in the object: "
+            f"{', '.join(names[:3])}. The two are describing the same library under two naming "
+            f"conventions; joining them anyway would report criterion D as unevaluated for every "
+            f"cluster, which reads on the page like a cohort with no doublet-driven clusters.")
+    adata.obs[key] = pd.Series([calls.get(b) for b in names],
+                               index=adata.obs_names, dtype=object)
+    adata.uns["scqc_doublet_attach"] = {
+        "csv": str(p), "key": key,
+        "n_in_csv": len(calls), "n_in_object": len(names),
+        "n_attached": attached, "n_never_scored": len(names) - attached,
+        "classes_seen": sorted({v for v in calls.values() if v is not None}),
+        "applied": False,
+    }
+    return adata
+
+
 def _doublet_masks(adata, doublet_key, doublet_positive):
     """(scored, positive) boolean arrays, with never-scored cells excluded from BOTH.
 
@@ -2164,11 +2228,6 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
     if "seed" not in params or _unknown(params["seed"]):
         raise TaskFailure("required parameter 'seed' was not supplied; a clustering with an "
                           "unrecorded seed cannot be reproduced or compared")
-    uninformative = params.get("uninformative_genes")
-    if _unknown(uninformative):
-        raise TaskFailure("required parameter 'uninformative_genes' was not supplied - the locked "
-                          "mt+ribo set criterion C is measured against. Without it C would read "
-                          "0% for every cluster.")
     # An omitted doublet column and a deliberately absent one are the same JSON. They are not the
     # same fact, so the key must be PRESENT - null is how the caller declares "no doublet flags",
     # which reports criterion D as unknown rather than clear.
@@ -2177,6 +2236,54 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
             "parameter 'doublet_key' must be present, and may be null. Omitting it and declaring "
             "no doublet flags produce the same profile, and step 6's criterion D is the one that "
             "becomes a tautology if it is evaluated at the wrong point in the pipeline.")
+
+    # ORDER MATTERS AND GETTING IT WRONG IS SILENT (see this module's header). `cluster()`
+    # normalises adata.X in place, after which every cell's counts sum to the same number and
+    # `median_umi` - criterion A's whole basis - is a constant that still prints plausibly. So
+    # cluster() refuses to start without obs["total_counts"], and this is where it comes from:
+    # the object this step reads is the denoised one, which nothing has measured yet.
+    #
+    # Measured HERE rather than carried from step 5, because step 5 writes no object. Same
+    # patterns, so the mitochondrial percentage criterion B thresholds and the one step 5's
+    # ceiling came from are the same quantity.
+    if "total_counts" not in adata.obs.columns:
+        qc_metrics(adata, _require_str(params, "mt_prefix"), _require_str(params, "ribo_pattern"),
+                   allow_empty_mt=bool(params.get("allow_empty_mt", False)),
+                   allow_empty_ribo=bool(params.get("allow_empty_ribo", False)),
+                   layer=params.get("layer"),
+                   allow_transformed=bool(params.get("allow_transformed", False)))
+
+    # ATTACHED, not applied. Nothing is removed here and nothing downstream of this op reads the
+    # column except criterion D.
+    if not _unknown(params.get("doublet_csv")):
+        if _unknown(params.get("doublet_key")):
+            raise TaskFailure(
+                "doublet_csv was supplied but doublet_key is null, so the calls would be written "
+                "to a column nothing reads and criterion D would report unknown with the data for "
+                "it sitting in the object.")
+        attach_doublet_calls(
+            adata, params["doublet_csv"], key=str(params["doublet_key"]),
+            barcode_column=str(params.get("doublet_barcode_column", "barcode")),
+            class_column=str(params.get("doublet_class_column", "doublet_class")))
+
+    uninformative = params.get("uninformative_genes")
+    if _unknown(uninformative):
+        # The locked set is the mt+ribo symbols qc_metrics MATCHED in this object, taken as a
+        # mapping so criterion C's split into C_mt and C_ribo is authoritative rather than
+        # re-derived from var flags. It is resolved here rather than passed in because the
+        # orchestrator never loads a matrix (tests/test_wiring.py check E) and so cannot know
+        # which symbols a pattern matched against THIS reference - and a set locked against a
+        # different one reports 0% for every cluster instead of failing.
+        q = adata.uns.get("scqc_qc_metrics") or {}
+        if "mt_genes" in q or "ribo_genes" in q:
+            uninformative = {"mt": list(q.get("mt_genes") or []),
+                             "ribo": list(q.get("ribo_genes") or [])}
+    if _unknown(uninformative):
+        raise TaskFailure(
+            "the locked mt+ribo set criterion C is measured against could not be established. "
+            "Supply 'uninformative_genes', or supply 'mt_prefix' and 'ribo_pattern' on an object "
+            "that has not already been measured, so the symbols are matched against this "
+            "reference. Without it C would read 0% for every cluster.")
     # The remaining .get() defaults below mirror the documented defaults of cluster() and
     # cluster_profile(); each is a FIXED procedure parameter, not a stand-in for a declaration.
     cluster(adata,

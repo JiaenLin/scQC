@@ -386,7 +386,7 @@ def cmd_run(a) -> int:
     from engine.decisions import load as load_decisions
     from engine.executor import make_executor
     from engine.pipeline import Pipeline
-    from engine.task import Refusal, Status
+    from engine.task import Refusal, Status, first_line
 
     # Argument contradictions are settled BEFORE any file is opened. Otherwise a misuse of the
     # flags surfaces as a missing-file error about something else entirely, and the reader fixes
@@ -458,7 +458,7 @@ def cmd_run(a) -> int:
         bad = {k: r for k, r in pipe.results_by_key.items() if not r.ok}
         if bad:
             for k, r in sorted(bad.items()):
-                print(f"  {r.status.value.upper():8s} {k}: {r.message.splitlines()[0][:110]}")
+                print(f"  {r.status.value.upper():8s} {k}: {first_line(r.message, 110)}")
             return finish(2)
 
         ingest = {r.key.split("/", 1)[1]: r.metrics

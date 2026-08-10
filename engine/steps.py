@@ -572,6 +572,25 @@ def _scanpy(pipeline, op, h5, prefix, params, log, python_exe):
 VALLEY_METRICS = ("umi", "genes")
 
 
+def _require_gene_patterns(step: str, p: dict) -> None:
+    """Refuse a step that needs the gene-class patterns and was not given them.
+
+    Shared by step 5 and step 6 because both measure the mitochondrial percentage, and a step that
+    got its own copy of this check is a step that will one day not have it.
+    """
+    for k in ("mt_prefix", "ribo_pattern"):
+        if not p.get(k):
+            raise Refusal(
+                f"{step} ({p['sample']}): `{k}` is not declared. It is species-specific and "
+                f"nothing here will guess it: mouse and human differ in case alone for the "
+                f"mitochondrial prefix, and a wrong one gives every cell pct_counts_mt == 0, "
+                f"which is indistinguishable from a clean library and passes every mitochondrial "
+                f"gate.\n"
+                f"    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl]\n"
+                f"    human: mt_prefix=MT-  ribo_pattern=^RP[SL]\n"
+                f"    Add them as samplesheet columns. Matching is case-sensitive by design.")
+
+
 def _quality_measure(task, pipeline, log):
     """Measure ONE library: both count valleys and the mitochondrial quartiles, in one pass.
 
@@ -581,17 +600,7 @@ def _quality_measure(task, pipeline, log):
     running calculate_qc_metrics over a 39k x 34k sparse matrix. The KDE that follows is cheap.
     """
     p = task.params
-    for k in ("mt_prefix", "ribo_pattern"):
-        if not p.get(k):
-            raise Refusal(
-                f"05_quality ({p['sample']}): `{k}` is not declared. It is species-specific and "
-                f"nothing here will guess it: mouse and human differ in case alone for the "
-                f"mitochondrial prefix, and a wrong one gives every cell pct_counts_mt == 0, "
-                f"which is indistinguishable from a clean library and passes every mitochondrial "
-                f"gate.\n"
-                f"    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl]\n"
-                f"    human: mt_prefix=MT-  ribo_pattern=^RP[SL]\n"
-                f"    Add them as samplesheet columns. Matching is case-sensitive by design.")
+    _require_gene_patterns("05_quality", p)
     s = p["sample"]
     res = _scanpy(pipeline, "valley",
                   pipeline.results / "objects" / f"{s}_ambient.h5",
@@ -733,10 +742,22 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out):
 
 def _cluster(task, pipeline, log):
     p = task.params
+    _require_gene_patterns("06_cluster_check", p)
     return _scanpy(pipeline, "cluster",
                    pipeline.results / "objects" / f"{p['sample']}_ambient.h5",
                    pipeline.scratch / f"{p['sample']}_clusters",
-                   {"resolution": p["resolution"], "seed": p["seed"]},
+                   {"sample": p["sample"],
+                    "resolution": p["resolution"], "seed": p["seed"],
+                    # Needed to measure this object at all: it is the denoised one, so nothing
+                    # has computed total_counts or pct_counts_mt on it, and cluster() refuses to
+                    # normalise over an object whose depth was never measured.
+                    "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
+                    # The doublet calls are ATTACHED here and applied nowhere. Step 6's criterion
+                    # D is only computable before a removal - afterwards every cluster is 0%
+                    # doublet by construction - and this is the last point at which that holds.
+                    "doublet_csv": p["doublet_csv"],
+                    "doublet_key": "doublet_class",
+                    "doublet_positive": "doublet"},
                    log, p["python_exe"])
 
 
@@ -744,29 +765,84 @@ def _cluster_flags(task, pipeline, log):
     import csv as _csv
 
     cf = step_module("cluster_flags")
-    d = (task.params.get("decisions") or {}).get("cluster_check") or {}
-    thr = cf.Thresholds(
-        a_umi_frac=float(d.get("a_umi_fraction", 0.5)),
-        b_pct_mt=float(d.get("b_mito_pct", 15.0)),
-        c_uninformative=float(d.get("c_uninformative_pct", 50.0)),
-        d_doublet=float(d.get("d_doublet_pct", 70.0)),
-        source=("decisions.yml" if d else "PROPOSED from the cohort - not approved"))
+
+    # THE PROFILES COME FROM THE MANIFEST, NOT FROM A GLOB.
+    #
+    # This globbed `pipeline.work` for `*profile*.csv` while the profiles are written under
+    # `pipeline.scratch`, so it matched nothing and the step refused with "no cluster profile was
+    # produced" - an honest refusal about something that had in fact been produced. A glob also
+    # cannot tell this run's output from a previous one's, and it silently accepts nine files
+    # where ten libraries were profiled. Each task reported the file it wrote and the orchestrator
+    # checked that file exists, so ask it.
+    profiles, absent = [], []
+    for s in task.params["samples"]:
+        r = pipeline.results_by_key.get(f"06_cluster/{s}")
+        got = [o for o in (getattr(r, "outputs", None) or [])
+               if str(o).endswith(".cluster_profile.csv")]
+        profiles.extend(got)
+        if not got:
+            absent.append(s)
+    if absent:
+        raise Refusal(
+            f"06_cluster_check: no cluster profile was recorded for {', '.join(absent)}. A "
+            f"library that was never profiled has no flagged clusters and no unflagged ones, and "
+            f"folding it in as neither lets the other libraries decide on its behalf.")
 
     rows: list = []
-    for f in sorted(pipeline.work.glob("*profile*.csv")):
-        with open(f, encoding="utf-8", newline="") as fh:
-            rows.extend(list(_csv.DictReader(fh)))
+    for f in profiles:
+        try:
+            rows.extend(cf.read_profile_csv(f))
+        except cf.ClusterRefusal as e:
+            raise Refusal(f"06_cluster_check: {e}") from None
     if not rows:
         raise Refusal("06_cluster_check: no cluster profile was produced, so no cluster was "
                       "examined. That is not the same as no cluster being flagged.")
 
+    # THRESHOLDS ARE PROPOSED FROM THIS COHORT, and anything declared overrides them by name.
+    #
+    # They used to be `d.get("a_umi_fraction", 0.5)` and friends - the calibration cohort's own
+    # numbers, hardcoded here, under a `source` string that read "PROPOSED from the cohort". The
+    # module says in its own header that these do not transfer: B is the p95 of one cohort's
+    # cluster mito and C works only where that distribution was bimodal. A number carried from
+    # another dataset while labelled as measured from this one is the worst of both.
+    try:
+        proposed = cf.propose(rows)
+    except cf.ClusterRefusal as e:
+        raise Refusal(f"06_cluster_check: {e}") from None
+    d = (task.params.get("decisions") or {}).get("cluster_check") or {}
+    declared = {k: float(d[y]) for k, y in (("a_umi_frac", "a_umi_fraction"),
+                                            ("b_pct_mt", "b_mito_pct"),
+                                            ("c_uninformative", "c_uninformative_pct"),
+                                            ("d_doublet", "d_doublet_pct"))
+                if d.get(y) is not None}
+    if declared:
+        base = {"a_umi_frac": proposed.a_umi_frac, "b_pct_mt": proposed.b_pct_mt,
+                "c_uninformative": proposed.c_uninformative, "d_doublet": proposed.d_doublet}
+        thr = cf.Thresholds(**{**base, **declared},
+                            source=(f"decisions.yml declares {', '.join(sorted(declared))}; "
+                                    f"the rest is {proposed.source}"))
+    else:
+        thr = proposed
+    print(f"    thresholds: {thr}")
+
     flagged = cf.apply_flags(rows, thr)
     out = _tables(pipeline) / "cluster_profile.csv"
     with open(out, "w", encoding="utf-8", newline="") as fh:
-        w = _csv.DictWriter(fh, fieldnames=sorted({k for r in flagged for k in r}))
+        w = _csv.DictWriter(fh, fieldnames=sorted({k for r in flagged.rows for k in r}))
         w.writeheader()
-        w.writerows(flagged)
-    return {"outputs": [str(out)], "metrics": {"clusters": len(flagged)}, "versions": {}}
+        w.writerows(flagged.rows)
+
+    fired, unknown = flagged.counts(), flagged.unknown_counts()
+    for k in ("A", "B", "C", "D", "FLAG", "WATCH"):
+        print(f"    {k:<6}fired {fired[k]:>4}   not evaluated {unknown[k]:>4}   "
+              f"of {len(flagged.rows)}")
+    # Both numbers, always. "How many fired" alone cannot distinguish a criterion that cleared
+    # every cluster from one that was never computed on any of them.
+    metrics = {"clusters": len(flagged.rows), "libraries": len(task.params["samples"]),
+               "thresholds": str(thr)}
+    metrics.update({f"{k}_fired": v for k, v in fired.items()})
+    metrics.update({f"{k}_not_evaluated": v for k, v in unknown.items()})
+    return {"outputs": [str(out)], "metrics": metrics, "versions": {}}
 
 
 # --------------------------------------------------------------------------------------------

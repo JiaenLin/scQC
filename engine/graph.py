@@ -239,9 +239,16 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     for s in by_sample:
         k = f"06_cluster/{s}"
         tasks.append(Task(
-            key=k, step="06_cluster_check", sample=s, fn=steps._cluster, needs=("05_quality",),
+            key=k, step="06_cluster_check", sample=s, fn=steps._cluster,
+            # 04_doublets/<s> is already upstream through 05_quality, and is named anyway: this
+            # task now READS that library's doublet CSV, and a dependency that exists only by
+            # transitivity is one a later reordering can remove without anything noticing.
+            needs=("05_quality", f"04_doublets/{s}"),
             params={"sample": s, "python_exe": python_exe,
-                    "resolution": tools.get("resolution", 1.0), "seed": tools.get("seed", 0)},
+                    "resolution": tools.get("resolution", 1.0), "seed": tools.get("seed", 0),
+                    "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
+                    "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
+                    "doublet_csv": str(pipeline.results / "tables" / f"{s}_doublets.csv")},
             # 48 rather than 64: a common workq ceiling is 50 gb, and one library's
             # clustering does not need more. check_resources() would refuse the
             # graph otherwise - correctly, but before doing any work.
@@ -250,7 +257,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         clus_keys.append(k)
     tasks.append(Task(
         key="06_cluster_flags", step="06_cluster_check", fn=steps._cluster_flags,
-        needs=tuple(clus_keys), params={"design": design, "decisions": pipeline.decisions},
+        needs=tuple(clus_keys), params={"design": design, "decisions": pipeline.decisions,
+                                        "samples": list(by_sample)},
     ))
 
     last = "06_cluster_flags"

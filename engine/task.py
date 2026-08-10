@@ -107,6 +107,20 @@ class TaskResult:
         return d
 
 
+def first_line(text: str | None, limit: int | None = None) -> str:
+    """The first line of a message, or "". Never raises.
+
+    `"".splitlines()` is `[]`, not `[""]`, so `.splitlines()[0]` raises on a message that was
+    never set - and `message` defaults to "" for every DONE and SKIPPED result, because nothing
+    went wrong and there was nothing to say. The report is assembled from exactly those results,
+    so it could not be built for any run in which something succeeded: `IndexError: list index out
+    of range`, naming neither the step nor the field, at the end of a run that had worked.
+    """
+    lines = (text or "").splitlines()
+    first = lines[0] if lines else ""
+    return first[:limit] if limit else first
+
+
 class TaskFailure(RuntimeError):
     """The command did not do what it said. Distinct from a gate refusal."""
 

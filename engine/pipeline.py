@@ -30,7 +30,7 @@ from pathlib import Path
 from .executor import bind_resources, clear_resources
 from .provenance import Provenance
 from .state import RunState
-from .task import Refusal, Status, Task, TaskFailure, TaskResult
+from .task import Refusal, Status, Task, TaskFailure, TaskResult, first_line
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -391,7 +391,7 @@ class Pipeline:
                          "no deliverable was written; this run measured and did not apply"),
                 "stopped_after": stopped_after,
                 "stopped_because": stopped or (
-                    self.results_by_key[stopped_after].message.splitlines()[0]
+                    first_line(self.results_by_key[stopped_after].message)
                     if stopped_after and self.results_by_key.get(stopped_after) else None),
             },
             "gates": list(self.findings),
@@ -399,7 +399,7 @@ class Pipeline:
             "provenance": self.prov.snapshot(
                 self.project / "decisions.yml"
                 if (self.project / "decisions.yml").exists() else None),
-            "open_items": ([f"{k} did not run: {self.results_by_key[k].message.splitlines()[0]}"
+            "open_items": ([f"{k} did not run: {first_line(self.results_by_key[k].message)}"
                             for k in sorted(stat) if stat[k] == "blocked"][:20]
                            or ["none recorded"]),
         }
@@ -445,7 +445,7 @@ class Pipeline:
                 "found": found,
                 "sources": sorted(set(sources)),
                 "tasks": [{"key": k, "status": r.status.value,
-                           "message": (r.message or "").splitlines()[0][:200]}
+                           "message": first_line(r.message, 200)}
                           for k, r in items],
                 "task_statuses": statuses,
             })

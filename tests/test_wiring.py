@@ -243,10 +243,13 @@ fails.extend(_getattr_defaults)
 # {"metric": "umi"} where it requires `metrics` (a LIST), `sample`, `mt_prefix` and
 # `ribo_pattern`. It failed on the first library of the first real cohort, having never run.
 #
-# The requirement is read from the adapter's own idiom, `_require_*(params, "X")`, so this check
-# cannot drift from what the ops actually enforce. It does NOT catch a key required by some other
-# means - `metrics` is validated by hand - and that limit is stated rather than papered over: it
-# would have caught three of those four, and the first refusal exposes the rest.
+# The requirement is read from the adapter's own idiom - `_require_*(params, "X")` and the
+# hand-written `if "X" not in params` - so this check cannot drift from what the ops actually
+# enforce. Both spellings are read because reading only the first left step 6 unprotected: the
+# cluster op demands `uninformative_genes`, `doublet_key`, `resolution` and `seed` by hand, the
+# engine passed two of the four, and each missing one cost a separate submit-and-wait cycle to
+# discover. It still does NOT catch a key required some third way - `metrics` is validated inside
+# an `isinstance` - and that limit is stated rather than papered over.
 _ops_src = (ROOT / "adapters" / "scanpy_ops.py").read_text(encoding="utf-8")
 _ops_tree = ast.parse(_ops_src)
 _required: dict = {}
@@ -259,6 +262,15 @@ for fn in [n for n in ast.walk(_ops_tree)
                 and isinstance(node.args[0], ast.Name) and node.args[0].id == "params"
                 and isinstance(node.args[1], ast.Constant)):
             need.add(node.args[1].value)
+        # `if "X" not in params: raise` - the same requirement, written out by hand where the
+        # refusal needs to say something the generic one cannot.
+        if (isinstance(node, ast.Compare) and len(node.ops) == 1
+                and isinstance(node.ops[0], ast.NotIn)
+                and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)
+                and len(node.comparators) == 1
+                and isinstance(node.comparators[0], ast.Name)
+                and node.comparators[0].id == "params"):
+            need.add(node.left.value)
     _required[fn.name[len("_op_"):]] = need
 
 _steps_tree = ast.parse((ROOT / "engine" / "steps.py").read_text(encoding="utf-8"))

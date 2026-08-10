@@ -100,6 +100,60 @@ print(" " + str(p).replace("\n", "\n "))
 if p.b_pct_mt <= 0 or p.c_uninformative <= 0:
     fails.append("D: proposal failed")
 
+print("\n" + "-" * 74)
+print("E. the profile survives being written and read back")
+#
+# The flags are computed in the ORCHESTRATOR, from a CSV the analysis environment wrote, because
+# the two do not share an interpreter. A CSV carries no types: every cell comes back a string,
+# `"0.71" < 0.5` raises TypeError, and where a comparison happens to be string-to-string it
+# succeeds and sorts lexicographically. The blank cell the writer uses for "not computed" comes
+# back as "", which `_unknown` does not recognise. So the round trip is part of the contract and
+# is tested as one: the same profile, through a file, must produce the same verdicts.
+import csv as _csv                                                        # noqa: E402
+import tempfile                                                           # noqa: E402
+
+sys.path.insert(0, str(HERE.parent))
+from adapters.scanpy_ops import write_profile_csv                          # noqa: E402
+from cluster_flags import ClusterRefusal, read_profile_csv                 # noqa: E402
+
+with tempfile.TemporaryDirectory() as _d:
+    _p = write_profile_csv(P, Path(_d) / "profile.csv")
+    back = read_profile_csv(_p)
+    strings = sorted({k for r in back for k, v in r.items()
+                      if k in ("umi_frac_of_sample", "median_pct_mt", "pct_doublet",
+                               "pct_uninformative", "n", "median_umi")
+                      and isinstance(v, str)})
+    print(f" numeric columns still carrying strings: {strings or 'none'}")
+    if strings:
+        fails.append(f"E: {strings} came back as text; every threshold on them would raise or "
+                     f"compare lexicographically")
+    blanks = sum(1 for r in back if r["median_umi"] is None)
+    print(f" blank cells read as unknown (not 0.0, not ''): {blanks} of {len(back)}")
+    if blanks != len(back):
+        fails.append("E: a blank cell must read back as None")
+
+    c_back = apply_flags(back, THR).counts()
+    print(f" verdicts through the file: FLAG {c_back['FLAG']} WATCH {c_back['WATCH']} "
+          f"D {c_back['D']}   (in memory: {c['FLAG']}/{c['WATCH']}/{c['D']})")
+    if (c_back["FLAG"], c_back["WATCH"], c_back["D"]) != (c["FLAG"], c["WATCH"], c["D"]):
+        fails.append("E: the round trip changed the verdicts")
+
+    # A column that did not survive is a defect, and must not be absorbed as "unknown".
+    _bad = Path(_d) / "corrupt.csv"
+    with open(_p, encoding="utf-8", newline="") as _fh:
+        _rows = list(_csv.DictReader(_fh))
+    _rows[0]["median_pct_mt"] = "19.40%"
+    with open(_bad, "w", encoding="utf-8", newline="") as _fh:
+        _w = _csv.DictWriter(_fh, fieldnames=list(_rows[0]))
+        _w.writeheader()
+        _w.writerows(_rows)
+    try:
+        read_profile_csv(_bad)
+        fails.append("E: a non-numeric, non-blank cell must be refused, not read as unknown")
+        print(" unparseable cell: ACCEPTED - wrong")
+    except ClusterRefusal as _e:
+        print(f" unparseable cell refused: {str(_e).splitlines()[0][:96]}")
+
 print("\n" + "=" * 74)
 if fails:
     print("FAILED:"); [print(" -", x) for x in fails]; raise SystemExit(1)
