@@ -233,10 +233,25 @@ check() {
     if [[ ! -x "$py" ]]; then
         printf '  %-12s MISSING\n' "$label"; ok=0; return
     fi
-    if "$py" -c "import ${*// /,}" 2>/dev/null; then
+    # Joined with a subshell IFS, NOT with "${*// /,}".
+    #
+    # That form substitutes into EACH positional parameter and then joins the results with a
+    # space - it never joins first and substitutes after. So it produced
+    # `import scanpy anndata pandas numpy`, a SyntaxError, and every environment with more than
+    # one package to check reported BROKEN however healthy it was. `core` is the only such
+    # environment here, so the verification step has never once passed. The single-package envs
+    # verified correctly, which is why it looked selective rather than wrong.
+    local mods err
+    mods="$(IFS=,; printf '%s' "$*")"
+    # stderr CAPTURED, not discarded. `2>/dev/null` turned a real diagnosis into the words
+    # "imports failed", and a failure report that omits the failure sends the reader to the wrong
+    # place - here, to a perfectly good environment.
+    if err="$("$py" -c "import $mods" 2>&1)"; then
         printf '  %-12s ok   %s\n' "$label" "$("$py" --version 2>&1)"
     else
-        printf '  %-12s BROKEN (imports failed)\n' "$label"; ok=0
+        printf '  %-12s BROKEN: %s\n' "$label" "$(printf '%s' "$err" | tail -1)"
+        printf '  %-12s tried: import %s\n' "" "$mods"
+        ok=0
     fi
 }
 check core       "$PREFIX/core/bin/python"       scanpy anndata pandas numpy
