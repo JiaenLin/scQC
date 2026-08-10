@@ -425,6 +425,15 @@ def cmd_run(a) -> int:
     }.items() if v is not None}
     python_exe = a.python or sys.executable
 
+    # Which code is running, printed by scQC rather than by whatever script launched it. The job
+    # script echoed `git log --oneline -1`, and a compute node has no git: the banner read
+    # `code :` with nothing after it, on every run that mattered.
+    from engine.provenance import git_provenance
+    _g = git_provenance(ROOT)
+    print(f"code     : {_g.get('commit')}"
+          + (f" ({_g['branch']})" if _g.get("branch") else "")
+          + ("  tree: MODIFIED" if _g.get("dirty") else
+             ("  tree: clean" if _g.get("dirty") is False else "  tree: not determined")))
     print(f"project  : {project}")
     print(f"mode     : {a.mode}      executor: {getattr(executor, 'name', '?')}")
     print(f"samples  : {len(rows)}")

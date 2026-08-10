@@ -832,6 +832,31 @@ def _cluster_flags(task, pipeline, log):
         w.writeheader()
         w.writerows(flagged.rows)
 
+    # WHAT POPULATION WAS CLUSTERED, recorded because it is not the one this step's module
+    # specifies. cluster_flags.py opens by saying the check runs on the quality-filtered object
+    # with the doublet flags attached; no such object exists here, and in evidence mode none can,
+    # because nothing is removed. So the clustering is over the denoised object as delivered -
+    # empty droplets included - and a table that does not say so reads exactly like one measured
+    # on nuclei. Measured, not judged: a cluster whose median barcode carries no counts is a
+    # statement about the input, and no threshold of ours decided it.
+    empty = [r for r in rows if r.get("median_umi") in (None, 0, 0.0)]
+    cells = sum(int(r.get("n") or 0) for r in rows)
+    if empty:
+        pipeline.findings.append({
+            "step": "06_cluster_check", "check": "population clustered", "severity": "REVIEW",
+            "message": (
+                f"{len(empty)} of {len(rows)} clusters have a median UMI of zero, holding "
+                f"{sum(int(r.get('n') or 0) for r in empty):,} of {cells:,} barcodes. This step "
+                f"clustered the denoised object as delivered: no count floor and no cell call "
+                f"have been applied to it, because evidence mode removes nothing and this "
+                f"pipeline builds no quality-filtered object for it to read. The flags below "
+                f"therefore describe a mixture of nuclei and empty droplets rather than the "
+                f"population modules/06_cluster_check/cluster_flags.py specifies, and the "
+                f"thresholds proposed from it inherit that."),
+            "detail": ["clusters per library: " + ", ".join(
+                f"{s}={sum(1 for r in rows if r.get('sample') == s)}"
+                for s in task.params["samples"])]})
+
     fired, unknown = flagged.counts(), flagged.unknown_counts()
     for k in ("A", "B", "C", "D", "FLAG", "WATCH"):
         print(f"    {k:<6}fired {fired[k]:>4}   not evaluated {unknown[k]:>4}   "

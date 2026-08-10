@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -44,6 +45,55 @@ def tool_version(exe: str | Path, args: tuple = ("--version",),
     return lines[pick] if len(lines) > pick else out.strip()
 
 
+def _git_dir(repo: Path) -> Path | None:
+    """The `.git` directory, following the `gitdir:` pointer a worktree leaves behind."""
+    g = repo / ".git"
+    if g.is_dir():
+        return g
+    if g.is_file():
+        txt = g.read_text(encoding="utf-8", errors="replace").strip()
+        if txt.startswith("gitdir:"):
+            p = Path(txt.split(":", 1)[1].strip())
+            return p if p.is_absolute() else (repo / p)
+    return None
+
+
+def _commit_from_files(repo: Path) -> dict | None:
+    """HEAD's commit read out of `.git`, for a host that has no git binary.
+
+    A COMPUTE NODE USUALLY HAS NO GIT. The orchestrator runs as a batch job, `git rev-parse`
+    there fails exactly as it fails in a directory that is not a checkout, and the run then
+    recorded `commit: not a git checkout` for a checkout - a provenance record that is not
+    absent but WRONG, which this module's own header says is the worse of the two.
+
+    The commit is plain text inside `.git` and needs no binary. Cleanliness genuinely does need
+    one, so it stays unknown here rather than being guessed: an unmodified tree and an unchecked
+    one must not record the same way.
+    """
+    gd = _git_dir(Path(repo))
+    if gd is None or not gd.is_dir():
+        return None
+    head = gd / "HEAD"
+    if not head.is_file():
+        return None
+    txt = head.read_text(encoding="utf-8", errors="replace").strip()
+    if not txt.startswith("ref:"):                       # detached HEAD holds the sha directly
+        sha = txt.split()[0] if txt else ""
+        return {"commit": sha, "branch": None} if re.fullmatch(r"[0-9a-f]{7,40}", sha) else None
+    ref = txt.split(":", 1)[1].strip()
+    branch = ref.rsplit("/", 1)[-1]
+    loose = gd / ref
+    if loose.is_file():
+        return {"commit": loose.read_text(encoding="utf-8", errors="replace").strip().split()[0],
+                "branch": branch}
+    packed = gd / "packed-refs"                          # a ref that has been packed away
+    if packed.is_file():
+        for line in packed.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.endswith(" " + ref):
+                return {"commit": line.split()[0], "branch": branch}
+    return None
+
+
 def git_provenance(repo: Path) -> dict:
     """Commit and cleanliness of the scQC checkout that produced the result."""
     repo = Path(repo)
@@ -53,6 +103,14 @@ def git_provenance(repo: Path) -> dict:
 
     commit = g("rev-parse", "HEAD")
     if commit is None:
+        read = _commit_from_files(repo)
+        if read is not None:
+            # Which commit ran is recorded; whether it had been edited is NOT, and says so.
+            return {"commit": read["commit"], "dirty": None, "describe": None,
+                    "branch": read["branch"]}
+        if _git_dir(repo) is not None:
+            return {"commit": "a checkout whose HEAD could not be resolved", "dirty": None,
+                    "describe": None, "branch": None}
         return {"commit": "not a git checkout", "dirty": None, "describe": None}
     dirty = bool(g("status", "--porcelain"))
     return {
