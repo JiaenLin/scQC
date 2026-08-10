@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import shlex
 import subprocess
 import time
@@ -22,6 +23,26 @@ from pathlib import Path
 from typing import Protocol
 
 from .task import TaskFailure
+
+
+# The resources of the task currently executing on THIS thread. Adapters call executor.shell()
+# without knowing which task they are inside, and tasks run concurrently, so a shared attribute on
+# the executor would be read by the wrong task. A thread-local is read by exactly the task that
+# set it.
+_CURRENT = threading.local()
+
+
+def bind_resources(**kw) -> None:
+    """Record the running task's resources for any shell() call made on this thread."""
+    _CURRENT.res = {k: v for k, v in kw.items() if v is not None}
+
+
+def clear_resources() -> None:
+    _CURRENT.res = {}
+
+
+def current_resources() -> dict:
+    return dict(getattr(_CURRENT, "res", {}) or {})
 
 
 class Executor(Protocol):
@@ -89,11 +110,20 @@ class PBSExecutor:
         log = Path(log)
         log.parent.mkdir(parents=True, exist_ok=True)
         script = log.with_suffix(".pbs")
-        sel = f"select=1:ncpus={self.cpus}:mem={self.memory_gb}gb"
-        if self.gpu:
+        # The RUNNING TASK's resources, not this executor's defaults. The graph declares cpus,
+        # memory, walltime and gpu per task and they used to be discarded here: every job was
+        # submitted as 1 cpu / 8 GB / 4 h / no GPU, so the denoiser would have run without the
+        # GPU it declares and the aligner would have been killed at a third of its walltime.
+        res = current_resources()
+        cpus = int(res.get("cpus") or self.cpus)
+        mem = int(res.get("memory_gb") or self.memory_gb)
+        wall = int(res.get("walltime_h") or self.walltime_h)
+        gpu = bool(res.get("gpu", self.gpu))
+        sel = f"select=1:ncpus={cpus}:mem={mem}gb"
+        if gpu:
             sel += ":ngpus=1"
         lines = ["#!/usr/bin/env bash", "#PBS -N scqc", f"#PBS -l {sel}",
-                 f"#PBS -l walltime={self.walltime_h}:00:00",
+                 f"#PBS -l walltime={wall}:00:00",
                  f"#PBS -o {log}.out", f"#PBS -e {log}.err", "#PBS -j oe"]
         if self.queue:
             lines.append(f"#PBS -q {self.queue}")
@@ -115,7 +145,10 @@ class PBSExecutor:
             raise TaskFailure(f"could not parse a job id from qsub output: {sub.stdout!r}")
         job = m.group(1)
 
-        deadline = time.time() + (timeout_s or self.walltime_h * 3600 + 600)
+        # The deadline follows the TASK's walltime, not the executor default, or a long job
+        # is abandoned by the watcher while PBS is still happily running it.
+        deadline = time.time() + (timeout_s or wall * 3600 + 600)
+        wait = 2.0
         while True:
             q = subprocess.run(["qstat", "-xf", job], capture_output=True, text=True)
             text = q.stdout or ""
@@ -129,7 +162,12 @@ class PBSExecutor:
             if time.time() > deadline:
                 raise TaskFailure(f"job {job} still running past the deadline; not killed - "
                                   f"check `qstat {job}` and the log at {log}.out")
-            time.sleep(self.poll_s)
+            # BACK OFF rather than a flat interval. A fixed 30 s poll makes every task cost at
+            # least 30 s however fast it is, so a graph of 37 short tasks spends nineteen minutes
+            # asleep. Starting at 2 s and doubling to poll_s costs a handful of extra qstat calls
+            # on a long job and returns a short one almost immediately.
+            time.sleep(wait)
+            wait = min(wait * 2, self.poll_s)
 
         out = ""
         for cand in (Path(f"{log}.out"), Path(f"{log}.err")):

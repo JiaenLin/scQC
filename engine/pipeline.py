@@ -27,6 +27,7 @@ import threading
 import time
 from pathlib import Path
 
+from .executor import bind_resources, clear_resources
 from .provenance import Provenance
 from .state import RunState
 from .task import Refusal, Status, Task, TaskFailure, TaskResult
@@ -290,6 +291,10 @@ class Pipeline:
         key = task.key
         started = time.time()
         log = self.logs / f"{key.replace('/', '_')}.log"
+        # Bound for THIS thread so any executor.shell() an adapter makes inside this task asks the
+        # scheduler for what the task declared.
+        bind_resources(cpus=task.cpus, memory_gb=task.memory_gb,
+                       walltime_h=task.walltime_h, gpu=task.gpu)
         try:
             out = task.fn(task=task, pipeline=self, log=log) or {}
             produced = [str(p) for p in out.get("outputs", [])]
@@ -319,6 +324,8 @@ class Pipeline:
                               message=f"{type(e).__name__}: {e}",
                               seconds=time.time() - started,
                               log=str(log)), f"  ERROR   {key}  {type(e).__name__}: {e}"
+        finally:
+            clear_resources()
 
     # ------------------------------------------------------------------ report payload
 
