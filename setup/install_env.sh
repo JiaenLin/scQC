@@ -15,9 +15,8 @@
 #   setup/install_env.sh --prefix ~/scqc-env --all
 #   setup/install_env.sh --prefix ~/scqc-env --with-cellbender --with-doublet
 #
-# Uses micromamba by default and FETCHES it if absent; conda is a last resort. Nothing is
-# installed outside
-# --prefix.
+# Uses micromamba by default and FETCHES it into --prefix/bin if absent; mamba is used if
+# present, conda only as a last resort. Nothing is installed outside --prefix.
 
 set -euo pipefail
 
