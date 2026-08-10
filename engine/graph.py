@@ -242,7 +242,10 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             key=k, step="06_cluster_check", sample=s, fn=steps._cluster, needs=("05_quality",),
             params={"sample": s, "python_exe": python_exe,
                     "resolution": tools.get("resolution", 1.0), "seed": tools.get("seed", 0)},
-            cpus=8, memory_gb=64, walltime_h=6,
+            # 48 rather than 64: a common workq ceiling is 50 gb, and one library's
+            # clustering does not need more. check_resources() would refuse the
+            # graph otherwise - correctly, but before doing any work.
+            cpus=8, memory_gb=48, walltime_h=6,
         ))
         clus_keys.append(k)
     tasks.append(Task(

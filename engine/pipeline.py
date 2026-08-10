@@ -185,6 +185,20 @@ class Pipeline:
         #
         # Order of RESULTS is unchanged - `order` still drives reporting - so a run's records read
         # the same whether it ran with one worker or thirty.
+        # Checked BEFORE the first task, against the queue's own resources_max. A task asking for
+        # more than the queue allows is rejected by the scheduler at submission - which on a long
+        # graph means half an hour of successful work and then a failure about a limit nobody set.
+        checker = getattr(self.executor, "check_resources", None)
+        if checker is not None:
+            over = checker(tasks)
+            if over:
+                raise Refusal(
+                    "the queue cannot run this graph as declared:\n"
+                    + "\n".join(f"    - {o}" for o in over)
+                    + "\n    Lower the task's declaration, or choose a queue that allows it "
+                      "(`qstat -Qf <queue>` lists resources_max). Refused here rather than at "
+                      "submission, so nothing runs that would be thrown away.")
+
         stopped: str | None = None
         lock = threading.Lock()
         pending = list(order)
