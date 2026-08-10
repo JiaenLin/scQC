@@ -1446,7 +1446,7 @@ def _resolve_uninformative(adata, uninformative_genes, mt_key, ribo_key,
 
 
 def attach_doublet_calls(adata, csv_path, *, key, barcode_column="barcode",
-                         class_column="doublet_class"):
+                         class_column="doublet_class", score_column="doublet_score"):
     """Put a per-barcode doublet call into `obs[key]`. Attached, never applied.
 
     Criterion D is computable at exactly one point in this pipeline: on an object carrying the
@@ -1482,11 +1482,21 @@ def attach_doublet_calls(adata, csv_path, *, key, barcode_column="barcode",
                     f"{p} has no {need!r} column. Its columns are: {', '.join(cols) or '(none)'}. "
                     f"Measure the structure rather than assume it - a renamed column here becomes "
                     f"a criterion silently not evaluated.")
-        calls = {}
+        # The SCORE travels with the class where the file carries one. It is not a criterion -
+        # the class is what the filter reads - but a deliverable that says a nucleus was called a
+        # doublet and cannot say how narrowly leaves its reader unable to judge the call at all.
+        score_column = str(score_column or "")
+        has_score = bool(score_column) and score_column in cols
+        calls, scores = {}, {}
         for row in reader:
+            b = str(row[barcode_column])
             v = row[class_column]
-            calls[str(row[barcode_column])] = (
-                None if _unknown(v) or not str(v).strip() else str(v).strip())
+            calls[b] = None if _unknown(v) or not str(v).strip() else str(v).strip()
+            if has_score:
+                try:
+                    scores[b] = float(row[score_column])
+                except (TypeError, ValueError):
+                    scores[b] = None
 
     names = [str(b) for b in adata.obs_names]
     attached = sum(1 for b in names if b in calls)
@@ -1499,11 +1509,15 @@ def attach_doublet_calls(adata, csv_path, *, key, barcode_column="barcode",
             f"cluster, which reads on the page like a cohort with no doublet-driven clusters.")
     adata.obs[key] = pd.Series([calls.get(b) for b in names],
                                index=adata.obs_names, dtype=object)
+    if has_score:
+        adata.obs[f"{key}_score"] = pd.Series([scores.get(b) for b in names],
+                                              index=adata.obs_names, dtype=object)
     adata.uns["scqc_doublet_attach"] = {
         "csv": str(p), "key": key,
         "n_in_csv": len(calls), "n_in_object": len(names),
         "n_attached": attached, "n_never_scored": len(names) - attached,
         "classes_seen": sorted({v for v in calls.values() if v is not None}),
+        "score_attached": bool(has_score),
         "applied": False,
     }
     return adata
@@ -2443,6 +2457,8 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
 
     scored = np.zeros(adata.n_obs, dtype=bool)
     is_doublet = np.zeros(adata.n_obs, dtype=bool)
+    dbl_class = [None] * adata.n_obs
+    dbl_score = [None] * adata.n_obs
     if not _unknown(params.get("doublet_csv")):
         key = str(params.get("doublet_key") or "doublet_class")
         attach_doublet_calls(
@@ -2450,6 +2466,9 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
             barcode_column=str(params.get("doublet_barcode_column", "barcode")),
             class_column=str(params.get("doublet_class_column", "doublet_class")))
         scored, is_doublet = _doublet_masks(adata, key, params.get("doublet_positive"))
+        dbl_class = list(adata.obs[key])
+        if f"{key}_score" in adata.obs.columns:
+            dbl_score = list(adata.obs[f"{key}_score"])
 
     counts = _float_array(adata.obs["total_counts"])
     genes = _float_array(adata.obs["n_genes_by_counts"])
@@ -2498,12 +2517,15 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = _csv.writer(fh)
         w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
-                    "pct_counts_mt", "doublet_scored", *APPLY_CRITERIA, "removed", "keep"])
+                    "pct_counts_mt", "doublet_score", "doublet_class", "doublet_scored",
+                    *APPLY_CRITERIA, "removed", "keep"])
         for i, b in enumerate(adata.obs_names):
             w.writerow([str(b), sample, bool(is_cell[i]),
                         "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
                         "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
                         "" if mt[i] != mt[i] else f"{mt[i]:.6f}",
+                        "" if _unknown(dbl_score[i]) else f"{float(dbl_score[i]):.6f}",
+                        "" if _unknown(dbl_class[i]) else str(dbl_class[i]),
                         bool(scored[i]),
                         *[bool(fails[c][i]) for c in APPLY_CRITERIA],
                         bool(removed[i]), bool(keep[i])])

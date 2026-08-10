@@ -1290,9 +1290,14 @@ def _apply_measure(task, pipeline, log):
     _require_gene_patterns("07_apply", p)
     s = p["sample"]
     resolved, _classes, ceilings, _basis = _apply_thresholds(task, pipeline, [s])
+    # RESULTS, NOT SCRATCH. This table is the audit trail of the removal: every barcode the
+    # library held, the four measured values, and which of the five criteria fired on each. The
+    # ledger names only what LEFT, so without this there is no released record of what stayed or
+    # of how close a retained nucleus came to a threshold. It is the file a reader re-checks the
+    # filter with, and an intermediate is not something anyone is invited to open.
     return _scanpy(pipeline, "apply_measure",
                    pipeline.results / "objects" / f"{s}_ambient.h5",
-                   pipeline.scratch / f"{s}_apply",
+                   _tables(pipeline) / f"{s}",
                    {"sample": s,
                     "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
                     "umi_floor": resolved["quality.umi_floor"],
@@ -1437,7 +1442,9 @@ def _apply(task, pipeline, log):
         keep_lists.append({
             "sample": s, "keep_csv": str(kp),
             "h5ad": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
-            "annotations_csv": _cluster_annotations(pipeline, ap, s, kept, rows)})
+            "annotations_csv": _deliverable_annotations(
+                pipeline, ap, s, kept, rows,
+                [r for r in percell if r["sample"] == s])})
     res = _scanpy(pipeline, "apply_write", pipeline.results / "objects" / f"{samples[0]}_ambient.h5",
                   pipeline.results / "objects" / "cohort",
                   {"libraries": keep_lists}, log, task.params["python_exe"])
@@ -1463,8 +1470,11 @@ def _apply(task, pipeline, log):
             "versions": res.get("versions", {})}
 
 
-def _cluster_annotations(pipeline, ap, sample, kept, profile) -> str:
-    """A per-barcode annotation table for one library: its cluster, and that cluster's flags.
+def _deliverable_annotations(pipeline, ap, sample, kept, profile, percell) -> str:
+    """Everything the delivered object should carry per barcode, for one library.
+
+    The values the criteria were evaluated on, and what step 6 found about the cluster the
+    nucleus sits in.
 
     Step 6 clusters each library and flags each cluster, and until this existed none of it reached
     the deliverable. The per-cell assignment was computed and discarded, so anything downstream
@@ -1499,8 +1509,28 @@ def _cluster_annotations(pipeline, ap, sample, kept, profile) -> str:
     obs_rows = [{"barcode": b, "sample": sample, "cluster": of_barcode.get(b)} for b in kept]
     ap.annotate_kept(obs_rows, profile, cluster_key="cluster", sample_key="sample")
 
+    # THE VALUES THE FILTER READ, CARRIED ONTO THE OBJECT IT PRODUCED.
+    #
+    # The delivered matrix used to arrive with no total_counts, no gene count, no mitochondrial
+    # percentage and no doublet call - `qc_metrics()` is computed inside each op, on a freshly
+    # loaded object, and was never written back - so a reader could not see why any nucleus had
+    # survived, and had to recompute all four to find out. Every one of them was already in hand.
+    #
+    # Taken from the per-cell table rather than recomputed here, so the object provably carries
+    # the numbers the criteria were evaluated on. Recomputing would give the same answers and
+    # would not be able to prove it.
+    measured = {str(r["barcode"]): r for r in (percell or [])}
+    for row in obs_rows:
+        m = measured.get(str(row["barcode"])) or {}
+        for col in ("total_counts", "n_genes", "pct_counts_mt", "doublet_score",
+                    "doublet_class"):
+            v = m.get(col)
+            row[col] = None if v is None or str(v).strip() == "" else v
+
     out = pipeline.scratch / f"{sample}_apply.annotations.csv"
-    fields = ["barcode", "cluster", "cluster_FLAG", "cluster_WATCH",
+    fields = ["barcode", "total_counts", "n_genes", "pct_counts_mt",
+              "doublet_score", "doublet_class",
+              "cluster", "cluster_FLAG", "cluster_WATCH",
               "cluster_pct_doublet", "cluster_median_pct_mt"]
     with out.open("w", newline="", encoding="utf-8") as fh:
         w = _csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")

@@ -71,6 +71,11 @@ integration and differential testing.
 | column | type | meaning |
 |---|---|---|
 | `sample` | categorical | the library this nucleus came from |
+| `total_counts` | float | UMI in this nucleus — **the value the UMI floor was applied to** |
+| `n_genes` | float | genes detected — the value the gene floor was applied to |
+| `pct_counts_mt` | float | mitochondrial percentage — the value the ceiling was applied to |
+| `doublet_score` | float / absent | the detector's score, where the call file carried one |
+| `doublet_class` | label / absent | `singlet` / `doublet`, or absent where never scored |
 | `cluster` | label | its cluster in that library's clustering. A **label**, not a number — cluster ids read as integers and are not |
 | `cluster_FLAG` | `True` / `False` / absent | that cluster's flag verdict from step 6 |
 | `cluster_WATCH` | `True` / `False` / absent | that cluster's watch verdict |
@@ -78,6 +83,11 @@ integration and differential testing.
 | `cluster_median_pct_mt` | float / absent | the cluster's median mitochondrial percentage |
 
 Whatever the input object already carried is preserved alongside these.
+
+**The first five are the values the filter read**, carried onto the object so a reader can see why
+any nucleus survived without recomputing anything. They come from the per-cell table rather than
+being recomputed at write time, so the object provably holds the numbers the criteria were
+evaluated on — recomputing would give the same answers and could not prove it.
 
 > **Absent is a third state and is preserved as one.** A barcode step 6 never labelled, or a
 > cluster missing from the profile, leaves these `None` — never `False`, never `0`. *"This cluster
@@ -108,11 +118,18 @@ All CSV, all readable with the standard library alone.
 | `cell_calls.csv` | library | `aligner`, `denoiser`, `lost` |
 | `valleys_umi.csv`, `valleys_genes.csv` | library | `valley`, `bimodal`, `note` |
 | `mito_ceiling_per_sample.csv` | library | quartiles, `derived`, `ceiling`, `clamped`, and **the population it was derived over** |
+| `<sample>.percell.csv` | **barcode** | every barcode the library held: the four measured values, the doublet score and class, and which of the five criteria fired. Apply mode only |
 | `ambient_lr_diagnostics.csv` | library | `fraction_removed`, `convergence_indicator`, `measured` |
 | `thresholds_per_sample.csv` | library | every threshold the run derived, each column marked *per library* or *cohort constant* |
 
 `thresholds_per_sample.csv` carries a second header row giving each column's scope. It is the
 quickest answer to *which numbers differ because the libraries differ*.
+
+Beside `<sample>.percell.csv` you will find a small `<sample>.apply_measure.metrics.json`. It is
+not a result: it records the size and modification time of each output **as the process that wrote
+them finished writing**, which is how the caller tells a file this run produced from one that was
+already there under the same name. Left in place because a proof that is deleted proves
+nothing.
 
 ### Cohort
 
@@ -126,6 +143,11 @@ quickest answer to *which numbers differ because the libraries differ*.
 > **The ledger lists what LEFT, not what stayed.** It is the record that makes a removal
 > recoverable: re-read the input object with those barcodes and the removed population is back.
 > It stores identifiers, not counts.
+>
+> `<sample>.percell.csv` is its complement and covers **every** barcode, kept and removed alike,
+> with the value each criterion was evaluated on. It is the file to re-check a filter with, or to
+> ask how close a retained nucleus came to a threshold — which the ledger cannot answer, because
+> the ledger does not contain it.
 
 ---
 
@@ -154,8 +176,10 @@ run; it is the report saying what it was not given.
 declared outputs, metrics and log path. It is what makes a re-run reuse completed work — delete it
 to force everything to run again.
 
-`work/<digest>/` also holds intermediates that no downstream step opens, including the per-barcode
-criteria tables step 7 measures. `logs/<digest>/` holds one log per task, named for the task.
+`work/<digest>/` also holds intermediates that no downstream step opens — the keep-lists and
+annotation tables step 7 hands to the writer. The per-barcode criteria tables are **not** here:
+they are a deliverable and live in `tables/`. `logs/<digest>/` holds one log per task, named for
+the task.
 
 ---
 
