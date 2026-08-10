@@ -403,15 +403,17 @@ def cmd_run(a) -> int:
 
     decisions = {}
     if a.mode == "apply":
-        decisions = load_decisions(Path(a.decisions) if a.decisions
-                                   else project / "decisions.yml")
+        # Optional. Apply mode runs on the thresholds the pipeline derived and records them as
+        # DERIVED; a decisions file, when present, overrides them and is recorded as ADJUDICATED.
+        # The distinction survives into the deliverable, so nothing later reads a proposal as a
+        # decision.
+        dpath = Path(a.decisions) if a.decisions else project / "decisions.yml"
+        if a.decisions or dpath.exists():
+            decisions = load_decisions(dpath)
 
     executor = make_executor(a.executor, **({"queue": a.queue, "project": a.pbs_project}
                                             if a.executor == "pbs" else {}))
     jobs = a.jobs if a.jobs and a.jobs > 0 else min(16, (os.cpu_count() or 4))
-    pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
-                    decisions=decisions, force=a.force, jobs=jobs)
-
     tools = {k: v for k, v in {
         "celescope": a.celescope, "cellranger": a.cellranger, "cellbender": a.cellbender,
         "rscript": a.rscript, "device": ("cpu" if a.cpu else "cuda"),
@@ -423,6 +425,9 @@ def cmd_run(a) -> int:
         # or cohort-wide from these flags.
         "dbr": a.dbr, "dbr_sd": a.dbr_sd,
     }.items() if v is not None}
+    # AFTER `tools`, because the run's output directory is named from the parameters it was given.
+    pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
+                    decisions=decisions, force=a.force, jobs=jobs, tools=tools)
     python_exe = a.python or sys.executable
 
     # Which code is running, printed by scQC rather than by whatever script launched it. The job
@@ -540,7 +545,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     r2 = sub.add_parser("run", help="run the pipeline over a project")
     r2.add_argument("--project", required=True)
-    r2.add_argument("--mode", choices=["evidence", "apply"], required=True)
+    r2.add_argument("--mode", choices=["evidence", "apply"], default="apply",
+                    help="apply (default) derives the thresholds, applies them and writes the "
+                         "deliverable; evidence measures and applies nothing")
     r2.add_argument("--samplesheet")
     r2.add_argument("--decisions", help="apply mode only; evidence mode refuses it")
     r2.add_argument("--executor", choices=["local", "pbs"], default="local")

@@ -1276,7 +1276,64 @@ def resolve_cell_barcodes(h5_path: str | Path,
             f"zero cells to be carried forward as a denominator; it means the posterior step "
             f"produced nothing, and everything computed over the 'cells' scope would divide by "
             f"it. Routes: {routes}")
+
+    mapped, naming = reconcile_barcode_naming(barcodes, call["barcodes"])
+    if naming:
+        call["barcodes"] = mapped
+        call["naming"] = naming
+        call["source"] += f" ({naming})"
     return call
+
+
+def reconcile_barcode_naming(object_barcodes: Sequence[str],
+                             call_barcodes: Sequence[str]) -> tuple:
+    """Make a cell call written in one naming usable against an object written in another.
+
+    Returns `(barcodes, note)`. The note is None when nothing was changed, and the barcodes come
+    back unaltered.
+
+    THE SAME LIBRARY, DESCRIBED TWICE. A denoiser writes its cell call as bare barcodes; a
+    pipeline that will concatenate libraries prefixes each barcode with its sample so the combined
+    object has unique names. Both are correct, and they intersect in NOTHING - so every quantity
+    summed over "the cells" silently becomes a quantity summed over an empty set. It is not a
+    corrupt file, a version mismatch or a wrong path, and every usual explanation fails to apply,
+    which is what makes it expensive to find.
+
+    THE TRANSFORM IS VERIFIED, NOT GUESSED. A prefix is adopted only when every transformed
+    barcode is then present in the object. A partial match is refused: a rule that repairs most of
+    a cell call and quietly drops the rest yields a denominator wrong by an amount nobody can see.
+    Where the two already agree, or where no single transform explains the difference, this
+    changes nothing and the caller's own refusal stands.
+    """
+    obj = {str(b) for b in object_barcodes}
+    call = [str(b) for b in call_barcodes]
+    if not call or not obj or any(b in obj for b in call):
+        return call, None
+
+    # One candidate, derived from one barcode and then tested against every one of them. Deriving
+    # it from a single pair is safe BECAUSE it is verified exhaustively afterwards.
+    first = call[0]
+    for cand in obj:
+        if cand.endswith(first) and len(cand) > len(first):
+            prefix = cand[:len(cand) - len(first)]
+            moved = [prefix + b for b in call]
+            if all(b in obj for b in moved):
+                return moved, (f"the cell call shared no barcode with the object, and all "
+                               f"{len(moved):,} are present under the prefix {prefix!r}; adopted "
+                               f"after checking every one")
+            break
+
+    # The other direction: a prefixed call against an object that does not use the prefix.
+    for cut in range(1, len(first)):
+        if first[cut - 1] != "_":
+            continue
+        head = first[:cut]
+        stripped = [b[cut:] if b.startswith(head) else b for b in call]
+        if all(b in obj for b in stripped):
+            return stripped, (f"the cell call shared no barcode with the object, and all "
+                              f"{len(stripped):,} are present with the prefix {head!r} removed; "
+                              f"adopted after checking every one")
+    return call, None
 
 
 # ---------------------------------------------------------------------------- metrics

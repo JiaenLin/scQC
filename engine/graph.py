@@ -146,9 +146,36 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     tasks.append(Task(
         key="01_ambient_audit", step="01_ambient", fn=steps._ambient_audit,
         needs=tuple(ambient_keys),
+        # EVERY LIBRARY WHOSE RAW MATRIX IS IN HAND IS AUDITED, supplied or not.
+        #
+        # This excluded every supplied library, on the stated grounds that a supplied object
+        # arrives without the raw counts the removal fraction is measured against. That is true
+        # of a bare object and false of this samplesheet: `matrix` names the raw counts for every
+        # row, supplied or not, so `raw_of` is populated for all of them. The audit was declining
+        # to measure something it had. On a cohort where all ten were supplied it covered NOTHING
+        # and said "0 libraries" - honest about a fact it did not have to accept.
+        #
+        # A library with genuinely no raw is still excluded and still named, below: unmeasurable
+        # and unmeasured must not read the same.
         params={"per_sample": {s: {"h5": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
-                                   "raw": str(raw_of[s])} for s in by_sample
-                               if s not in supplied_of},
+                                   "raw": str(raw_of[s]),
+                                   "supplied": s in supplied_of,
+                                   # Optional and DECLARED, never inferred from a sibling path.
+                                   # CellBender's learning curve lives in its own log or metrics
+                                   # file, and a converted object does not carry it.
+                                   "log": str(by_sample[s].get("ambient_log") or "").strip(),
+                                   "metrics_csv": str(
+                                       by_sample[s].get("ambient_metrics") or "").strip(),
+                                   # WHICH BARCODES THE FRACTION IS SUMMED OVER. A converted
+                                   # object does not carry CellBender's cell-probability latent,
+                                   # so on a supplied library the cell call has to be declared -
+                                   # and it already is, in the column step 2 reads. Without it
+                                   # parse_metrics refuses, correctly: summing over every droplet
+                                   # instead would answer a different question in the same units.
+                                   "cell_barcodes": str(
+                                       by_sample[s].get("cellbender_barcodes") or "").strip()}
+                               for s in by_sample if raw_of.get(s)},
+                "no_raw": [s for s in by_sample if not raw_of.get(s)],
                 "supplied": supplied_of,
                 "design": design},
     ))

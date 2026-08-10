@@ -82,7 +82,8 @@ class Pipeline:
     """Builds the task graph for a project and runs it."""
 
     def __init__(self, project: Path, mode: str, executor, samples: list[dict],
-                 decisions: dict | None = None, force: bool = False, jobs: int = 1):
+                 decisions: dict | None = None, force: bool = False, jobs: int = 1,
+                 tools: dict | None = None):
         if mode not in ("evidence", "apply"):
             raise SystemExit(f"scqc: mode must be 'evidence' or 'apply', got {mode!r}")
         self.project = Path(project)
@@ -97,9 +98,29 @@ class Pipeline:
         self._prov_lock = threading.Lock()
         self.started_at = time.time()
 
-        self.work = self.project / "work"
-        self.results = self.project / "results"
-        self.logs = self.project / "logs"
+        # OUTPUTS ARE STORED UNDER A NAME DERIVED FROM WHAT PRODUCED THEM.
+        #
+        # Same samplesheet, same parameters, same mode -> the same directory, which is what lets a
+        # re-run reuse completed work. Change a threshold and the digest changes with it, so the
+        # new run writes BESIDE the old one rather than over it. Nothing is ever overwritten by a
+        # run that would have produced something different, and that is a property of the layout
+        # rather than a rule someone has to remember.
+        #
+        # `results/latest` points at the newest and is the only thing here that does not
+        # accumulate, which is exactly why nothing is allowed to depend on it.
+        from . import runkey
+
+        self.tools = dict(tools or {})
+        self.run_key, self.run_described = runkey.compute(
+            samplesheet_rows=samples, tools=self.tools, mode=mode)
+        try:
+            self.results = runkey.claim(self.project / "results", self.run_key,
+                                        self.run_described)
+        except runkey.RunKeyMismatch as e:
+            raise SystemExit(f"scqc: {e}") from None
+        runkey.index(self.project / "results", self.run_key, self.run_described, note=mode)
+        self.work = self.project / "work" / self.run_key
+        self.logs = self.project / "logs" / self.run_key
 
         # SCRATCH GOES TO LOCAL DISK, not the shared filesystem.
         #

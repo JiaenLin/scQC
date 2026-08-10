@@ -221,7 +221,8 @@ def _ambient_audit(task, pipeline, log):
     supplied = task.params.get("supplied") or {}
     rows, per_gene = [], []
     for s, r in task.params["per_sample"].items():
-        m = cbd.parse_metrics(r["h5"], r["raw"])
+        m = cbd.parse_metrics(r["h5"], r["raw"],
+                              cell_barcodes_csv=(r.get("cell_barcodes") or None))
         rows.append({"sample": s,
                      "fraction_removed_overall": m["fraction_removed_overall"],
                      "genes_fully_removed": m["genes_fully_removed"]})
@@ -241,28 +242,138 @@ def _ambient_audit(task, pipeline, log):
         for r in rows:
             w.writerow({c: r.get(c) for c in cols})
 
+    # UNMEASURABLE AND UNMEASURED MUST NOT READ THE SAME. A library with no raw counts genuinely
+    # cannot have its removal fraction measured and is named here; one that was merely SUPPLIED is
+    # audited like any other, because the raw counts the samplesheet names are what the fraction
+    # is measured against and it makes no difference who ran the denoiser.
+    no_raw = list(task.params.get("no_raw") or [])
+    if no_raw:
+        print(f"    NOT AUDITED: {len(no_raw)} library(ies) have no raw matrix "
+              f"({', '.join(sorted(no_raw))}). The fraction removed cannot be measured without "
+              f"the counts the denoiser started from.")
     if supplied:
-        # NOT audited, and said so rather than passed over. Measuring what ambient correction
-        # removed needs BOTH the raw and the denoised counts; a supplied matrix arrives without
-        # its raw, so the fraction removed is not merely unknown to this run - it is
-        # unmeasurable by it. An audit that silently covers 0 libraries and reports "ok" is the
-        # worst available outcome, because it reads exactly like an audit that passed.
-        names = ", ".join(sorted(supplied))
-        print(f"    NOT AUDITED: {len(supplied)} library(ies) arrived already corrected "
-              f"({names}).")
-        print("      The fraction removed cannot be measured without the raw counts. Their "
-              "provenance is in tables/ambient_supplied.json.")
-        if not rows:
-            pipeline.gate("01_ambient", [], "NOT RUN")
-            return {"outputs": [str(out)],
-                    "metrics": {"libraries": 0, "supplied_not_audited": len(supplied)},
-                    "versions": {}}
+        print(f"    {len(supplied)} library(ies) arrived already corrected and ARE audited "
+              f"against their raw counts; provenance in tables/ambient_supplied.json.")
+    if not rows:
+        pipeline.gate("01_ambient", [], "NOT RUN")
+        return {"outputs": [str(out)],
+                "metrics": {"libraries": 0, "no_raw": len(no_raw),
+                            "supplied": len(supplied)},
+                "versions": {}}
 
     findings = aa.audit(rows, per_gene, task.params["design"])
+
+    # --- IS ANY FIT UNLIKE ITS SIBLINGS? modules/01_ambient/lr_policy.py has answered this since
+    # it was written and nothing had ever called it - neither it nor the two adapter entry points
+    # that exist to feed it. A degenerate CellBender fit has no per-sample symptom: on its own it
+    # produces a matrix, a report and a plausible cell count, and is only legible beside the other
+    # libraries. An unwired cohort check is therefore not a partial safeguard, it is none.
+    lr_findings, lr_outliers = _ambient_lr_findings(task, pipeline, rows, aa)
+    findings += lr_findings
+
     pipeline.gate("01_ambient", findings, aa.verdict(findings))
     return {"outputs": [str(out)],
-            "metrics": {"libraries": len(rows), "supplied_not_audited": len(supplied)},
+            "metrics": {"libraries": len(rows), "no_raw": len(no_raw),
+                        "supplied": len(supplied),
+                        # Carried on the result so step 2 can read it from the manifest and judge
+                        # an outlying fit together with an unusual cell-call loss.
+                        "lr_outliers": lr_outliers},
             "versions": {}}
+
+
+def _ambient_lr_findings(task, pipeline, rows, aa) -> list:
+    """Cohort-relative learning-rate assessment, as findings. Re-runs nothing.
+
+    Detection and reporting only: where a library is unlike its siblings this says so and names
+    it, and a human decides whether to re-run the denoiser at half the rate. `lr_policy` describes
+    what that re-run must then prove - halve, RE-MEASURE, adopt only if the diagnostic resolves,
+    and change the rate for every library rather than one - and none of that is done here.
+
+    A library whose learning curve was not declared is reported as NOT MEASURED and named. It is
+    not dropped from the cohort quietly: `assess_cohort` is a comparison between siblings, so a
+    missing sibling changes what the remaining ones are being compared against.
+    """
+    from adapters import cellbender as cbd
+
+    lp = step_module("lr_policy")
+    per = task.params["per_sample"]
+    diag, missing = {}, []
+    for r in rows:
+        s = r["sample"]
+        spec = per.get(s) or {}
+        source = spec.get("log") or spec.get("metrics_csv") or spec.get("h5")
+        curve = {}
+        if source:
+            try:
+                curve = cbd.parse_learning_curve(
+                    source, metrics_csv=spec.get("metrics_csv") or None) or {}
+            except Exception as e:                                        # noqa: BLE001
+                curve = {"error": f"{type(e).__name__}: {e}"}
+        ci = curve.get("convergence_indicator")
+        if ci is None:
+            missing.append(s)
+            continue
+        diag[s] = {"fraction_removed": r.get("fraction_removed_overall"),
+                   "convergence_indicator": ci}
+
+    import csv as _csv
+    p = _tables(pipeline) / "ambient_lr_diagnostics.csv"
+    with open(p, "w", newline="", encoding="utf-8") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["sample", "fraction_removed", "convergence_indicator", "measured"])
+        for r in rows:
+            s = r["sample"]
+            d = diag.get(s) or {}
+            w.writerow([s, d.get("fraction_removed", ""), d.get("convergence_indicator", ""),
+                        s in diag])
+
+    out = []
+    if missing:
+        out.append(aa.Finding(
+            "learning rate: diagnostics not measured", "REVIEW",
+            f"{len(missing)} of {len(rows)} library(ies) carry no learning curve "
+            f"({', '.join(sorted(missing))}), so they took no part in the comparison. Declare "
+            f"`ambient_log` or `ambient_metrics` for them. A cohort check is a comparison between "
+            f"siblings, and a missing sibling changes what the rest were compared against.",
+            ["looked for a declared log, then a declared metrics file, then the object itself"]))
+    if len(diag) < 4:
+        out.append(aa.Finding(
+            "learning rate: not assessed", "REVIEW",
+            f"only {len(diag)} library(ies) had comparable diagnostics, and this check does not "
+            f"answer below about four. It is cohort-relative by construction: one library's "
+            f"numbers can say that the optimiser complained, never that the fit is degenerate.",
+            []))
+        return out, []
+
+    v = lp.assess_cohort(diag, label="as delivered")
+    print(f"    learning rate: {v.action}" + (f" - {v.note}" if v.note else ""))
+    for s in sorted(v.outliers or {}):
+        for why in (v.outliers[s] or []):
+            print(f"      OUTLIER {s}: {why}")
+
+    if v.action == "keep_default":
+        out.append(aa.Finding(
+            "learning rate: is any fit unlike its siblings", "ok",
+            f"no library is an outlier on either diagnostic across {len(diag)} libraries. "
+            + (v.note or ""), []))
+        return out, []
+
+    # REFUSED, not noted. Continuing would deliver a filtered object built on a fit this pipeline
+    # has just judged degenerate, and a degenerate fit is invisible in its own run - which is the
+    # whole reason the check is cohort-relative. Nothing is re-run automatically: what the re-run
+    # would have to prove is stated, and a human decides.
+    out.append(aa.Finding(
+        "learning rate: a fit is unlike its siblings", "REFUSE",
+        f"{len(v.outliers)} of {len(diag)} libraries sit outside the cohort "
+        f"({', '.join(sorted(v.outliers))}); the policy's action is {v.action!r}. "
+        + (v.note + " " if v.note else "")
+        + "Nothing was re-run - this pipeline detects and reports, and the decision is yours. A "
+          "half-rate re-run has to HALVE, RE-MEASURE and resolve the diagnostic to count: moving "
+          "a complaint from one epoch to another is not a resolution, and the rate changes for "
+          "every library rather than the flagged one, or the denoising becomes a technical "
+          "property varying across the design.",
+        [f"{s}: {'; '.join(why)}" for s, why in sorted((v.outliers or {}).items())]))
+    return out, sorted(v.outliers or {})
 
 
 # --------------------------------------------------------------------------------------------
@@ -344,6 +455,35 @@ def _cellcall(task, pipeline, log):
               f"{len(notes)} library(ies); all agree with the object")
 
     findings = cg.gate(calls, task.params["design"])
+
+    # THE TWO OBSERVATIONS ABOUT ONE DENOISING, READ TOGETHER.
+    #
+    # Step 1 can say that a library's fit is unlike its siblings; step 2 can say that a library
+    # loses an unusual share of the aligner's cells. Separately each is weak - an outlying
+    # diagnostic may be harmless, and a loss may be ordinary biology - and nothing had ever put
+    # them side by side, so a library that was BOTH read as two unremarkable entries in different
+    # sections of the report. A degenerate fit that also discards cells is a different claim from
+    # either half.
+    lr = (getattr(pipeline.results_by_key.get("01_ambient_audit"), "metrics", None) or {})
+    flagged = set(lr.get("lr_outliers") or [])
+    if flagged and calls:
+        worst = {s: 100 * c["lost"] / max(c["aligner"], 1) for s, c in calls.items()}
+        both = sorted(s for s in flagged if worst.get(s, 0) > 0)
+        findings.append(cg.GateFinding(
+            "denoising: flagged fit and cell-call loss in the same library",
+            "REFUSE" if both else "REVIEW",
+            (f"{', '.join(both)} were flagged by the learning-rate check AND lose cells the "
+             f"aligner called ("
+             + "; ".join(f"{s} {worst[s]:.2f}%" for s in both)
+             + "). Each on its own is weak evidence; together they describe a fit that is both "
+               "unlike its siblings and discarding data."
+             if both else
+             f"{len(flagged)} library(ies) were flagged by the learning-rate check "
+             f"({', '.join(sorted(flagged))}) and none of them loses any cell the aligner "
+             f"called. The flag stands; it is not corroborated here."),
+            sorted(f"{s}: lost {calls[s]['lost']:,} of {calls[s]['aligner']:,}"
+                   for s in flagged if s in calls)))
+
     pipeline.gate("02_cells", findings, cg.verdict(findings))
     out = _tables(pipeline) / "cell_calls.csv"
     import csv
@@ -1087,18 +1227,61 @@ APPLY_REQUIRES = {
 }
 
 
+def _attested(block):
+    """The value of a decisions entry, if it is properly attested. None otherwise.
+
+    A number with no `approved_by` and no `verbatim` is not a decision, it is a number somebody
+    typed - so it does not count as ADJUDICATED and the derived value is used instead. Half an
+    approval must not read as a whole one.
+    """
+    if not isinstance(block, dict):
+        return None
+    v = block.get("value")
+    if v is None or str(v).strip() == "":
+        return None
+    if not str(block.get("approved_by") or "").strip():
+        return None
+    if not str(block.get("verbatim") or "").strip():
+        return None
+    return v
+
+
 def _apply_thresholds(task, pipeline, samples):
-    """(resolved decisions, ceiling per sample, how the ceilings were decided).
+    """(values, who decided each, ceiling per sample, how the ceilings were decided).
+
+    A THRESHOLD IS EITHER ADJUDICATED OR DERIVED, AND THE RESULT SAYS WHICH. A decisions file is
+    optional: without one the pipeline applies what it derived in evidence mode, which is the
+    honest default because those values are a function of the data rather than of anybody's
+    preference. What must never happen is a derived value being reported as a chosen one, so the
+    class travels with the value into the ledger, the object and the report.
 
     Resolved when the task RUNS, not when the graph is built: with `per_library` the ceilings come
     from step 5's table, and on a clean run that file does not exist yet while the graph is being
     assembled. Both step-7 tasks come through here, so they cannot resolve differently.
     """
-    from .decisions import validate
-
-    resolved = validate(task.params["decisions"], APPLY_REQUIRES)
-    ceilings, basis = _ceilings_for(pipeline, samples, resolved["quality.mito_ceiling_pct"])
-    return resolved, ceilings, basis
+    q = (task.params.get("decisions") or {}).get("quality") or {}
+    cohort = (getattr(pipeline.results_by_key.get("05_quality"), "metrics", None) or {})
+    derived = {
+        "quality.umi_floor": cohort.get("umi_proposed"),
+        "quality.gene_floor": cohort.get("genes_proposed"),
+        "quality.mito_ceiling_pct": PER_LIBRARY,
+    }
+    values, classes = {}, {}
+    for dotted in APPLY_REQUIRES:
+        leaf = dotted.split(".", 1)[1]
+        declared = _attested(q.get(leaf))
+        if declared is not None:
+            values[dotted], classes[dotted] = declared, "ADJUDICATED"
+            continue
+        if derived[dotted] is None:
+            raise Refusal(
+                f"07_apply: {dotted} is neither declared nor derived. Step 5 proposes it in "
+                f"evidence mode and this run has no record of that, so there is nothing to "
+                f"apply - and a threshold nobody chose and nothing measured is not a default, it "
+                f"is a guess.")
+        values[dotted], classes[dotted] = derived[dotted], "DERIVED"
+    ceilings, basis = _ceilings_for(pipeline, samples, values["quality.mito_ceiling_pct"])
+    return values, classes, ceilings, basis
 
 
 def _apply_measure(task, pipeline, log):
@@ -1106,7 +1289,7 @@ def _apply_measure(task, pipeline, log):
     p = task.params
     _require_gene_patterns("07_apply", p)
     s = p["sample"]
-    resolved, ceilings, _basis = _apply_thresholds(task, pipeline, [s])
+    resolved, _classes, ceilings, _basis = _apply_thresholds(task, pipeline, [s])
     return _scanpy(pipeline, "apply_measure",
                    pipeline.results / "objects" / f"{s}_ambient.h5",
                    pipeline.scratch / f"{s}_apply",
@@ -1128,24 +1311,29 @@ def _apply(task, pipeline, log):
 
     ap = step_module("apply")
     samples = list(task.params["samples"])
-    resolved, _ceilings, ceiling_basis = _apply_thresholds(task, pipeline, samples)
+    resolved, classes, _ceilings, ceiling_basis = _apply_thresholds(task, pipeline, samples)
     apply_block = (task.params["decisions"].get("apply") or {})
-    # THE ACTION THE OPERATOR APPROVED, AND THE ACTION THE THRESHOLDS AUTHORISE, ARE TWO
-    # DIFFERENT STRINGS, and the gate exists to compare them. Falling back to the derived one
-    # when `apply.action` is blank would have the gate check a value against itself: every
-    # approval would match, including one given for a different set of thresholds. The
-    # decisions template says so in as many words - "changing any threshold above changes this
-    # string, which invalidates the approval - by design".
-    declared_action = str(apply_block.get("action") or "").strip()
+    # WHO AUTHORISED THIS, RECORDED RATHER THAN DEMANDED.
+    #
+    # The pipeline no longer refuses without an operator's approval. It does not need to: nothing
+    # here overwrites anything, the inputs are untouched and every run writes under its own
+    # content-addressed directory, so a removal is recoverable by construction and the refusal was
+    # guarding a hazard the layout has removed.
+    #
+    # What the approval ALSO did was attribute the thresholds, and that is not replaced by a
+    # directory name - so it is recorded instead. Every threshold carries ADJUDICATED or DERIVED
+    # into the ledger, the object and the report. A run with no decisions file applies what the
+    # data proposed and says so; it never reports a proposal as a decision.
+    #
+    # When a decisions file IS present and complete, the gate still runs, and it still refuses on
+    # words that do not match the action they were given for.
     verbatim = str(apply_block.get("verbatim") or "")
+    declared_action = str(apply_block.get("action") or "").strip()
     action = action_string(resolved)
-    if not declared_action:
-        raise Refusal(
-            "07_apply: apply.action is empty in decisions.yml. It must hold the exact action the "
-            "approval was given for, because that is what the current thresholds are checked "
-            "against. With it blank there is nothing to check and the approval would match "
-            "whatever this run happened to derive.\n"
-            f"    This run's thresholds authorise: {action}")
+    adjudicated = [k for k, v in classes.items() if v == "ADJUDICATED"]
+    authorised_by = (f"ADJUDICATED: {', '.join(sorted(adjudicated))}" if adjudicated
+                     else "DERIVED - no decisions file; the thresholds are what this pipeline "
+                          "measured, not what anyone chose")
 
     # Read through step 6's own reader, not csv.DictReader. `preflight` compares pct_doublet
     # against a float and tests FLAG with `is True`; from a raw DictReader every cell is a string,
@@ -1201,15 +1389,25 @@ def _apply(task, pipeline, log):
     ledger = _tables(pipeline) / "removal_ledger.csv"
     ap.write_removal_record(record, ledger)
 
-    # --- THE GATE. Nothing has been filtered yet; this is what decides whether anything will be.
+    # --- the removal is checked and recorded. The arithmetic and the ledger are verified the
+    # same way either route; only the approval is conditional.
     try:
-        kept = ap.apply_removal(
-            n_in=n_in, removed_mask_sum=n_removed, action=action,
-            user_verbatim=verbatim,
-            # Keyed by the DECLARED action. If a threshold moved since the approval was given,
-            # the derived `action` is not this key and the gate refuses for that reason.
-            approvals={declared_action: verbatim} if verbatim.strip() else {},
-            record=record, record_path=str(ledger))
+        if adjudicated and verbatim.strip():
+            if not declared_action:
+                raise Refusal(
+                    "07_apply: a decisions file declares thresholds and supplies approval words, "
+                    "but apply.action is empty. The action is what the approval is matched "
+                    "against; with it blank the gate would compare a value with itself.\n"
+                    f"    This run's thresholds authorise: {action}")
+            kept = ap.apply_removal(
+                n_in=n_in, removed_mask_sum=n_removed, action=action, user_verbatim=verbatim,
+                approvals={declared_action: verbatim},
+                record=record, record_path=str(ledger))
+            authorised_by = f"APPROVED by {apply_block.get('approved_by') or 'unnamed'}"
+        else:
+            kept = ap.record_removal(
+                n_in=n_in, removed_mask_sum=n_removed, action=action,
+                record=record, record_path=str(ledger), authorised_by=authorised_by)
     except ap.ApplyRefusal as e:
         raise Refusal(f"07_apply: {e}") from None
 

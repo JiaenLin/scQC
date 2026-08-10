@@ -354,6 +354,47 @@ def _as_count(value, name, action):
             f"mistake")
     return n
 
+def record_removal(n_in, removed_mask_sum, action, record: RemovalRecord = None,
+                   record_path=None, authorised_by="DERIVED") -> Kept:
+    """Every check `apply_removal` makes EXCEPT the ones about an operator's approval.
+
+    The arithmetic and the record are checked identically whether or not a human authorised the
+    thresholds - a mask that has come apart from its object, or a record that disagrees with the
+    mask, is wrong either way. Only the approval is optional, and what replaces it is a statement
+    on the result of who decided: `authorised_by` travels with the count so a reader is never left
+    to assume that a threshold was chosen when it was derived.
+
+    `apply_removal` is this plus the approval, so the shared half cannot drift between them.
+    """
+    n_in = _as_count(n_in, "n_in", action)
+    removed = _as_count(removed_mask_sum, "removed_mask_sum", action)
+    if removed < 0 or removed > n_in:
+        raise ApplyRefusal(
+            f"impossible arithmetic - refused: {action!r}\n {removed:,} observations cannot be "
+            f"removed from {n_in:,}. A mask sum outside 0..n_in means the mask and the object "
+            f"have come apart - subtracting anyway yields a plausible-looking count of a "
+            f"population that does not exist.")
+    if record is not None:
+        if record.n_in != n_in:
+            raise ApplyRefusal(
+                f"record describes another object - refused: {action!r}\n the removal record "
+                f"covers {record.n_in:,} observations and the gate was given {n_in:,}.")
+        if record.n_removed != removed:
+            raise ApplyRefusal(
+                f"record disagrees with the mask - refused: {action!r}\n the removal record "
+                f"names {record.n_removed:,} removed observations and the mask sums to "
+                f"{removed:,}. Two independent routes to the same number disagree; the removal "
+                f"stops rather than reporting whichever was asked for first.")
+    elif record_path is not None:
+        raise ApplyRefusal(
+            f"nothing to record - refused: {action!r}\n a record path was given with no record "
+            f"to write. The file would be created empty and read as 'nothing was removed'.")
+    written = write_removal_record(record, record_path) if record_path is not None else None
+    kept = Kept(n_in - removed, record=record, record_path=written)
+    kept.authorised_by = str(authorised_by)
+    return kept
+
+
 def apply_removal(n_in, removed_mask_sum, action, user_verbatim, approvals,
                   record: RemovalRecord = None, record_path=None) -> Kept:
     """The gate. Removes nothing without the operator's own words recorded against THIS action.
