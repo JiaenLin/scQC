@@ -61,11 +61,16 @@ class AmbientPlan:
     mandatory: bool
     reason: str = ""
     params: dict = None
+    # SUPPLIED is a third state and NOT a kind of skip. See plan_ambient.
+    supplied: dict = None
+
+    @property
+    def state(self) -> str:
+        return "RUN" if self.run else ("SUPPLIED" if self.supplied else "SKIP")
 
     def __str__(self) -> str:
-        head = "RUN" if self.run else "SKIP"
         tag = "mandatory" if self.mandatory else "optional"
-        s = f"[{head:4s}] {self.sample:14s} assay={self.assay:6s} ({tag})"
+        s = f"[{self.state:8s}] {self.sample:14s} assay={self.assay:6s} ({tag})"
         if self.reason:
             s += f"\n {self.reason}"
         return s
@@ -73,9 +78,33 @@ class AmbientPlan:
 class AmbientRefusal(RuntimeError):
     """Raised when a skip is requested where correction is mandatory."""
 
+# Provenance a supplied correction must carry. Without these the object is an anonymous matrix
+# asserted to be denoised, which is not a claim anything downstream can check or a reader trust.
+SUPPLIED_REQUIRED = ("tool", "version", "params", "produced_by")
+
+
 def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=None,
-                 params=None) -> AmbientPlan:
-    """Decide whether CellBender runs for this sample, and refuse an unsafe skip."""
+                 params=None, supplied=None) -> AmbientPlan:
+    """Decide whether CellBender runs for this sample, and refuse an unsafe skip.
+
+    THREE STATES, AND THE THIRD IS NOT A KIND OF SKIP
+
+      RUN       this pipeline corrects the matrix.
+      SKIP      no correction happens at all. Refused outright for snRNA - see below.
+      SUPPLIED  the correction ALREADY HAPPENED, elsewhere, and its output is the input here.
+
+    Conflating SUPPLIED with SKIP is the failure this distinction exists to prevent, and it can
+    go wrong in both directions. Treating a supplied object as a skip refuses a perfectly valid
+    re-entry into the pipeline at step 2 - the common case of "I already denoised these, do the
+    rest". Treating it as a run lets the report claim this pipeline performed a correction it
+    never performed, and attaches this run's parameters to someone else's output.
+
+    So SUPPLIED demands provenance: which tool, which version, which parameters, and who ran it.
+    A matrix merely asserted to be denoised is an anonymous matrix. Downstream cannot verify the
+    claim - the ambient AUDIT needs the raw counts to measure what was removed, and by
+    construction a supplied run does not have them - so what cannot be measured must at least be
+    attributed.
+    """
     assay = str(assay).strip().lower()
     if assay not in ASSAYS:
         raise AmbientRefusal(
@@ -98,6 +127,32 @@ def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=No
                 f"consistent with '{other}'. Either the assay is mis-declared - in which case "
                 f"{'a mandatory correction is about to be skipped' if assay == 'scrna' else 'an unnecessary one is about to run'} "
                 f"- or the reference is wrong. Resolve it; do not pick one.")
+
+    if supplied is not None:
+        if skip:
+            raise AmbientRefusal(
+                f"{sample}: `skip` and `supplied` are contradictory. A supplied correction is "
+                f"one that already happened; a skip is one that never does. Pass one.")
+        if not isinstance(supplied, dict):
+            raise AmbientRefusal(
+                f"{sample}: `supplied` must be a provenance record, not {type(supplied).__name__}. "
+                f"Required keys: {', '.join(SUPPLIED_REQUIRED)}.")
+        missing = [k for k in SUPPLIED_REQUIRED
+                   if not str(supplied.get(k) or "").strip()]
+        if missing:
+            raise AmbientRefusal(
+                f"{sample}: a SUPPLIED ambient correction is missing {', '.join(missing)}. "
+                f"This pipeline did not perform the correction, so it cannot describe it, and an "
+                f"object merely asserted to be denoised is an anonymous matrix. The ambient audit "
+                f"cannot check the claim either - measuring what was removed needs the raw counts, "
+                f"which a supplied run does not have. What cannot be measured must be attributed.")
+        return AmbientPlan(
+            sample, assay, False, mandatory,
+            f"SUPPLIED: corrected by {supplied['tool']} {supplied['version']} "
+            f"({supplied['params']}), run by {supplied['produced_by']}. NOT performed by this "
+            f"run - the fraction removed is NOT MEASURABLE here and must not be reported as if "
+            f"it were.",
+            p, dict(supplied))
 
     if not skip:
         return AmbientPlan(sample, assay, True, mandatory,

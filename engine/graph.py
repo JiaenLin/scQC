@@ -61,11 +61,30 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             raw_of[s] = Path(str(row.get("matrix")))
 
     # --- step 1: ambient. Mandatory for nuclei, optional for cells; the module decides, not us.
-    ambient_keys = []
+    #
+    # A sample may also arrive ALREADY CORRECTED - a samplesheet `ambient_h5` column, with the
+    # provenance columns beside it. That is a third state, not a skip (modules/01_ambient), and
+    # it is how the pipeline is re-entered at step 2 with denoised matrices. No CellBender task
+    # is created for such a sample and none is pretended: the object is used where step 1's
+    # output would have gone, and the audit is told it cannot measure what it did not see.
+    ambient_keys, supplied_of = [], {}
+    for s, row in by_sample.items():
+        given = str(row.get("ambient_h5") or "").strip()
+        if not given:
+            continue
+        supplied_of[s] = {
+            "path": given,
+            "tool": str(row.get("ambient_tool") or "").strip(),
+            "version": str(row.get("ambient_version") or "").strip(),
+            "params": str(row.get("ambient_params") or "").strip(),
+            "produced_by": str(row.get("ambient_produced_by") or "").strip()}
+
     for s in by_sample:
+        h5 = pipeline.results / "objects" / f"{s}_ambient.h5"
+        if s in supplied_of:
+            continue
         needs = (f"00_align/{s}",) if f"00_align/{s}" in {t.key for t in tasks} \
             else (f"00_ingest/{s}",)
-        h5 = pipeline.results / "objects" / f"{s}_ambient.h5"
         k = f"01_ambient/{s}"
         tasks.append(Task(
             key=k, step="01_ambient", sample=s, fn=steps._ambient, needs=needs,
@@ -79,11 +98,28 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         ))
         ambient_keys.append(k)
 
+    if supplied_of:
+        # Runs BEFORE the audit and before anything consumes an ambient object: it validates the
+        # provenance of every supplied matrix through the same module that decides whether
+        # CellBender runs, so an unattributed object stops the run here rather than surfacing as
+        # a blank field in the report.
+        tasks.append(Task(
+            key="01_ambient_supplied", step="01_ambient", fn=steps._ambient_supplied,
+            needs=tuple(f"00_ingest/{s}" for s in supplied_of),
+            params={"supplied": supplied_of,
+                    "assay": {s: assay.get(s) for s in supplied_of}},
+            outputs=tuple(str(pipeline.results / "objects" / f"{s}_ambient.h5")
+                          for s in supplied_of),
+        ))
+        ambient_keys.append("01_ambient_supplied")
+
     tasks.append(Task(
         key="01_ambient_audit", step="01_ambient", fn=steps._ambient_audit,
         needs=tuple(ambient_keys),
         params={"per_sample": {s: {"h5": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
-                                   "raw": str(raw_of[s])} for s in by_sample},
+                                   "raw": str(raw_of[s])} for s in by_sample
+                               if s not in supplied_of},
+                "supplied": supplied_of,
                 "design": design},
     ))
     tasks.append(Task(

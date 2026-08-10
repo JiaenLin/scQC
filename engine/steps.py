@@ -140,10 +140,55 @@ def _ambient(task, pipeline, log):
     return res
 
 
+def _ambient_supplied(task, pipeline, log):
+    """Validate and place matrices that were denoised elsewhere. Corrects nothing.
+
+    The provenance goes through `plan_ambient(..., supplied=...)`, the same function that decides
+    whether CellBender runs, so an unattributed object cannot enter the pipeline through a side
+    door that the ordinary path would have refused.
+
+    The object is COPIED to where step 1's output would have been rather than referenced in
+    place. A symlink into someone else's results directory makes this run's deliverable depend on
+    a file this run does not own, and the provenance record then describes a matrix that can
+    change underneath it.
+    """
+    import shutil
+
+    am = step_module("ambient")
+    supplied = task.params["supplied"]
+    assay = task.params["assay"]
+    outs, records = [], {}
+    for s, rec in sorted(supplied.items()):
+        src = Path(rec["path"])
+        if not src.exists():
+            raise Refusal(
+                f"01_ambient ({s}): the supplied ambient matrix {src} does not exist. A missing "
+                f"input is not an uncorrected sample - it is a run that cannot start.")
+        try:
+            plan = am.plan_ambient(s, assay.get(s), supplied={
+                k: rec[k] for k in ("tool", "version", "params", "produced_by")})
+        except Exception as e:                                            # noqa: BLE001
+            raise Refusal(f"01_ambient ({s}): {e}") from None
+        print(f"    {plan}")
+        dst = _objects(pipeline) / f"{s}_ambient.h5"
+        if dst.resolve() != src.resolve():
+            shutil.copy2(src, dst)
+        outs.append(str(dst))
+        records[s] = {**plan.supplied, "source": str(src), "state": plan.state}
+
+    import json
+    p = _tables(pipeline) / "ambient_supplied.json"
+    p.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"outputs": outs + [str(p)],
+            "metrics": {"supplied": len(records), "corrected_here": 0},
+            "versions": {}}
+
+
 def _ambient_audit(task, pipeline, log):
     from adapters import cellbender as cbd
 
     aa = step_module("audit_ambient")
+    supplied = task.params.get("supplied") or {}
     rows, per_gene = [], []
     for s, r in task.params["per_sample"].items():
         m = cbd.parse_metrics(r["h5"], r["raw"])
@@ -159,9 +204,28 @@ def _ambient_audit(task, pipeline, log):
     out = _tables(pipeline) / "ambient_summary.csv"
     summ.to_csv(out, index=False)
 
+    if supplied:
+        # NOT audited, and said so rather than passed over. Measuring what ambient correction
+        # removed needs BOTH the raw and the denoised counts; a supplied matrix arrives without
+        # its raw, so the fraction removed is not merely unknown to this run - it is
+        # unmeasurable by it. An audit that silently covers 0 libraries and reports "ok" is the
+        # worst available outcome, because it reads exactly like an audit that passed.
+        names = ", ".join(sorted(supplied))
+        print(f"    NOT AUDITED: {len(supplied)} library(ies) arrived already corrected "
+              f"({names}).")
+        print("      The fraction removed cannot be measured without the raw counts. Their "
+              "provenance is in tables/ambient_supplied.json.")
+        if not rows:
+            pipeline.gate("01_ambient", [], "NOT RUN")
+            return {"outputs": [str(out)],
+                    "metrics": {"libraries": 0, "supplied_not_audited": len(supplied)},
+                    "versions": {}}
+
     findings = aa.audit(summ, genes, task.params["design"])
     pipeline.gate("01_ambient", findings, aa.verdict(findings))
-    return {"outputs": [str(out)], "metrics": {"libraries": len(rows)}, "versions": {}}
+    return {"outputs": [str(out)],
+            "metrics": {"libraries": len(rows), "supplied_not_audited": len(supplied)},
+            "versions": {}}
 
 
 # --------------------------------------------------------------------------------------------
@@ -590,7 +654,8 @@ def step_text(step: str) -> tuple:
 
 
 __all__ = [
-    "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_audit", "_cellcall",
+    "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
+    "_ambient_audit", "_cellcall",
     "_doublets", "_doublet_health", "_quality", "_quality_stage", "_cluster",
     "_cluster_flags", "_apply", "_report",
 ]
