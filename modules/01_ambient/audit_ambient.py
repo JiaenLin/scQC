@@ -118,19 +118,53 @@ def _mad_out(values: dict, k: float = MAD_K) -> dict:
             for s, v in values.items()
             if v is not None and abs(v - med) / (1.4826 * mad) > k}
 
+def _rows(table):
+    """A list of dict-like rows from either a list of dicts or a DataFrame.
+
+    This module has no pandas dependency and must not acquire one: the process that calls it is
+    the orchestrator, which on a cluster is a bare interpreter, because the aligner, the denoiser
+    and the analysis stack have incompatible pins and live elsewhere. Requiring a DataFrame here
+    forced `import pandas` into the engine and step 1's audit died on ModuleNotFoundError.
+
+    Both shapes are accepted so existing callers keep working.
+    """
+    if table is None:
+        return []
+    if hasattr(table, "iterrows"):
+        return [r for _, r in table.iterrows()]
+    return list(table)
+
+
+def _median_by(rows, key, value):
+    """{key: median(value)} - the one pandas groupby this module used, done in the standard lib."""
+    buckets: dict = {}
+    for r in rows:
+        v = r.get(value)
+        if v is None:
+            continue
+        try:
+            buckets.setdefault(r[key], []).append(float(v))
+        except (TypeError, ValueError):
+            continue
+    return {k: median(v) for k, v in buckets.items() if v}
+
+
 def audit(summary, per_gene=None, design=None) -> list:
-    """summary: DataFrame with sample, fraction_removed_overall, genes_fully_removed.
-    per_gene: optional DataFrame with sample, symbol, fraction_removed, raw_detection_frac,
+    """summary: rows (list of dicts, or a DataFrame) with sample, fraction_removed_overall,
+                genes_fully_removed.
+    per_gene: optional rows with sample, symbol, fraction_removed, raw_detection_frac,
               denoised_detection_frac.
     design: optional {factor: {sample: level}} for the differential check.
     """
     out = []
+    summary = _rows(summary)
+    per_gene = _rows(per_gene)
 
     # ---- 1. differential across the design. First, because it is the one that becomes a result.
     if design:
         for factor, mapping in design.items():
             by, unmapped = {}, []
-            for _, r in summary.iterrows():
+            for r in summary:
                 lvl = mapping.get(r["sample"])
                 if lvl is None:
                     unmapped.append(str(r["sample"]))
@@ -211,7 +245,7 @@ def audit(summary, per_gene=None, design=None) -> list:
                            "no design given - the check that matters most was not run"))
 
     # ---- 2. cohort outliers
-    fr = {r["sample"]: r["fraction_removed_overall"] for _, r in summary.iterrows()}
+    fr = {r["sample"]: r["fraction_removed_overall"] for r in summary}
     o = _mad_out(fr)
     out.append(Finding(
         "cohort outlier: fraction removed",
@@ -224,7 +258,7 @@ def audit(summary, per_gene=None, design=None) -> list:
 
     # ---- 5. genes vanishing entirely
     if "genes_fully_removed" in summary:
-        gf = {r["sample"]: float(r["genes_fully_removed"]) for _, r in summary.iterrows()}
+        gf = {r["sample"]: float(r["genes_fully_removed"]) for r in summary}
         o = _mad_out(gf)
         out.append(Finding(
             "genes removed entirely", "REVIEW" if o else "ok",
@@ -239,31 +273,36 @@ def audit(summary, per_gene=None, design=None) -> list:
         return out
 
     # ---- 3. genes being gutted. The LIST is the finding.
-    g = per_gene.groupby("symbol")["fraction_removed"].median()
-    gutted = sorted(g[g >= GENE_GUT].index)
+    g = _median_by(per_gene, "symbol", "fraction_removed")
+    gutted = sorted(k for k, v in g.items() if v >= GENE_GUT)
     out.append(Finding(
         "genes gutted", "REVIEW" if gutted else "ok",
         (f"{len(gutted)} gene(s) lose >={100*GENE_GUT:.0f}% of their counts - READ THE LIST. "
          f"Ambient and a destroyed marker are indistinguishable from the fraction alone"
          if gutted else
-         f"no gene loses >={100*GENE_GUT:.0f}%; worst median removal is {100*g.max():.1f}%"),
+         (f"no gene loses >={100*GENE_GUT:.0f}%; worst median removal is "
+          f"{100*max(g.values()):.1f}%" if g else "no per-gene rows to check")),
         gutted))
 
     # ---- 4. detection collapse
-    if {"raw_detection_frac", "denoised_detection_frac"} <= set(per_gene.columns):
-        d = per_gene.groupby("symbol")[["raw_detection_frac", "denoised_detection_frac"]].median()
-        d = d[d.raw_detection_frac > 0.01] # ignore genes barely detected to begin with
-        drop = 1 - (d.denoised_detection_frac / d.raw_detection_frac)
-        coll = drop[drop >= DETECTION_COLLAPSE].sort_values(ascending=False)
+    cols = set(per_gene[0]) if per_gene else set()
+    if {"raw_detection_frac", "denoised_detection_frac"} <= cols:
+        raw = _median_by(per_gene, "symbol", "raw_detection_frac")
+        den = _median_by(per_gene, "symbol", "denoised_detection_frac")
+        # Genes barely detected to begin with are ignored: a collapse from 0.4% to 0.1% is noise
+        # wearing the shape of a finding.
+        drop = {k: 1 - (den[k] / raw[k]) for k in raw
+                if raw[k] > 0.01 and k in den}
+        coll = dict(sorted(((k, v) for k, v in drop.items() if v >= DETECTION_COLLAPSE),
+                           key=lambda kv: -kv[1]))
         out.append(Finding(
             "detection collapse", "REVIEW" if len(coll) else "ok",
             (f"{len(coll)} gene(s) lose >={100*DETECTION_COLLAPSE:.0f}% of the droplets they "
              f"were detected in - shaved in counts is not the same as removed from the analysis"
              if len(coll) else
-             f"no gene loses >={100*DETECTION_COLLAPSE:.0f}% of its detection; "
-             f"worst is {100*drop.max():.1f}%"),
-            [f"{s}: detected {100*d.raw_detection_frac[s]:.1f}% -> "
-             f"{100*d.denoised_detection_frac[s]:.1f}%" for s in coll.index]))
+             f"no gene loses >={100*DETECTION_COLLAPSE:.0f}% of its detection; worst is "
+             f"{100*max(drop.values()):.1f}%" if drop else "no gene passed the detection floor"),
+            [f"{s}: detected {100*raw[s]:.1f}% -> {100*den[s]:.1f}%" for s in coll]))
     return out
 
 def verdict(findings) -> str:

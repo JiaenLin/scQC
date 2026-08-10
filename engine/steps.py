@@ -228,11 +228,18 @@ def _ambient_audit(task, pipeline, log):
         for g in m.get("per_gene", []):
             per_gene.append({"sample": s, **g})
 
-    import pandas as pd
-    summ = pd.DataFrame(rows)
-    genes = pd.DataFrame(per_gene) if per_gene else None
+    # No pandas. This runs in the ORCHESTRATOR's interpreter, which on a cluster is a bare
+    # python - the analysis stack lives in --python and the denoiser in its own environment.
+    # `import pandas` here killed step 1 with ModuleNotFoundError on a cohort where the audit
+    # had nothing to compute anyway. modules/01_ambient/audit_ambient.py takes plain rows.
+    import csv
     out = _tables(pipeline) / "ambient_summary.csv"
-    summ.to_csv(out, index=False)
+    cols = ["sample", "fraction_removed_overall", "genes_fully_removed"]
+    with open(out, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c) for c in cols})
 
     if supplied:
         # NOT audited, and said so rather than passed over. Measuring what ambient correction
@@ -251,7 +258,7 @@ def _ambient_audit(task, pipeline, log):
                     "metrics": {"libraries": 0, "supplied_not_audited": len(supplied)},
                     "versions": {}}
 
-    findings = aa.audit(summ, genes, task.params["design"])
+    findings = aa.audit(rows, per_gene, task.params["design"])
     pipeline.gate("01_ambient", findings, aa.verdict(findings))
     return {"outputs": [str(out)],
             "metrics": {"libraries": len(rows), "supplied_not_audited": len(supplied)},
