@@ -125,6 +125,38 @@ try:
 except Exception as e:                                                # noqa: BLE001
     fails.append(f"D: engine/graph.py does not import: {type(e).__name__}: {e}")
 
+# ---- E. the engine never measures data in its OWN interpreter.
+#
+# Check A compares call sites against real signatures, so it catches wrong ARGUMENTS. It did not
+# catch step 0 calling mx.ingest_stats_fn: that call was perfectly well formed, and the mistake
+# was choosing a function that measures in-process. The result needed pandas and anndata in
+# whatever interpreter runs scqc - which on a cluster is a bare system python, because the
+# aligner, the denoiser and the analysis stack have incompatible pins and live in separate
+# environments. Step 0 therefore passed on a laptop and failed on every cluster.
+#
+# These adapter entry points load matrices HERE, so the engine must not call them. Each has an
+# out-of-process sibling that takes `python_exe` and an executor.
+IN_PROCESS_ONLY = {
+    "ingest_stats_fn": "run_summary_stats(..., python_exe=..., executor=...)",
+    "summary_stats": "run_summary_stats(..., python_exe=..., executor=...)",
+    "barcode_rank": "run_summary_stats(..., rank_points=N, python_exe=..., executor=...)",
+    "read_matrix": "an adapter call that runs in the analysis environment",
+}
+offenders = []
+for py in sorted((ROOT / "engine").glob("*.py")):
+    for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        owner = node.func.value
+        if not isinstance(owner, ast.Name) or owner.id not in ADAPTERS:
+            continue
+        if node.func.attr in IN_PROCESS_ONLY:
+            offenders.append(
+                f"E: engine/{py.name}:{node.lineno} calls {owner.id}.{node.func.attr}(), which "
+                f"loads the matrix in THIS interpreter. Use {IN_PROCESS_ONLY[node.func.attr]}")
+print(f"E. engine calls into in-process adapter entry points: {len(offenders)}")
+fails.extend(offenders)
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")
