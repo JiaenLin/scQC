@@ -204,6 +204,38 @@ for _label, _rows in _SHAPES.items():
                 _bad += 1
 print(f"F. cross-stage dependency edges over {len(_SHAPES)} cohort shapes: {_bad}")
 
+# ---- G. no getattr() default on an adapter object the engine owns.
+#
+# `getattr(calls, "scored", None) or {}` turned a wrong attribute name into an empty mapping.
+# DoubletCalls has no `.scored` - it IS the mapping - so every library reported no doublet rate
+# and step 4 refused with "no library produced a doublet rate". The refusal was honest; the cause
+# was invisible, because the default answered a question the object had never been asked.
+#
+# A missing attribute on an object this repo defines is a bug, and bugs must raise. Defaults are
+# for values that are legitimately absent - and those are modelled explicitly here (DoubletCalls
+# .unscored is None when the population was not supplied, which is deliberately not the same as
+# empty).
+_getattr_defaults = []
+for py in sorted((ROOT / "engine").glob("*.py")):
+    src_g = py.read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src_g)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "getattr" or len(node.args) < 3:
+            continue
+        # Only flag it where the object came from an adapter this repo owns; getattr with a
+        # default on argparse namespaces and third-party objects is ordinary and correct.
+        target = node.args[0]
+        name = target.id if isinstance(target, ast.Name) else ""
+        if name in ("calls", "export", "res", "plan", "result"):
+            attr = node.args[1].value if isinstance(node.args[1], ast.Constant) else "?"
+            _getattr_defaults.append(
+                f"G: engine/{py.name}:{node.lineno} getattr({name}, {attr!r}, <default>) on an "
+                f"object this repo defines - a wrong attribute name resolves to the default "
+                f"instead of raising")
+print(f"G. getattr-with-default on repo-owned adapter objects: {len(_getattr_defaults)}")
+fails.extend(_getattr_defaults)
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

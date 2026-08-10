@@ -448,11 +448,23 @@ def _doublets(task, pipeline, log):
     out_csv = _tables(pipeline) / f"{p['sample']}_doublets.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]))
+    # The never-scored population, named from what ExportedMatrix actually carries.
+    #
+    # This was `getattr(export, "unscored", None)`, and ExportedMatrix has no `.unscored` - it
+    # has `below_floor` and `not_selected`, two different reasons a barcode was never handed to
+    # the detector, deliberately kept apart. So the expression evaluated to None on every run and
+    # the never-scored population was never recorded at all: DoubletCalls.unscored stayed None,
+    # which means "nobody said what was left out" and supports strictly fewer claims than the
+    # truth did.
+    #
+    # Both reasons are unioned here because both end up UNKNOWN, which is what the doublet rate's
+    # denominator needs. They stay separable on `export` for anyone asking which threshold did it.
+    unscored = tuple(export.below_floor) + tuple(export.not_selected)
     return db.run_scdblfinder(
         rscript=p["rscript"], mtx_dir=mtx, out_csv=out_csv,
         dbr=p.get("dbr"), dbr_sd=p.get("dbr_sd"), seed=int(p.get("seed", 0)),
         log=log, executor=pipeline.executor, sample=p["sample"],
-        unscored=getattr(export, "unscored", None))
+        unscored=unscored)
 
 
 def _doublet_health(task, pipeline, log):
@@ -462,13 +474,27 @@ def _doublet_health(task, pipeline, log):
     rates, unscored_total = {}, 0
     for s in task.params["samples"]:
         calls = db.read_calls(_tables(pipeline) / f"{s}_doublets.csv", sample=s)
-        scored = getattr(calls, "scored", None) or {}
-        n_scored = len(scored)
-        n_pos = sum(1 for v in scored.values() if v)
+        # TWO BUGS LIVED IN THE TWO LINES THIS REPLACES, and each hid the other.
+        #
+        # `getattr(calls, "scored", None) or {}` - DoubletCalls has no `.scored`; it IS the
+        # mapping. The default turned a wrong attribute name into an empty result, so every
+        # library reported no rate and the step refused with "no library produced a doublet
+        # rate". The refusal was honest and the cause was invisible: a missing attribute must
+        # raise, not resolve to nothing.
+        #
+        # `sum(1 for v in scored.values() if v)` - each value is a (score, is_doublet) TUPLE, and
+        # a non-empty tuple is always truthy. Had the first bug not emptied the mapping, this
+        # would have counted every scored barcode as a doublet and reported a 100% rate. The
+        # health module would then have refused for "rate variance at zero", which is a real
+        # check firing on a fabricated number - the worst of the available outcomes.
+        n_scored = len(calls)
+        n_pos = sum(1 for _score, is_doublet in calls.values() if is_doublet)
         # A barcode below the light floor was never scored. It is UNKNOWN, counted as unknown
         # rather than folded into the denominator as a negative.
         rates[s] = (n_pos / n_scored) if n_scored else None
-        unscored_total += len(getattr(calls, "unscored", ()) or ())
+        unscored_total += len(calls.unscored or ()) if calls.unscored is not None else 0
+        print(f"    {s:<14} scored {n_scored:>7,}   doublets {n_pos:>6,}   "
+              f"{100 * n_pos / max(n_scored, 1):.2f}%")
 
     known = {s: r for s, r in rates.items() if r is not None}
     if not known:
