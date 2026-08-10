@@ -366,10 +366,13 @@ def cmd_report(a) -> int:
         print(f"  {fid} NOT PRODUCED - {notes[fid]}")
     source.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     doc = build_report(payload, reports / "qc_report.html", reports / "report.json")
-    rendered = sum(1 for v in (doc.get("figures", {}).get("index") or {}).values()
-                   if v.get("rendered"))
-    print(f"rendered {rendered} figure(s) into {reports / 'qc_report.html'}")
-    for fid, entry in sorted((doc.get("figures", {}).get("index") or {}).items()):
+    # doc["figures"] IS the render index - {id: {"rendered": bool, "source": str}} - not a block
+    # containing one. Reading it as though it were nested reports "rendered 0" for a build that
+    # drew every figure it was given, which is a lie in the direction nobody checks.
+    index = doc.get("figures") or {}
+    rendered = sum(1 for v in index.values() if v.get("rendered"))
+    print(f"rendered {rendered} of {len(index)} figure(s) into {reports / 'qc_report.html'}")
+    for fid, entry in sorted(index.items()):
         if not entry.get("rendered"):
             print(f"  {fid} did not draw: {entry.get('source')}")
     return 0
