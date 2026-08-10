@@ -14,7 +14,9 @@ look successful and are not:
 from __future__ import annotations
 
 import os
+import os
 import re
+import shutil
 import threading
 import shlex
 import subprocess
@@ -43,6 +45,32 @@ def clear_resources() -> None:
 
 def current_resources() -> dict:
     return dict(getattr(_CURRENT, "res", {}) or {})
+
+
+#: Where PBS lives when it is not on PATH. A batch job does not inherit the login shell's
+#: environment, so `qsub` resolving on the submitting host says nothing about the compute node.
+_PBS_DIRS = (
+    "/opt/pbs/bin", "/opt/pbs/default/bin",
+    "/usr/local/pbs/bin", "/usr/pbs/bin",
+    "/cm/shared/apps/pbspro/current/bin",
+    "/opt/torque/bin", "/usr/local/torque/bin",
+)
+
+
+def _find_pbs(name: str) -> str | None:
+    """An absolute path to a PBS command, or None. Never a bare name.
+
+    A bare name is resolved by whatever PATH happens to be, which is exactly the thing that
+    differs between the shell a run is launched from and the job it becomes.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in _PBS_DIRS:
+        cand = Path(d) / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return None
 
 
 class Executor(Protocol):
@@ -105,6 +133,20 @@ class PBSExecutor:
                  walltime_h: int = 4, gpu: bool = False):
         self.queue, self.project, self.poll_s = queue, project, poll_s
         self.cpus, self.memory_gb, self.walltime_h, self.gpu = cpus, memory_gb, walltime_h, gpu
+        # Resolved ONCE, here, so a host without PBS is refused before any task runs rather than
+        # failing identically ten times with a bare FileNotFoundError that names neither the
+        # command nor the reason.
+        self.qsub = _find_pbs("qsub")
+        self.qstat = _find_pbs("qstat")
+        if not self.qsub or not self.qstat:
+            missing = ", ".join(n for n, v in (("qsub", self.qsub), ("qstat", self.qstat)) if not v)
+            raise SystemExit(
+                f"scqc: --executor pbs was requested but {missing} could not be found.\n"
+                f"    Searched $PATH and {', '.join(_PBS_DIRS)}.\n"
+                f"    A batch job does not inherit the login shell's environment, so PBS being on\n"
+                f"    PATH where you submitted from does not mean it is on PATH where the\n"
+                f"    orchestrator runs. Either module-load PBS inside the job script, or use\n"
+                f"    --executor local.")
 
     def shell(self, cmd, log: Path, env=None, cwd=None, timeout_s=None) -> str:
         log = Path(log)
@@ -137,7 +179,7 @@ class PBSExecutor:
         lines.append(" ".join(shlex.quote(str(c)) for c in cmd))
         script.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        sub = subprocess.run(["qsub", str(script)], capture_output=True, text=True)
+        sub = subprocess.run([self.qsub, str(script)], capture_output=True, text=True)
         if sub.returncode != 0:
             raise TaskFailure(f"qsub failed: {(sub.stderr or sub.stdout).strip()}")
         m = self._JOBID.search(sub.stdout.strip())
@@ -150,7 +192,7 @@ class PBSExecutor:
         deadline = time.time() + (timeout_s or wall * 3600 + 600)
         wait = 2.0
         while True:
-            q = subprocess.run(["qstat", "-xf", job], capture_output=True, text=True)
+            q = subprocess.run([self.qstat, "-xf", job], capture_output=True, text=True)
             text = q.stdout or ""
             state = re.search(r"job_state\s*=\s*(\w)", text)
             exit_status = re.search(r"Exit_status\s*=\s*(-?\d+)", text)
