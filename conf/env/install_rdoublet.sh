@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install R with scDblFinder and scds as a separate conda environment, from precompiled packages.
+# Install R with scDblFinder as a separate conda environment, from precompiled packages.
 #
 # Usage:
 #   conf/env/install_rdoublet.sh <env-root>
@@ -17,22 +17,27 @@
 # they arrive already compiled, changes nothing that exists.
 #
 # WHY r-xgboost IS PINNED TO 1.7.6. Solved without the pin, conda-forge supplies xgboost 3.x,
-# and both packages here are Bioconductor 3.18 releases written against the 1.7.x R API. The
-# consequences differ, and only one of them is loud:
+# while scDblFinder 1.16.0 is a Bioconductor 3.18 release written against the 1.7.x R API. It
+# does not fail. It passes max_depth, eta, subsample, nthread and eval_metric as top-level
+# arguments, which xgboost 3.x accepts only through a deprecation shim that folds them into
+# `params` and warns - so it completes and returns scores.
 #
-#   scds 1.18.0         Fails outright. bcds calls xgboost(mm, label = ..., nrounds = ...);
-#                       `label` was removed and `y` became required, so the run stops with
-#                       `argument "y" is missing, with no default`.
-#
-#   scDblFinder 1.16.0  Survives quietly. It passes max_depth, eta, subsample, nthread and
-#                       eval_metric as top-level arguments, which xgboost 3.x accepts only
-#                       through a deprecation shim that folds them into `params` and warns.
-#                       It completes and returns scores.
-#
-# The second case is what the pin is for. Scores produced through an API-conversion shim are not
+# That is the whole reason for the pin. Scores produced through an API-conversion shim are not
 # the scores the method was characterised on, and nothing downstream can tell the difference:
-# they look entirely normal. The version mismatch is visible at all only because the other package
-# crashes, so the pin protects precisely the tool that would otherwise fail in silence.
+# they look entirely normal.
+#
+# HOW THIS WAS FOUND, and why the finder is no longer installed. The mismatch surfaced because a
+# sibling package, scds 1.18.0, crashed outright on the same xgboost - `bcds` calls
+# xgboost(label = ...), `label` was removed and `y` became required. scds was then kept in this
+# environment as though it were a canary. It was not one: nothing in the pipeline calls it, and
+# the verification only did `requireNamespace("scds")`, which loads the package without ever
+# touching the xgboost API. A canary that is never asked to sing is just weight - and a required
+# package the pipeline never invokes turns an unrelated breakage into a BROKEN environment.
+#
+# The guard that actually works is the explicit version check at the end of this script, which
+# reads packageVersion("xgboost") directly and refuses >= 2.0.0. scds was removed 2026-08-10;
+# this note stays because the reasoning behind the pin is worth keeping even once the package
+# that revealed it is gone.
 #
 # 1.7.6 has a cpu_r43 build, matching r-base 4.3 exactly. The verification at the end refuses the
 # install if a 2.x or newer xgboost ends up in the environment anyway.
@@ -80,14 +85,18 @@ else
     "$MM" create -y -p "$ENVDIR" \
         -c conda-forge -c bioconda \
         r-base=4.3 r-matrix r-xgboost=1.7.6 \
-        bioconductor-scdblfinder bioconductor-scds \
+        bioconductor-scdblfinder \
         bioconductor-singlecellexperiment 2>&1 | tail -25
 fi
 
 echo
 echo "=== verify ==="
+# The package list here is exactly what adapters/scdblfinder.R declares in NEEDED. Verifying
+# anything else makes the environment report BROKEN for a package the pipeline never calls, and
+# a guard that fails for reasons unrelated to whether the run can proceed is a guard that gets
+# switched off.
 "$ENVDIR/bin/Rscript" -e '
-for (p in c("Matrix","SingleCellExperiment","scDblFinder","scds"))
+for (p in c("Matrix","SingleCellExperiment","scDblFinder"))
   cat(sprintf("  %-24s %s  %s\n", p, requireNamespace(p, quietly=TRUE),
               tryCatch(as.character(packageVersion(p)), error=function(e) "?")))
 cat(sprintf("  %-24s %s  %s\n", "xgboost", requireNamespace("xgboost", quietly=TRUE),
@@ -95,7 +104,7 @@ cat(sprintf("  %-24s %s  %s\n", "xgboost", requireNamespace("xgboost", quietly=T
 cat("  R:", R.version.string, "\n")
 v <- packageVersion("xgboost")
 if (v >= "2.0.0") { cat("  FATAL: xgboost", as.character(v),
-                        "breaks scds and silently shims scDblFinder\n"); quit(status=4) }
+                        "silently shims scDblFinder onto a converted API\n"); quit(status=4) }
 ' 2>&1 | tail -12
 rc=${PIPESTATUS[0]}
 exit "$rc"

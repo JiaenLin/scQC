@@ -9,7 +9,7 @@
 #   core        analysis stack: scanpy, anndata, pandas       (always)
 #   celescope   CeleScope aligner                             (--with-celescope)
 #   cellbender  CellBender ambient-RNA denoiser               (--with-cellbender)
-#   rdoublet    R: scDblFinder and scds doublet scoring       (--with-doublet)
+#   rdoublet    R: scDblFinder doublet scoring                (--with-doublet)
 #
 # Usage:
 #   setup/install_env.sh --prefix ~/scqc-env --all
@@ -258,17 +258,22 @@ check core       "$PREFIX/core/bin/python"       scanpy anndata pandas numpy
 [[ $WITH_CELLBENDER -eq 1 ]] && check cellbender "$PREFIX/cellbender/bin/python" cellbender
 [[ $WITH_CELESCOPE  -eq 1 ]] && check celescope  "$PREFIX/celescope/bin/python"  celescope
 
-# rdoublet is R, so the python import check above does not apply to it. Load the two packages
-# that are actually used: a present Rscript with an absent scDblFinder is the failure mode this
-# catches.
+# rdoublet is R, so the python import check above does not apply to it. Load the packages that
+# are ACTUALLY USED - the same list adapters/scdblfinder.R declares in NEEDED. A present Rscript
+# with an absent scDblFinder is the failure mode this catches.
+#
+# scds was in this list until 2026-08-10 and nothing in the pipeline has ever called it. It made
+# a missing package that no step needs report the environment BROKEN, which is the same shape as
+# the multi-package import bug fixed the same day: a guard failing for a reason unrelated to
+# whether the run can proceed.
 if [[ $WITH_DOUBLET -eq 1 ]]; then
     rs="$PREFIX/rdoublet/bin/Rscript"
     if [[ ! -x "$rs" ]]; then
         printf '  %-12s MISSING\n' rdoublet; ok=0
-    elif "$rs" -e 'q(status = if (all(sapply(c("scDblFinder","scds"), requireNamespace, quietly=TRUE))) 0 else 1)' >/dev/null 2>&1; then
+    elif "$rs" -e 'q(status = if (all(sapply(c("scDblFinder"), requireNamespace, quietly=TRUE))) 0 else 1)' >/dev/null 2>&1; then
         printf '  %-12s ok   %s\n' rdoublet "$("$rs" --version 2>&1 | head -1)"
     else
-        printf '  %-12s BROKEN (scDblFinder or scds did not load)\n' rdoublet; ok=0
+        printf '  %-12s BROKEN (scDblFinder did not load)\n' rdoublet; ok=0
     fi
 fi
 
