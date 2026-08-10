@@ -28,6 +28,7 @@ import csv
 import importlib.util
 import json
 import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -407,8 +408,9 @@ def cmd_run(a) -> int:
 
     executor = make_executor(a.executor, **({"queue": a.queue, "project": a.pbs_project}
                                             if a.executor == "pbs" else {}))
+    jobs = a.jobs if a.jobs and a.jobs > 0 else min(16, (os.cpu_count() or 4))
     pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
-                    decisions=decisions, force=a.force)
+                    decisions=decisions, force=a.force, jobs=jobs)
 
     tools = {k: v for k, v in {
         "celescope": a.celescope, "cellranger": a.cellranger, "cellbender": a.cellbender,
@@ -426,6 +428,7 @@ def cmd_run(a) -> int:
     print(f"project  : {project}")
     print(f"mode     : {a.mode}      executor: {getattr(executor, 'name', '?')}")
     print(f"samples  : {len(rows)}")
+    print(f"jobs     : {jobs} concurrent")
     print()
 
     def finish(code: int, stopped=None) -> int:
@@ -548,6 +551,10 @@ def build_parser() -> argparse.ArgumentParser:
     r2.add_argument("--resolution", type=float, default=1.0)
     r2.add_argument("--seed", type=int, default=0)
     r2.add_argument("--force", action="store_true", help="re-run every task, ignoring the manifest")
+    # Independent tasks run concurrently. 1 is the old serial behaviour, which is what you want
+    # when a failure has to be read in one log; the default uses the machine.
+    r2.add_argument("--jobs", "-j", type=int, default=0,
+                    help="independent tasks to run at once (0 = auto: cores, capped at 16)")
     r2.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")

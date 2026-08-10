@@ -20,8 +20,10 @@ THREE PROPERTIES THIS FILE IS RESPONSIBLE FOR
 
 from __future__ import annotations
 
+import concurrent.futures as cf
 import importlib.util
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -68,7 +70,7 @@ class Pipeline:
     """Builds the task graph for a project and runs it."""
 
     def __init__(self, project: Path, mode: str, executor, samples: list[dict],
-                 decisions: dict | None = None, force: bool = False):
+                 decisions: dict | None = None, force: bool = False, jobs: int = 1):
         if mode not in ("evidence", "apply"):
             raise SystemExit(f"scqc: mode must be 'evidence' or 'apply', got {mode!r}")
         self.project = Path(project)
@@ -77,6 +79,11 @@ class Pipeline:
         self.samples = samples
         self.decisions = decisions or {}
         self.force = force
+        # How many independent tasks may run at once. 1 reproduces the old serial behaviour
+        # exactly, which is what you want when a failure needs to be read in one log.
+        self.jobs = max(1, int(jobs))
+        self._prov_lock = threading.Lock()
+        self.started_at = time.time()
 
         self.work = self.project / "work"
         self.results = self.project / "results"
@@ -127,88 +134,146 @@ class Pipeline:
             "n_tasks": len(tasks),
         })
 
+        # INDEPENDENT TASKS RUN CONCURRENTLY.
+        #
+        # This walked the topological order one task at a time, which made the wall-clock the SUM
+        # of every step even though the graph already knows what does not depend on what. Ten
+        # libraries of doublet scoring at ~2 minutes each is 22 minutes of a 256-core node running
+        # one core. Under PBS it was worse, not better: the executor submits and polls, so serial
+        # execution meant submit -> queue -> run -> poll, once per job.
+        #
+        # Tasks are now released in dependency WAVES: everything whose needs are satisfied starts
+        # together, bounded by `jobs`. Threads rather than processes because every task body is
+        # waiting on a subprocess or a scheduler, not holding the GIL.
+        #
+        # Order of RESULTS is unchanged - `order` still drives reporting - so a run's records read
+        # the same whether it ran with one worker or thirty.
         stopped: str | None = None
-        for key in order:
-            task = by_key[key]
+        lock = threading.Lock()
+        pending = list(order)
+        n_workers = max(1, int(self.jobs))
 
+        def _classify(key):
+            """BLOCKED / SKIPPED decisions, made under the lock before any work starts."""
+            task = by_key[key]
             bad = [n for n in task.needs
                    if self.results_by_key.get(n) is None
                    or not self.results_by_key[n].ok]
             if bad:
-                r = TaskResult(key, Status.BLOCKED, step=task.step, sample=(task.sample or ""),
-                               message=f"upstream did not complete: {', '.join(sorted(bad))}")
-                self.results_by_key[key] = r
-                self.state.record(r)
-                continue
-
+                return TaskResult(key, Status.BLOCKED, step=task.step, sample=(task.sample or ""),
+                                  message=f"upstream did not complete: {', '.join(sorted(bad))}")
             if not self.force:
-                skip, why = self.state.should_skip(task)
+                skip, _why = self.state.should_skip(task)
                 if skip:
                     rec = self.state.get(key) or {}
-                    r = TaskResult(key, Status.SKIPPED, step=task.step, sample=(task.sample or ""), signature=rec.get("signature", ""),
-                                   outputs=rec.get("outputs", []),
-                                   metrics=rec.get("metrics", {}),
-                                   versions=rec.get("versions", {}),
-                                   message="unchanged since the last completed run")
+                    return TaskResult(key, Status.SKIPPED, step=task.step,
+                                      sample=(task.sample or ""),
+                                      signature=rec.get("signature", ""),
+                                      outputs=rec.get("outputs", []),
+                                      metrics=rec.get("metrics", {}),
+                                      versions=rec.get("versions", {}),
+                                      message="unchanged since the last completed run")
+            return None
+
+        def _ready():
+            """Keys whose upstreams have all finished, in topological order."""
+            out = []
+            for key in pending:
+                needs = by_key[key].needs or ()
+                if all(n in self.results_by_key for n in needs):
+                    out.append(key)
+            return out
+
+        while pending and stopped is None:
+            wave = _ready()
+            if not wave:
+                break
+            batch = []
+            for key in wave:
+                pre = _classify(key)
+                if pre is not None:
+                    self.results_by_key[key] = pre
+                    self.state.record(pre)
+                    if pre.status is Status.SKIPPED:
+                        print(f"  SKIP    {key}")
+                    pending.remove(key)
+                    continue
+                batch.append(key)
+            if not batch:
+                continue
+            for key in batch:
+                pending.remove(key)
+                print(f"  RUN     {key}")
+            results = {}
+            with cf.ThreadPoolExecutor(max_workers=min(n_workers, len(batch))) as pool:
+                futures = {pool.submit(self._run_one, by_key[k]): k for k in batch}
+                for fut in cf.as_completed(futures):
+                    k = futures[fut]
+                    results[k] = fut.result()
+            # Recorded in topological order, not completion order, so two runs of the same graph
+            # produce the same manifest whatever the scheduler did.
+            for key in [k for k in order if k in results]:
+                r, note = results[key]
+                with lock:
                     self.results_by_key[key] = r
                     self.state.record(r)
-                    print(f"  SKIP    {key}")
-                    continue
-
-            print(f"  RUN     {key}")
-            started = time.time()
-            log = self.logs / f"{key.replace('/', '_')}.log"
-            try:
-                out = task.fn(task=task, pipeline=self, log=log) or {}
-                produced = [str(p) for p in out.get("outputs", [])]
-                missing = [p for p in produced if not Path(p).exists()]
-                if missing:
-                    raise TaskFailure(
-                        f"reported outputs that do not exist: {missing}. A step that claims a "
-                        f"file it did not write fails here, not three steps later.")
-                for name, ver in (out.get("versions") or {}).items():
-                    self.prov.observe(name, ver)
-                r = TaskResult(key, Status.DONE, step=task.step, sample=(task.sample or ""), signature=task.signature(), outputs=produced,
-                               metrics=out.get("metrics", {}), versions=out.get("versions", {}),
-                               seconds=time.time() - started, log=str(log))
-            except Refusal as e:
-                r = TaskResult(key, Status.REFUSED, step=task.step, sample=(task.sample or ""), message=str(e),
-                               seconds=time.time() - started, log=str(log))
-                self.results_by_key[key] = r
-                self.state.record(r)
-                stopped = f"{key}: refused"
-                print(f"  REFUSE  {key}")
-                break
-            except TaskFailure as e:
-                r = TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""), message=str(e),
-                               seconds=time.time() - started, log=str(log))
-                self.results_by_key[key] = r
-                self.state.record(r)
-                stopped = f"{key}: failed"
-                print(f"  FAIL    {key}")
-                break
-            except Exception as e:                                    # noqa: BLE001
-                r = TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""),
-                               message=f"{type(e).__name__}: {e}",
-                               seconds=time.time() - started, log=str(log))
-                self.results_by_key[key] = r
-                self.state.record(r)
-                stopped = f"{key}: {type(e).__name__}"
-                print(f"  ERROR   {key}  {type(e).__name__}: {e}")
-                break
-
-            self.results_by_key[key] = r
-            self.state.record(r)
+                if note:
+                    print(note)
+                if r.status in (Status.REFUSED, Status.FAILED) and stopped is None:
+                    stopped = f"{key}: {r.status.value}"
 
         # Tasks after the stop never ran. They are recorded, not omitted: a report with a
         # missing section reads as a section with nothing to report.
         for key in order:
             if key not in self.results_by_key:
-                r = TaskResult(key, Status.BLOCKED, step=task.step, sample=(task.sample or ""), message="the run stopped before this step")
+                t = by_key[key]
+                r = TaskResult(key, Status.BLOCKED, step=t.step, sample=(t.sample or ""),
+                               message="the run stopped before this step")
                 self.results_by_key[key] = r
                 self.state.record(r)
 
         return self.payload(stopped)
+
+    def _run_one(self, task):
+        """Execute one task body. Returns (TaskResult, line-to-print). Never raises.
+
+        Runs on a worker thread, so it must not touch shared state: the caller records the result
+        under the lock, in topological order. The only shared write here is `prov.observe`, which
+        is why it is guarded - two tasks reporting the same tool version at once would otherwise
+        race on a dict.
+        """
+        key = task.key
+        started = time.time()
+        log = self.logs / f"{key.replace('/', '_')}.log"
+        try:
+            out = task.fn(task=task, pipeline=self, log=log) or {}
+            produced = [str(p) for p in out.get("outputs", [])]
+            missing = [p for p in produced if not Path(p).exists()]
+            if missing:
+                raise TaskFailure(
+                    f"reported outputs that do not exist: {missing}. A step that claims a "
+                    f"file it did not write fails here, not three steps later.")
+            with self._prov_lock:
+                for name, ver in (out.get("versions") or {}).items():
+                    self.prov.observe(name, ver)
+            return TaskResult(
+                key, Status.DONE, step=task.step, sample=(task.sample or ""),
+                signature=task.signature(), outputs=produced,
+                metrics=out.get("metrics", {}), versions=out.get("versions", {}),
+                seconds=time.time() - started, log=str(log)), None
+        except Refusal as e:
+            return TaskResult(key, Status.REFUSED, step=task.step, sample=(task.sample or ""),
+                              message=str(e), seconds=time.time() - started,
+                              log=str(log)), f"  REFUSE  {key}"
+        except TaskFailure as e:
+            return TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""),
+                              message=str(e), seconds=time.time() - started,
+                              log=str(log)), f"  FAIL    {key}"
+        except Exception as e:                                        # noqa: BLE001
+            return TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""),
+                              message=f"{type(e).__name__}: {e}",
+                              seconds=time.time() - started,
+                              log=str(log)), f"  ERROR   {key}  {type(e).__name__}: {e}"
 
     # ------------------------------------------------------------------ report payload
 
@@ -228,7 +293,14 @@ class Pipeline:
         return {
             "run": {"project": str(self.project), "mode": self.mode,
                     "invocation": " ".join(sys.argv),
-                    "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+                    "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    # Wall-clock, and the CPU-time the tasks actually consumed. The ratio is the
+                    # speed-up concurrency bought; reporting only the first hides whether the
+                    # machine was used, and only the second hides how long a person waited.
+                    "elapsed_s": round(time.time() - self.started_at, 1),
+                    "task_seconds_total": round(
+                        sum((r.seconds or 0) for r in self.results_by_key.values()), 1),
+                    "jobs": self.jobs},
             "deliverable": {
                 "text": (f"STOPPED at {stopped_after}" if stopped_after else
                          "no deliverable was written; this run measured and did not apply"),

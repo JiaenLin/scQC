@@ -1027,6 +1027,28 @@ def build_provenance(payload, defects: list, *, now=None) -> dict:
     return block
 
 
+
+def _runtime_line(run: dict) -> str:
+    """Wall-clock, summed task time and the speed-up, or NOT STATED if the run did not record it."""
+    el = _get(run, "elapsed_s")
+    ts = _get(run, "task_seconds_total")
+    jobs = _get(run, "jobs")
+    if not _stated(el):
+        return "NOT STATED - the run did not record its own duration"
+    def _hms(s):
+        s = float(s)
+        h, rem = divmod(int(s), 3600)
+        m, sec = divmod(rem, 60)
+        return (f"{h}h {m:02d}m {sec:02d}s" if h else
+                (f"{m}m {sec:02d}s" if m else f"{sec}s"))
+    out = f"wall {_hms(el)}"
+    if _stated(ts) and float(ts) > 0 and float(el) > 0:
+        out += f"   task-time {_hms(ts)}   speed-up {float(ts) / float(el):.1f}x"
+    if _stated(jobs):
+        out += f"   ({jobs} concurrent)"
+    return out
+
+
 def _provenance_lines(block: dict, run: dict) -> list:
     w = 16
     p = block["pipeline"]
@@ -1034,6 +1056,9 @@ def _provenance_lines(block: dict, run: dict) -> list:
              f"{'invocation':<{w}}{block['invocation']}",
              f"{'project':<{w}}{_text(_get(run, 'project'))}"
              f"   mode: {_text(_get(run, 'mode'))}",
+             # Wall-clock AND summed task time. The ratio is what concurrency bought; one number
+             # alone hides either how long a person waited or whether the machine was used.
+             f"{'runtime':<{w}}" + _runtime_line(run),
              f"{'decisions':<{w}}{block['decisions']['path']}  {block['decisions']['hash']}",
              f"{'reference':<{w}}" + "  ".join(f"{k}: {v}" for k, v in
                                                block["reference"].items())]
