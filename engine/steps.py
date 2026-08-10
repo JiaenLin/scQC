@@ -1395,16 +1395,21 @@ def _apply(task, pipeline, log):
     pipeline.gate("07_apply", findings, au.verdict(findings))
 
     # --- and only now is a matrix touched.
+    # `kept` is the APPROVED COUNT from the gate above and is checked against the object that
+    # gets written, so it must survive this loop. Naming the per-library barcode list `kept`
+    # too shadowed it, and the check below - the one that proves the delivered object holds the
+    # population the gate approved - died on int(<list>) instead of comparing anything. It had
+    # never run: nothing had previously reached a successful write for it to run on.
     keep_lists = []
     for s in samples:
-        kept = [r["barcode"] for r in percell if r["sample"] == s and flag(r, "keep")]
+        kept_barcodes = [r["barcode"] for r in percell if r["sample"] == s and flag(r, "keep")]
         kp = pipeline.scratch / f"{s}_apply.keep.txt"
-        kp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        kp.write_text("\n".join(kept_barcodes) + "\n", encoding="utf-8")
         keep_lists.append({
             "sample": s, "keep_csv": str(kp),
             "h5ad": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
             "annotations_csv": _deliverable_annotations(
-                pipeline, ap, s, kept, rows,
+                pipeline, ap, s, kept_barcodes, rows,
                 [r for r in percell if r["sample"] == s])})
     res = _scanpy(pipeline, "apply_write", pipeline.results / "objects" / f"{samples[0]}_ambient.h5",
                   pipeline.results / "objects" / "cohort",
