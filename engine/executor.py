@@ -138,6 +138,24 @@ class PBSExecutor:
         # command nor the reason.
         self.qsub = _find_pbs("qsub")
         self.qstat = _find_pbs("qstat")
+        # FOUND IS NOT WORKING. qsub needs PBS_CONF_FILE, PBS_EXEC and PBS_SERVER, which on a
+        # module-based cluster are set by `module load pbspro` and are NOT inherited by a batch
+        # job. Checking only that the binary exists passed, and then every task failed with
+        # "pbsconf error: pbs conf variables not found" - one failure per task for one problem
+        # with the run.
+        if self.qsub and self.qstat:
+            probe = subprocess.run([self.qstat, "-B"], capture_output=True, text=True)
+            if probe.returncode != 0:
+                detail = (probe.stderr or probe.stdout).strip()[:200]
+                raise SystemExit(
+                    "scqc: qsub was found at " + str(self.qsub) + " but PBS is not configured "
+                    "in this environment.\n"
+                    "    " + detail + "\n"
+                    "    PBS_CONF_FILE, PBS_EXEC and PBS_SERVER are set by the site's module, and "
+                    "a batch\n"
+                    "    job does not inherit them. Add `module load pbspro` (or export "
+                    "PBS_CONF_FILE)\n"
+                    "    to the script that runs scqc, or use --executor local.")
         if not self.qsub or not self.qstat:
             missing = ", ".join(n for n, v in (("qsub", self.qsub), ("qstat", self.qstat)) if not v)
             raise SystemExit(
