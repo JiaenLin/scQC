@@ -24,20 +24,17 @@ flowchart TD
 
     subgraph S1["Step 1 — Ambient RNA"]
         G1{"Assay declared, and<br/>consistent with the<br/>intronic fraction?"}
-        A1["Denoise at the<br/>package default rate"]
+        A1["Denoise at the package<br/>default rate · or accept<br/>a supplied denoised object"]
         A3{"Is any sample unlike<br/>its siblings? (MAD over<br/>the run diagnostics)"}
-        A4["Re-run ALL samples<br/>at half the rate"]
-        A5{"Did halving resolve<br/>the flagged samples?"}
         A2["Audit: 5 checks"]
     end
     G1 -- "no" --> XG1["REFUSE · raises<br/>the assay is DECLARED and<br/>a wrong guess is silent"]
     G1 -- "yes" --> A1
     A1 --> A3
-    A3 -- "outlier(s)" --> A4 --> A5
+    A3 -- "outlier(s)" --> XLR["REFUSE · names them<br/>DETECTION AND REPORTING ONLY:<br/>nothing is re-run automatically"]
+    A3 -- "no curve declared" --> RLR["REVIEW · NOT MEASURED<br/>a missing sibling changes what<br/>the rest were compared against"] --> A2
+    A3 -- "fewer than 4 comparable" --> RLR
     A3 -- "none" --> A2
-    A5 -- "all resolved" --> AD["adopt half, cohort-wide<br/>keep the default-rate outputs"] --> A2
-    A5 -- "none resolved" --> KD["keep the default<br/>a non-default that fixes<br/>nothing is not a justification"] --> A2
-    A5 -- "some resolved" --> ES["ESCALATE<br/>a rate that fixes some libraries<br/>and not others is describing<br/>those libraries, not the rate"]
     A2 --> V1{"Is removal even<br/>across the design?"}
     V1 -- "≥3× AND worst arm ≥1%" --> X1["REFUSE<br/>a technical property has become<br/>an apparent biological difference"]
     V1 -- "≥3× but under 1%" --> R1["REVIEW<br/>a ratio between two near-zero<br/>rates is reported, not refused"]
@@ -197,12 +194,12 @@ flowchart LR
 Looking at the data and cutting it are separated in time and recorded separately. That separation
 is the design — not a workflow convenience.
 
-> **This diagram is the intended interface, not shipped behaviour.** `scqc` takes per-step
-> subcommands, not `--mode`: nothing runs the steps in sequence, and nothing writes a report or a
-> `decisions.template.yml`. Of the *apply* box, only the last part exists — step 7 does keep every
-> removal recoverable, pairing each removed observation with the criteria that fired on it. See the
-> Status table in [README.md](../README.md) and the specification in
-> [REPORT_DESIGN.md](REPORT_DESIGN.md).
+> **What differs from this diagram today.** `scqc run --mode evidence|apply` drives the steps in
+> sequence and writes the report, and apply mode writes the filtered object with its removal
+> ledger. Two departures: apply mode is the **default**, and a `decisions.yml` is **optional** —
+> without one the pipeline applies the thresholds it derived and records them as `DERIVED` rather
+> than `ADJUDICATED`. No figure is produced by any step. See the Status table in
+> [README.md](../README.md) and the specification in [REPORT_DESIGN.md](REPORT_DESIGN.md).
 
 ## Parameter classes
 

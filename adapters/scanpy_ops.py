@@ -797,7 +797,7 @@ def find_valley(values, metric, *, bw_method="scott", grid_size=512, min_valley_
       2. `valley_between_modes` - a grid point lies strictly between them, so a minimum exists;
       3. `both_modes_carry_mass` - counting the actual observations either side of the valley,
          the SMALLER side holds at least `min_mode_mass` of them (default 0.001, i.e. 0.1%) AND
-         at least `min_mode_observations` of them (default 30). MEASURED HERE, and this is the
+         at least `min_mode_observations` of them (default 8). MEASURED HERE, and this is the
          criterion that rejects a mode that is a kernel bump over a handful of extreme barcodes.
          It is a count of data, not a density height: a Gaussian KDE puts a kernel of the same
          width on every point, so three barcodes together in a tail make a local maximum whose

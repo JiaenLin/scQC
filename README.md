@@ -4,17 +4,18 @@
 threshold from applying it.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.0.1--dev-orange.svg)](#status)
+[![Status](https://img.shields.io/badge/status-0.1.0-blue.svg)](#status)
 
 Most QC pipelines take thresholds as arguments. scQC treats them as findings: it measures what it
 can from your data, refuses to guess what it cannot, and requires a recorded human decision — in
 that person's own words — before anything is removed.
 
-> **Read [Status](#status) before you plan a run.** At `0.0.1-dev` scQC is a decision layer, not a
-> workflow engine. The `scqc` command judges tables you have produced elsewhere, one step at a
-> time; it does **not** read matrices, does **not** invoke CeleScope, Cell Ranger, CellBender,
-> scDblFinder or scanpy, and does **not** write a report. The two-mode driver
-> (`--mode evidence` / `--mode apply`) described below is the intended interface and is not built.
+> **Read [Status](#status) before you plan a run.** At `0.1.0` scQC runs a cohort end to end —
+> `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
+> task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
+> process. It writes a report and, in apply mode, a filtered object with its removal ledger.
+> What it does **not** yet produce is any figure, and nothing feeds its freshness check. The
+> per-step subcommands remain, for judging tables you produced elsewhere.
 
 ---
 
@@ -50,23 +51,36 @@ does the same wrong thing every time.
 The pipeline is built around two modes, and the separation between them is the design rather than
 a workflow convenience:
 
-- **evidence** — run every step, derive every DERIVED parameter, write the report and the decision
-  template, remove nothing, then stop.
-- **apply** — re-run with your `decisions.yml`, verify that every ADJUDICATED value carries your
-  own words, and only then remove.
+- **evidence** — run every step, derive every DERIVED parameter, write the report, remove nothing,
+  then stop. The apply task is not placed in the task graph at all, so there is no code path from
+  this mode to a deletion.
+- **apply** — the default. Run every step, then measure each removal criterion per barcode, write
+  the removal ledger, and materialise the filtered object.
 
 ```bash
-scqc --project ./my-study --mode evidence   # NOT BUILT — measures everything, removes nothing
-cp decisions.template.yml decisions.yml     # NOT BUILT — record your decisions
-scqc --project ./my-study --mode apply      # NOT BUILT — applies them; refuses if any is missing
+scqc run --project ./my-study --mode evidence   # measures everything, removes nothing
+scqc run --project ./my-study                   # apply is the default
 ```
 
-> **The two-mode driver does not exist.** `scqc` takes subcommands, not `--mode`; nothing runs the
-> steps in sequence and nothing writes a report or a decision template. The block above is the
-> interface the modules are written against, and it is also what `setup/init_project.sh` writes
-> into a new project's README, where it will not run either. See [Status](#status).
+Thresholds are **DERIVED** by default: the pipeline applies what it measured and records it as
+measured. To override one, put it in `decisions.yml` with an approver and your own words, and it
+is recorded as **ADJUDICATED** instead. Both classes travel into the ledger, the written object
+and the report, so a value the pipeline proposed is never later read as one a person chose.
 
-What `scqc` does today is judge one step at a time, from tables you produce yourself:
+```bash
+cp decisions.template.yml decisions.yml         # optional; overrides what was derived
+```
+
+**Outputs are named after their inputs.** Each run writes under `results/<digest>/`, where the
+digest is computed from the samplesheet's content, the declared parameters and the mode. The same
+inputs go to the same directory, which is what lets a re-run reuse completed work; change a
+threshold and the digest changes with it, so the new run lands **beside** the old one rather than
+over it. `results/INDEX.tsv` says what each digest was and `results/latest` points at the newest.
+
+Nothing is overwritten by a run that would have produced something different — that is a property
+of the layout, not a rule anyone has to remember.
+
+You can also judge one step at a time, from tables you produce yourself:
 
 ```bash
 scqc validate --samplesheet samplesheet.csv       # every DECLARED field present, reference known
@@ -79,9 +93,8 @@ scqc cluster-preflight --profile clusters.csv --kept 120000   # what step 6 foun
 scqc selftest                                     # run the bundled suites
 ```
 
-**Exit code 2 is a refusal**, 0 is pass or review, 1 is an error — so a gate can stop a shell
-script today even though nothing drives the steps end to end. `--json` on the gate subcommands
-prints the findings as structured output.
+**Exit code 2 is a refusal**, 0 is pass or review, 1 is an error, so a gate can stop a shell
+script of your own. `--json` on the gate subcommands prints the findings as structured output.
 
 Looking at the data and cutting it are separated in time and recorded separately.
 
@@ -97,8 +110,7 @@ The decision layer has no third-party dependencies at all, which is deliberate: 
 install is a gate that gets skipped. `pip install -e '.[test]'` adds pandas, which only the
 cohort-reading test needs.
 
-The tools the pipeline reasons *about* are a separate install, and only needed once the execution
-layer exists:
+The tools the pipeline invokes are a separate install, needed to run a cohort end to end:
 
 ```bash
 setup/install_env.sh --prefix ~/scqc-env --all
@@ -127,13 +139,17 @@ upgrading the pipeline cannot disturb an existing result.
 | # | step | does | removes |
 |---|---|---|---|
 | 0 | ingest | validate samplesheet, resolve reference, verify input is raw | — |
-| 1 | ambient | denoise (CellBender); audit the result; halve the learning rate if degenerate | — |
+| 1 | ambient | denoise (CellBender), or accept a denoised object; audit the removal; report any fit unlike its siblings | — |
 | 2 | cell call | compare aligner and denoiser calls; gate the loss | — |
 | 3 | light floor | technical floor for doublet scoring — *not* a quality filter | — |
 | 4 | doublets | score per sample, before quality filtering; flag only | — |
-| 5 | quality | derive count floors and mitochondrial ceiling | — |
+| 5 | quality | derive count floors and the per-library mitochondrial ceiling | — |
 | 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet | — |
-| 7 | **apply** | pre-flight, verify approval, remove | **yes — only here** |
+| 7 | **apply** | measure every criterion, write the ledger, then write the filtered object | **yes — only here** |
+
+🔬 **[How each filter is calculated](docs/FILTERS.md)** — the exact procedure for the UMI floor,
+the gene floor, the mitochondrial ceiling, doublets and the cluster check: what each is derived
+over, what it is applied to, and what it cannot establish.
 
 Doublet scoring precedes quality filtering because scDblFinder's documentation requires it:
 *"Further quality filtering should be performed downstream of doublet detection."* It is the only
@@ -146,29 +162,39 @@ refuses.
 
 ## What makes it reproducible
 
-Three of these are enforced in code today and two are design commitments the execution layer will
-have to honour. Each says which, because a claim about a property nobody has implemented is the
-same class of defect this pipeline exists to catch.
+Each entry says whether it is enforced today, because a claim about a property nobody has
+implemented is the same class of defect this pipeline exists to catch.
 
+- **Nothing is overwritten** — *built*. Outputs live under `results/<digest>/`, the digest computed
+  from the samplesheet's content, the declared parameters and the mode. A run that would produce
+  something different lands somewhere different. A directory records the inputs it was claimed for
+  and refuses a run described differently.
 - **Gates return a verdict, not a warning** — *built*. Each gate reduces its findings to `REFUSE`,
   `REVIEW` or `PASS`, and the `scqc` subcommands exit 2 on a refusal. A loss that falls ≥3× harder
   on one arm of your design is a `REFUSE` **where it is also material** — the worst arm at ≥1% —
   and a `REVIEW` below that floor, because a ratio between two near-zero rates is dominated by a
   single library and a gate that fires on correct behaviour gets switched off. Reporting and
   enforcing are separate calls: `verdict()` returns the string, the caller stops the run.
-- **A removal needs the operator's own words for that exact action** — *built*.
-  `modules/07_apply/apply.py` raises unless a recorded approval matches the action text verbatim,
-  and there is no force flag.
 - **Every removal is recoverable, with the criterion that made it** — *built*.
   `build_removal_record()` pairs every removed observation with the criteria that fired on it, the
-  gate refuses if that record and the mask disagree on the count, and `write_removal_record()`
+  removal refuses if that record and the mask disagree on the count, and `write_removal_record()`
   persists it as CSV — standard library only, so reading it back needs nothing this pipeline
   installed. The format is documented in `modules/07_apply/apply.py`.
-- **Decisions are a versioned input**, not a command line, so that the same data and the same
-  `decisions.yml` are the same run — *design*. Nothing reads or hashes a decisions file yet.
-- **Reports carry the commit**, the tool versions, the reference registry entry and the hash of the
-  decisions file, and a report older than its inputs is refused rather than warned about —
-  *design*. No code writes a report and nothing compares timestamps.
+- **Every threshold says who set it** — *built*. Each is recorded `DERIVED` (measured by the
+  pipeline) or `ADJUDICATED` (declared in `decisions.yml` with an approver and their own words),
+  in the ledger, the written object and the report. A value with a number but no approver and no
+  words counts as neither, and the derived value is used instead: half an approval must not read
+  as a whole one.
+- **A declared removal is checked against the thresholds it was given for** — *built*. Where
+  `decisions.yml` supplies an approval, it is matched against the action the current thresholds
+  derive; move a threshold after approving and the approval no longer applies, by design. There is
+  no force flag.
+- **Reports carry the commit and the tool versions**, obtained by asking each tool rather than read
+  from a lockfile — *built*. The report also audits itself: anything the run should have recorded
+  and did not is counted as a defect on its own front page.
+- **A report older than its inputs is refused rather than warned about** — *specified, not fed*.
+  `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a
+  newest-input time, so every report says `NOT CHECKED` rather than claiming to be current.
   [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) is the specification.
 
 See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each exists.
@@ -177,9 +203,10 @@ See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each
 
 | document | answers |
 |---|---|
+| [docs/FILTERS.md](docs/FILTERS.md) | **how each filter is calculated** — the exact procedure, the population it is derived over, and what it cannot establish |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | diagrams: the pipeline, the two phases, the parameter classes |
 | [docs/PRINCIPLES.md](docs/PRINCIPLES.md) | the removal checklist and the three other enforced rules |
-| [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | **specification, not shipped behaviour** — the report layout, the nine figures and the reproducibility block the report writer must produce |
+| [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | the report layout and the nine figures. The layout is built; **the figures are not** |
 | [docs/TOOLS_AND_REFERENCES.md](docs/TOOLS_AND_REFERENCES.md) | tools, versions, reference resolution |
 | [CALIBRATION.md](CALIBRATION.md) | what was measured, how much it varied, what one cohort cannot establish |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | what a pull request has to answer before it can remove anything |
@@ -188,7 +215,7 @@ See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each
 ## Tests
 
 ```bash
-scqc selftest            # ten unit suites + the adversarial suite; exit 1 if any failed
+scqc selftest            # every bundled suite, including the adversarial one; exit 1 if any failed
 ```
 
 `selftest` reports each suite as PASS, FAIL or SKIP and returns a non-zero exit code if any
@@ -241,9 +268,8 @@ it has caught came from calling a function with a hostile input and looking at w
 ## Status
 
 **0.1.0.** Being precise about this, because a QC tool that overstates itself does damage
-quietly — and one that *understates* itself is also wrong, which half this table was until the
-driver it says does not exist ran a cohort end to end. Every row below was checked against the
-tree rather than remembered.
+quietly — and one that understates itself is wrong in the same way, just harder to notice. Every
+row below was checked against the tree rather than remembered.
 
 | | |
 |---|---|
@@ -257,7 +283,7 @@ tree rather than remembered.
 | ⚠️ **Not built — the figures** | `report/figures.py` exists and the report expects F1–F9, but no step supplies one. Each absence is reported as a defect rather than omitted. The five sections and the nine figures in [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) remain a specification. |
 | ⚠️ **Not fed — freshness** | `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be current. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
 | ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, puts the removal through a gate that needs the operator's own words recorded against *these* thresholds, audits the result, and only then writes the filtered cohort object. Measure, gate, write — in that order, so nothing is materialised before the approval is checked. |
-| ⚠️ **Never applied to a cohort** | Step 7 is built and exercised, and no run has used it: that needs a `decisions.yml` carrying the operator's own approval, which is not something the pipeline can supply itself. Until one exists, **no run of this pipeline has removed an observation.** |
+| ✅ **Built** | Content-addressed outputs. Each run writes under `results/<digest>/`, named from the samplesheet's content, the declared parameters and the mode. A run that would produce something different lands somewhere different, so nothing is overwritten by one that disagrees with it. |
 | ⚠️ **Not measured** | Run-to-run tolerance for the stochastic steps. Recorded as `UNMEASURED`; the pipeline will not assert a tolerance it has not measured. |
 | ⚠️ **n = 1 cohort** | One tissue, one species, one platform. Every threshold is an existence proof, not a range. See [CALIBRATION.md](CALIBRATION.md). |
 

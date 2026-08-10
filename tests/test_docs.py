@@ -1,0 +1,123 @@
+# Checks that the published methods document still describes the code it documents.
+"""Does docs/FILTERS.md still describe the implementation?
+
+WHY THIS TEST EXISTS
+
+A methods document that has drifted from the code is worse than no document at all. It reads
+exactly like a correct one, and it is the thing a user consults *instead of* reading the source —
+so a threshold quoted there and changed here is a wrong number with a citation. Every other check
+in this repository guards a computation; this one guards the description of it, on the grounds
+that a published number nobody can check is the same class of problem.
+
+It also caught its first defect on the day it was written, and not in the document: `find_valley`
+declared `min_mode_observations=8` in its signature and told the reader "default 30" in its own
+docstring, four lines apart. Whichever a reader believed, one of them was wrong.
+
+WHAT IT CANNOT DO
+
+It checks the NUMBERS, not the prose. A document can quote every constant correctly and still
+describe the wrong procedure, and nothing here would notice. What it makes impossible is the
+cheapest and commonest kind of drift: a value edited in one place and not the other.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+fails: list[str] = []
+DOC = ROOT / "docs" / "FILTERS.md"
+
+print("Documentation - docs/FILTERS.md against the modules it describes")
+print("=" * 74)
+
+if not DOC.exists():
+    raise SystemExit(f"FAILED - {DOC} does not exist; the README links to it")
+doc = DOC.read_text(encoding="utf-8")
+
+
+def src(rel: str) -> str:
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def const(rel: str, name: str) -> str | None:
+    """A module-level constant's literal, as written, with any trailing comment removed."""
+    m = re.search(rf"^{name}\s*=\s*(.+?)(?:\s*#.*)?$", src(rel), re.M)
+    return m.group(1).strip() if m else None
+
+
+Q = "modules/05_quality/quality.py"
+D = "modules/04_doublets/doublet_health.py"
+L = "modules/03_light_floor/light_floor.py"
+C = "modules/06_cluster_check/cluster_flags.py"
+S = "adapters/scanpy_ops.py"
+
+#: (what it is, is it still that in the code, is it still that in the document)
+CHECKS = [
+    ("UMI bounds", const(Q, "UMI_BOUNDS") == "(200, 1000)", "**200 – 1,000**" in doc),
+    ("gene bounds", const(Q, "GENE_BOUNDS") == "(100, 600)", "**100 – 600**" in doc),
+    ("valley spread review", const(Q, "SPREAD_REVIEW") == "2.0", "**2.0×**" in doc),
+    ("Tukey multiplier", const(Q, "IQR_MULT") == "1.5", "1.5 x IQR" in doc),
+    ("mitochondrial bounds",
+     const(Q, "MITO_BOUNDS") == '{"snrna": (5.0, 25.0), "scrna": (10.0, 30.0)}',
+     "5 – 25%" in doc and "10 – 30%" in doc),
+    ("light floor default", const(L, "DEFAULT_FLOOR") == "200", "defaulting to **200**" in doc),
+    ("doublet silence", const(D, "ZERO_RATE") == "0.005", "< 0.5%" in doc),
+    ("doublet rate imposed", const(D, "SPREAD_IMPOSED") == "1.05", "1.05×" in doc),
+    ("doublet rate unstable", const(D, "SPREAD_UNSTABLE") == "5.0", "> 5×" in doc),
+    ("design differential", const(D, "DESIGN_REFUSE") == "3.0", "≥ 3×" in doc),
+    ("materiality floor", const(D, "MATERIAL") == "0.01", "≥ 1%" in doc),
+    ("cluster marker top-N", const(C, "TOPN") == "20", "top-20 markers" in doc),
+    ("KDE grid size", "grid_size=512" in src(S), "**512**" in doc),
+    ("valley depth", "min_valley_depth=0.10" in src(S), "`min_valley_depth = 0.10`" in doc),
+    ("mode separation", "min_mode_separation_log10=0.30" in src(S),
+     "`min_mode_separation_log10 = 0.30`" in doc),
+    ("bandwidth stability", "bw_stability_factor=1.5" in src(S),
+     "`bw_stability_factor = 1.5`" in doc),
+    ("KDE bandwidth rule", 'bw_method="scott"' in src(S), "Scott's bandwidth" in doc),
+]
+
+APPLIED = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
+           "fail_mito_ceiling", "fail_doublet")
+CHECKS.append(("applied criteria", all(c in src(S) for c in APPLIED),
+               all(c in doc for c in APPLIED)))
+
+for name, in_code, in_doc in CHECKS:
+    ok = bool(in_code) and bool(in_doc)
+    print(f"  {'ok    ' if ok else 'DRIFT '} {name:<22}"
+          f"code {'yes' if in_code else 'NO '}   document {'yes' if in_doc else 'NO '}")
+    if not ok:
+        fails.append(
+            f"{name}: the module says {'yes' if in_code else 'something else'} and the document "
+            f"says {'yes' if in_doc else 'something else'}. One of them has been edited without "
+            f"the other, and a reader cannot tell which.")
+
+# A signature and its own docstring must agree, which is the drift that needs no second file.
+sig = re.search(r"min_mode_observations=(\d+)", src(S))
+says = re.search(r"`min_mode_observations` of them \(default (\d+)\)", src(S))
+same = bool(sig and says and sig.group(1) == says.group(1))
+print(f"  {'ok    ' if same else 'DRIFT '} {'signature vs docstring':<22}"
+      f"signature {sig.group(1) if sig else '?'}   docstring {says.group(1) if says else '?'}")
+if not same:
+    fails.append(f"find_valley declares min_mode_observations="
+                 f"{sig.group(1) if sig else '?'} and its docstring says "
+                 f"{says.group(1) if says else '?'}.")
+
+# The README must point at the document, or nobody finds it.
+readme = (ROOT / "README.md").read_text(encoding="utf-8")
+linked = "docs/FILTERS.md" in readme
+print(f"  {'ok    ' if linked else 'DRIFT '} {'linked from README':<22}{linked}")
+if not linked:
+    fails.append("README.md does not link docs/FILTERS.md.")
+
+print("=" * 74)
+if fails:
+    print(f"FAILED - {len(fails)}:")
+    for f in fails:
+        print("  -", f)
+    raise SystemExit(1)
+print(f"documentation OK - {len(CHECKS) + 2} published facts match the code they describe")

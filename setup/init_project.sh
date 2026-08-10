@@ -194,13 +194,14 @@ signal from lysed cells, and skipping it produces spurious cross-population expr
 
 \`\`\`bash
 # 1. Fill in samplesheet.csv, then look at the data without touching it:
-scqc --project . --mode evidence
+scqc run --project . --mode evidence
 
-# 2. Read results/reports/, then record your decisions:
+# 2. Read the report under results/<digest>/reports/. Optionally override a derived
+#    threshold by recording your own decision:
 cp decisions.template.yml decisions.yml && \$EDITOR decisions.yml
 
-# 3. Apply them:
-scqc --project . --mode apply
+# 3. Apply (the default mode): writes the filtered object and its ledger
+scqc run --project .
 \`\`\`
 
 ## Status
@@ -208,7 +209,7 @@ scqc --project . --mode apply
 - [ ] samplesheet.csv filled in
 - [ ] evidence mode run
 - [ ] report read
-- [ ] decisions.yml written
+- [ ] decisions.yml written (optional)
 - [ ] apply mode run
 EOF
 
@@ -216,11 +217,11 @@ cat <<EOF
 Created $DIR
 
   samplesheet.csv         $NSAMPLES row(s), assay=$ASSAY  <- fill this in first
-  decisions.template.yml  copy to decisions.yml AFTER reading the evidence report
+  decisions.template.yml  OPTIONAL: copy to decisions.yml to override a derived threshold
   README.md               what this directory is
   data/ results/ work/ logs/
 
 Next:
   \$EDITOR $DIR/samplesheet.csv
-  scqc --project $DIR --mode evidence
+  scqc run --project $DIR --mode evidence
 EOF
