@@ -209,14 +209,23 @@ class Pipeline:
                 futures = {pool.submit(self._run_one, by_key[k]): k for k in batch}
                 for fut in cf.as_completed(futures):
                     k = futures[fut]
-                    results[k] = fut.result()
-            # Recorded in topological order, not completion order, so two runs of the same graph
-            # produce the same manifest whatever the scheduler did.
+                    r, note = fut.result()
+                    results[k] = (r, note)
+                    # RECORDED AS IT LANDS, not when the wave ends. Holding a wave's results until
+                    # every task in it finished meant a run killed mid-wave lost work that had
+                    # completed minutes earlier, and `state.json` showed nothing while ten tasks
+                    # were plainly running. Durability and visible progress both want the write
+                    # here; the ORDER a reader sees is restored below.
+                    with lock:
+                        self.state.record(r)
+            # `results_by_key` is populated in topological order, not completion order, so the
+            # manifest of a graph reads identically whatever the scheduler did. Safe to do after
+            # the wave because every task in a wave is independent by construction - nothing in
+            # it consulted another's result.
             for key in [k for k in order if k in results]:
                 r, note = results[key]
                 with lock:
                     self.results_by_key[key] = r
-                    self.state.record(r)
                 if note:
                     print(note)
                 if r.status in (Status.REFUSED, Status.FAILED) and stopped is None:
