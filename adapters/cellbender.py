@@ -1466,20 +1466,40 @@ def parse_metrics(h5_path: str | Path,
     den_cols = sorted(den_pos[b] for b in wanted_den)
     raw_cols = sorted(raw_pos[b] for b in wanted_raw)
 
-    # ---- gene alignment, by identifier
-    den_key = den["gene_ids"] if len(set(den["gene_ids"])) == len(den["gene_ids"]) \
-        else den["gene_names"]
-    raw_key = raw["gene_ids"] if len(set(raw["gene_ids"])) == len(raw["gene_ids"]) \
-        else raw["gene_names"]
-    raw_index = {}
-    for i, k in enumerate(raw_key):
-        raw_index.setdefault(k, i)
-    unmatched = [k for k in den_key if k not in raw_index]
-    if unmatched:
+    # ---- gene alignment: THE KEY IS CHOSEN JOINTLY, NOT BY EACH SIDE FOR ITSELF.
+    #
+    # Each side used to pick `gene_ids` when they were unique and fall back to `gene_names` when
+    # they were not - independently, so the two could settle on different KINDS of key and then be
+    # compared against each other. Which is what happened: a MatrixMarket triple carries Ensembl
+    # identifiers in the first column of features.tsv, while a converted .h5ad carrying no
+    # `gene_ids` has its identifiers filled in from `var_names`, which are symbols. Unique on both
+    # sides, both chosen, and 33,824 of 34,290 genes reported "missing" - a claim that the two
+    # files are unrelated, produced by comparing accession numbers against gene symbols.
+    #
+    # So candidates are tried as PAIRS and the first that both indexes and contains the denoised
+    # axis wins. Which one was used is recorded: a removal fraction computed after a join on
+    # symbols is a slightly different quantity from one joined on identifiers, and the difference
+    # cannot be recovered from the number afterwards.
+    gene_key_used, den_key, raw_index, tried = None, None, None, []
+    for field, label in (("gene_ids", "identifier"), ("gene_names", "symbol")):
+        dk, rk = den[field], raw[field]
+        if len(set(rk)) != len(rk):
+            tried.append(f"{label}: not unique in {raw_path.name}, so it cannot be indexed by")
+            continue
+        idx = {}
+        for i, k in enumerate(rk):
+            idx.setdefault(k, i)
+        missing = sum(1 for k in dk if k not in idx)
+        if missing == 0:
+            gene_key_used, den_key, raw_index = label, dk, idx
+            break
+        tried.append(f"{label}: {missing:,} of {len(dk):,} absent from {raw_path.name}")
+    if gene_key_used is None:
         raise TaskFailure(
-            f"{len(unmatched):,} genes in {den_path.name} are not in {raw_path.name} (e.g. "
-            f"{unmatched[:5]}). The denoised matrix must be a subset of the matrix it was made "
-            f"from; if it is not, these are not the same pair of files.")
+            f"the gene axes of {den_path.name} and {raw_path.name} cannot be matched on any "
+            f"shared key. Tried - " + "; ".join(tried) + ". The denoised matrix must be a subset "
+            f"of the matrix it was made from; if no key matches, these are not the same pair of "
+            f"files, or one names its genes in a way the other does not carry.")
 
     den_stats = _gene_stats(den, den_cols)
     raw_stats = _gene_stats(raw, raw_cols)
@@ -1548,6 +1568,10 @@ def parse_metrics(h5_path: str | Path,
         "total_counts_raw_in_scope": total_raw,
         "total_counts_denoised_in_scope": total_den,
         "genes_total": len(den_key),
+        # Which key the two axes were joined on. A fraction computed after a join on symbols is
+        # not quite the one computed after a join on identifiers, and nothing in the number says
+        # which it was.
+        "gene_key": gene_key_used,
         "genes_with_no_raw_counts_in_scope": genes_no_raw_counts,
         "genes_gaining_counts": genes_gaining_counts,
         "genes_absent_from_output": absent_from_output,
