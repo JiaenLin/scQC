@@ -102,9 +102,39 @@ def _ingest(task, pipeline, log):
     # verify's keyword arguments WITHOUT `name` and without the extra keys summary_stats returns.
     # Assembling it here instead duplicated that convention and got it wrong - the returned
     # payload was discarded and the JSON re-read under a different shape, so step 0 could not run.
-    stats_fn = mx.ingest_stats_fn(
-        expected_genes=task.params.get("expected_genes"),
-        tmp_dir=pipeline.work / f"{sample}_extract")
+    #
+    # MEASURED IN THE ANALYSIS INTERPRETER, NOT THIS ONE.
+    #
+    # `ingest_stats_fn` measures in-process, which requires pandas and anndata in whatever
+    # interpreter is running the orchestrator. That is the one thing this pipeline can never
+    # assume: the aligner, the denoiser and the analysis stack have incompatible pins and live in
+    # separate environments, so `scqc` itself routinely runs under a bare system python. Step 0
+    # died on `No module named 'pandas'` for exactly that reason - the adapter had the
+    # out-of-process route all along (build_stats_argv / run_summary_stats) and the engine
+    # called the in-process one.
+    #
+    # `--python` names the interpreter that has the analysis stack; it is required here rather
+    # than defaulted, because falling back to this process would make step 0 succeed on a
+    # developer laptop and fail on every cluster.
+    python_exe = task.params.get("python_exe")
+    if not python_exe:
+        raise Refusal(
+            "00_ingest: no analysis interpreter was given. Measuring a matrix needs pandas and "
+            "anndata, which the process running scqc is not required to have. Pass --python.")
+
+    def stats_fn(matrix_path):
+        res = mx.run_summary_stats(
+            matrix=matrix_path,
+            out_json=pipeline.work / f"{sample}_ingest_stats.json",
+            log=pipeline.work / f"{sample}_ingest_stats.log",
+            python_exe=python_exe,
+            expected_genes=task.params.get("expected_genes"),
+            tmp_dir=pipeline.work / f"{sample}_extract",
+            executor=pipeline.executor)
+        # run_summary_stats returns {'outputs','metrics','versions'}; plan_one wants verify()'s
+        # keyword arguments. verify_kwargs is the same selector the in-process path uses, so the
+        # two routes cannot drift into accepting different keys.
+        return mx.verify_kwargs(res["metrics"], include_name=False)
 
     plan = ing.plan_one(row, registry, stats_fn)
     print(f"    {plan}")
