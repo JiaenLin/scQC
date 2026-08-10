@@ -112,11 +112,30 @@ class Pipeline:
         # ext4. Concurrency made that worse rather than better, because ten tasks then contend
         # for one network mount.
         #
-        # SCQC_SCRATCH overrides; otherwise TMPDIR, otherwise /tmp - and if none of those is
-        # usable the shared work dir is used, because a slow run beats a run that cannot start.
+        # WHO HAS TO SEE THE SCRATCH DECIDES WHERE IT GOES, and only the executor knows that.
+        #
+        # With a local executor every task runs in this process's node, so node-local disk is both
+        # correct and much faster - on NFS the 233 MB inter-process matrices cost more than the
+        # computation they carry.
+        #
+        # With PBS each task is a job on a DIFFERENT node. TMPDIR inside a job is that job's own
+        # /var/tmp, so a path written by the orchestrator is invisible to every task it submits.
+        # Choosing node-local scratch under PBS produced exactly that: the orchestrator wrote its
+        # params file to /var/tmp/pbs.<its own job>/... and every child job died with
+        # FileNotFoundError on a path that existed, on a machine it was not running on.
+        #
+        # So: shared storage whenever tasks run elsewhere. SCQC_SCRATCH still overrides, because a
+        # site may have a genuinely shared fast scratch, but it is not consulted for the default.
         import os as _os
         import tempfile as _tf
-        base = _os.environ.get("SCQC_SCRATCH") or _os.environ.get("TMPDIR") or _tf.gettempdir()
+        shared_needed = getattr(executor, "name", "local") != "local"
+        override = _os.environ.get("SCQC_SCRATCH")
+        if override:
+            base = override
+        elif shared_needed:
+            base = str(self.work)            # beside the project: every node can see it
+        else:
+            base = _os.environ.get("TMPDIR") or _tf.gettempdir()
         try:
             self.scratch = Path(base) / f"scqc_{self.project.name}"
             self.scratch.mkdir(parents=True, exist_ok=True)
