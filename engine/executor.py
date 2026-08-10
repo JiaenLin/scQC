@@ -73,6 +73,52 @@ def _find_pbs(name: str) -> str | None:
     return None
 
 
+#: Where a PBS configuration lives when the environment does not carry one.
+_PBS_CONFS = (
+    "/etc/pbs.conf",
+    "/cm/local/apps/pbspro/var/etc/pbs.conf",
+    "/opt/pbs/etc/pbs.conf",
+    "/var/spool/pbs/pbs.conf",
+)
+
+
+def _pbs_env(qsub_path: str | None) -> dict:
+    """The environment qsub needs, discovered rather than required of the caller.
+
+    PBS_CONF_FILE, PBS_EXEC and PBS_SERVER are set by the site's environment module. A BATCH JOB
+    DOES NOT INHERIT THEM, so a pipeline that submits from inside a job fails with "pbsconf error:
+    pbs conf variables not found" unless every user remembers to module-load PBS in a wrapper.
+
+    Requiring that wrapper is not a feature; it is a trap. So: keep whatever the environment
+    already has, and otherwise find the conf file and derive PBS_EXEC from where qsub actually
+    lives (bin/qsub -> its parent's parent). Anything still missing is left alone, because a wrong
+    value is worse than an absent one - qsub's own error names what it needs.
+    """
+    env = {k: os.environ[k] for k in
+           ("PBS_CONF_FILE", "PBS_EXEC", "PBS_SERVER", "PBS_HOME") if k in os.environ}
+    if "PBS_CONF_FILE" not in env:
+        for c in _PBS_CONFS:
+            if Path(c).is_file():
+                env["PBS_CONF_FILE"] = c
+                break
+    if "PBS_EXEC" not in env and qsub_path:
+        exec_root = Path(qsub_path).resolve().parent.parent
+        if (exec_root / "bin" / "qsub").exists():
+            env["PBS_EXEC"] = str(exec_root)
+    # The conf file carries the rest; parsing it is how PBS itself bootstraps.
+    conf = env.get("PBS_CONF_FILE")
+    if conf and Path(conf).is_file():
+        for line in Path(conf).read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if k in ("PBS_EXEC", "PBS_SERVER", "PBS_HOME") and k not in env:
+                env[k] = v
+    return env
+
+
 class Executor(Protocol):
     def shell(self, cmd: list[str], log: Path, env: dict | None = None,
               cwd: Path | None = None, timeout_s: int | None = None) -> str:
@@ -136,6 +182,7 @@ class PBSExecutor:
         # Resolved ONCE, here, so a host without PBS is refused before any task runs rather than
         # failing identically ten times with a bare FileNotFoundError that names neither the
         # command nor the reason.
+        self._limits: dict | None = None
         self.qsub = _find_pbs("qsub")
         self.qstat = _find_pbs("qstat")
         # FOUND IS NOT WORKING. qsub needs PBS_CONF_FILE, PBS_EXEC and PBS_SERVER, which on a
@@ -143,8 +190,11 @@ class PBSExecutor:
         # job. Checking only that the binary exists passed, and then every task failed with
         # "pbsconf error: pbs conf variables not found" - one failure per task for one problem
         # with the run.
+        # Discovered once, then passed to every PBS call this executor makes.
+        self.pbs_env = _pbs_env(self.qsub)
         if self.qsub and self.qstat:
-            probe = subprocess.run([self.qstat, "-B"], capture_output=True, text=True)
+            probe = subprocess.run([self.qstat, "-B"], capture_output=True, text=True,
+                                   env={**os.environ, **self.pbs_env})
             if probe.returncode != 0:
                 detail = (probe.stderr or probe.stdout).strip()[:200]
                 raise SystemExit(
@@ -165,6 +215,45 @@ class PBSExecutor:
                 f"    PATH where you submitted from does not mean it is on PATH where the\n"
                 f"    orchestrator runs. Either module-load PBS inside the job script, or use\n"
                 f"    --executor local.")
+
+
+    def queue_limits(self) -> dict:
+        """`resources_max` for the configured queue, as PBS reports it.
+
+        Read from the scheduler, never hardcoded: a ceiling written into this repository is wrong
+        on the next cluster, and silently - the job is simply rejected at submission with a
+        message about a resource nobody set.
+        """
+        if self._limits is not None:
+            return self._limits
+        self._limits = {}
+        if not self.queue or not self.qstat:
+            return self._limits
+        q = subprocess.run([self.qstat, "-Qf", self.queue], capture_output=True, text=True,
+                           env={**os.environ, **self.pbs_env})
+        for m in re.finditer(r"resources_max\.(\w+)\s*=\s*(\S+)", q.stdout or ""):
+            self._limits[m.group(1)] = m.group(2)
+        return self._limits
+
+    def check_resources(self, tasks) -> list:
+        """Which declared resources exceed the queue, reported BEFORE anything is submitted.
+
+        The graph declares 64 GB on two tasks; a queue capping memory at 50 GB rejects them - at
+        task thirty of thirty-seven, after half an hour of work that then has to be repeated. The
+        cheap moment to find that is now.
+        """
+        lim = self.queue_limits()
+        out = []
+        max_mem = lim.get("mem", "")
+        max_cpu = lim.get("ncpus", "")
+        mem_gb = int(re.sub(r"[^0-9]", "", max_mem) or 0) if "gb" in max_mem.lower() else 0
+        cpu_n = int(re.sub(r"[^0-9]", "", max_cpu) or 0)
+        for t in tasks:
+            if mem_gb and int(getattr(t, "memory_gb", 0) or 0) > mem_gb:
+                out.append(f"{t.key}: asks {t.memory_gb} gb, queue {self.queue} allows {max_mem}")
+            if cpu_n and int(getattr(t, "cpus", 0) or 0) > cpu_n:
+                out.append(f"{t.key}: asks {t.cpus} cpus, queue {self.queue} allows {max_cpu}")
+        return out
 
     def shell(self, cmd, log: Path, env=None, cwd=None, timeout_s=None) -> str:
         log = Path(log)
@@ -197,7 +286,8 @@ class PBSExecutor:
         lines.append(" ".join(shlex.quote(str(c)) for c in cmd))
         script.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        sub = subprocess.run([self.qsub, str(script)], capture_output=True, text=True)
+        sub = subprocess.run([self.qsub, str(script)], capture_output=True, text=True,
+                             env={**os.environ, **self.pbs_env})
         if sub.returncode != 0:
             raise TaskFailure(f"qsub failed: {(sub.stderr or sub.stdout).strip()}")
         m = self._JOBID.search(sub.stdout.strip())
@@ -210,7 +300,8 @@ class PBSExecutor:
         deadline = time.time() + (timeout_s or wall * 3600 + 600)
         wait = 2.0
         while True:
-            q = subprocess.run([self.qstat, "-xf", job], capture_output=True, text=True)
+            q = subprocess.run([self.qstat, "-xf", job], capture_output=True, text=True,
+                               env={**os.environ, **self.pbs_env})
             text = q.stdout or ""
             state = re.search(r"job_state\s*=\s*(\w)", text)
             exit_status = re.search(r"Exit_status\s*=\s*(-?\d+)", text)
