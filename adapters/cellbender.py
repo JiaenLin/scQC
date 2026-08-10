@@ -1432,8 +1432,21 @@ def parse_metrics(h5_path: str | Path,
         wanted = [b for b in den["barcodes"] if b in raw_pos]
         cell_source = "not used: scope='shared'"
 
-    missing_den = [b for b in wanted if b not in den_pos]
-    missing_raw = [b for b in wanted if b not in raw_pos]
+    # TWO MATRICES, AND THEY NEED NOT BE NAMED THE SAME WAY. This is the one place in the pipeline
+    # where two barcode conventions genuinely meet: the raw matrix as the aligner wrote it, and a
+    # denoised object that a later step may have prefixed with its sample so a cohort can be
+    # concatenated without collisions. The scope is therefore reconciled against each side
+    # SEPARATELY, because neither naming is wrong and only one of them can be the scope's.
+    #
+    # What has to hold is that both sides select the SAME SET of droplets. It does not have to be
+    # the same ORDER: the per-gene statistics below are sums and detection counts over the chosen
+    # columns, and both column lists are sorted independently anyway. The reconciliation is a
+    # total mapping - adopted only where every transformed barcode is present - so the two
+    # selections are the same droplets or the refusal below fires.
+    wanted_den, den_naming = reconcile_barcode_naming(den["barcodes"], wanted)
+    wanted_raw, raw_naming = reconcile_barcode_naming(raw["barcodes"], wanted)
+    missing_den = [b for b in wanted_den if b not in den_pos]
+    missing_raw = [b for b in wanted_raw if b not in raw_pos]
     if missing_den or missing_raw:
         raise TaskFailure(
             f"{len(missing_den):,} of {len(wanted):,} scope barcodes are absent from "
@@ -1447,8 +1460,11 @@ def parse_metrics(h5_path: str | Path,
             f"the {scope} scope is empty for {den_path.name}: there is nothing to measure "
             f"removal over.")
 
-    den_cols = sorted(den_pos[b] for b in wanted)
-    raw_cols = sorted(raw_pos[b] for b in wanted)
+    if den_naming or raw_naming:
+        cell_source += (f" [naming: denoised {den_naming or 'as given'}; "
+                        f"raw {raw_naming or 'as given'}]")
+    den_cols = sorted(den_pos[b] for b in wanted_den)
+    raw_cols = sorted(raw_pos[b] for b in wanted_raw)
 
     # ---- gene alignment, by identifier
     den_key = den["gene_ids"] if len(set(den["gene_ids"])) == len(den["gene_ids"]) \
