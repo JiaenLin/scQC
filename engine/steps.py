@@ -555,11 +555,17 @@ STEP_TEXT = {
         "the prior, and that it does not fall unevenly across the design. Barcodes below the "
         "light floor were never scored and are reported as unknown, not as singlets."),
     "05_quality": (
-        "Measures the density valley per library and proposes one cohort constant.",
-        "Whether the threshold is RIGHT. It establishes that the distribution has two modes and "
-        "that the proposed cut sits between them and inside plausible bounds. A tight real "
-        "population can be refused by the dispersion test and a large enough artifact can pass "
-        "it - the sanity bounds are the second, independent check."),
+        "Derives the count floors and the mitochondrial ceiling, in one pass over the same "
+        "population. The floors are the density valley measured per library and proposed as ONE "
+        "cohort constant; the ceiling is each library's OWN upper Tukey fence, Q3 + 1.5*IQR, "
+        "bounded by a declared statement about what a nucleus can be.",
+        "Whether either threshold is RIGHT. For the floors it establishes that the distribution "
+        "has two modes and that the cut sits between them and inside plausible bounds - a tight "
+        "real population can be refused by the dispersion test and a large enough artifact can "
+        "pass it. For the ceiling it establishes only that each library was cut at its own "
+        "outlier fence and that the result is even across the design; whether a "
+        "mitochondria-high POPULATION is damage or a mitochondria-rich cell type needs an "
+        "identity this pipeline does not establish."),
     "06_cluster_check": (
         "Clusters each library and flags clusters by depth, mitochondrial content, marker "
         "informativeness and doublet fraction.",
