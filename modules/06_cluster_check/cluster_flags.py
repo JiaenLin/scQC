@@ -93,18 +93,29 @@ TOPN = 20
 NUMERIC_KEYS = ("n", "median_umi", "umi_frac_of_sample", "median_pct_mt", "pct_uninformative",
                 "pct_mt_markers", "pct_ribo_markers", "pct_doublet")
 
+#: The three-valued verdicts. `bool("False")` is True and `"True" is True` is False, so a verdict
+#: read back as text is wrong whichever way the reader tests it - and step 7 tests it with `is
+#: True`, which quietly makes every flagged cluster unflagged rather than raising.
+BOOLEAN_KEYS = ("A", "B", "C", "C_mt", "C_ribo", "D", "FLAG", "WATCH")
+
 
 class ClusterRefusal(RuntimeError):
     """Raised when the flags cannot be computed honestly."""
 
 
 def read_profile_csv(path) -> list:
-    """Profile rows from a CSV written by `write_profile_csv`, numbers as numbers.
+    """Profile rows from a CSV written by `write_profile_csv`, with their types back.
 
     A blank cell becomes None - the writer's own spelling of unknown, and what the three-valued
-    logic below is built to receive. Anything that is neither a number nor blank is REFUSED rather
-    than read as unknown: a column that did not survive the round trip is a defect, and quietly
-    converting it to unknown removes the only evidence of it.
+    logic below is built to receive. Anything that is neither a value of the right kind nor blank
+    is REFUSED rather than read as unknown: a column that did not survive the round trip is a
+    defect, and quietly converting it to unknown removes the only evidence of it.
+
+    Both kinds have to be converted, and the verdicts are the more dangerous of the two. A number
+    left as text raises on the first comparison, which is loud. A verdict left as text does not:
+    `"True" is True` is False, so step 7's `[c for c in profile if c.get("FLAG") is True]` finds
+    NO flagged cluster in a table full of them, and reports that none of the deliverable sits in
+    one.
     """
     import csv as _csv
 
@@ -127,6 +138,20 @@ def read_profile_csv(path) -> list:
                     f"{path}, row {i + 2}: {k} = {v!r} is neither a number nor an empty cell. "
                     f"An empty cell means not computed and is read as such; anything else is a "
                     f"column that did not survive being written and read back.") from None
+        for k in BOOLEAN_KEYS:
+            if k not in r:
+                continue
+            v = r[k]
+            if _unknown(v) or (isinstance(v, str) and not v.strip()):
+                r[k] = None
+                continue
+            t = _tri(v)
+            if t is None:
+                raise ClusterRefusal(
+                    f"{path}, row {i + 2}: {k} = {v!r} is neither a verdict nor an empty cell. "
+                    f"Reading it as unknown would turn a column that did not survive the round "
+                    f"trip into a criterion that was never evaluated.")
+            r[k] = t
         out.append(r)
     return out
 

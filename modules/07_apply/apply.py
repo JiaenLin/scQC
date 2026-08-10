@@ -139,9 +139,18 @@ def preflight(cluster_profile, kept_total, d_cluster=D_CLUSTER) -> list:
                 f"{sum(c['n'] for c in unknown):,} nuclei have no doublet fraction. They are "
                 f"NOT counted as 0% - an unknown is not a zero - and how many of them reach "
                 f"the deliverable is unknown too"))
+        # The share needs a denominator, and `max(kept_total, 1)` is not one. Called with a
+        # retained total of zero - which is what a run that has written no deliverable has - it
+        # printed "21,395 of 0 retained nuclei (2139500.0%)". Nothing raised, and a percentage in
+        # the six figures is a number no file on disk contains.
+        share = (f"{surv:,} of {kept_total:,} retained nuclei "
+                 f"({100 * surv / kept_total:.1f}%)"
+                 if isinstance(kept_total, (int, float)) and kept_total > 0 else
+                 f"{surv:,} nuclei - out of a retained total this run does not know, so their "
+                 f"share of the deliverable is NOT computed rather than divided by nothing -")
         out.append(PreflightFinding(
             "retained nuclei in flagged clusters", "REVIEW",
-            f"{surv:,} of {kept_total:,} retained nuclei ({100*surv/max(kept_total,1):.1f}%) sit "
+            f"{share} sit "
             f"in one of {len(flagged)} clusters flagged by step 6. This is NOT a claim that they "
             f"are bad - a cluster flagged for mitochondrial content cannot be told from a "
             f"mitochondria-rich cell type without an identity - but a deliverable reported "

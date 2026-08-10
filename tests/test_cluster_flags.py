@@ -138,6 +138,20 @@ with tempfile.TemporaryDirectory() as _d:
     if (c_back["FLAG"], c_back["WATCH"], c_back["D"]) != (c["FLAG"], c["WATCH"], c["D"]):
         fails.append("E: the round trip changed the verdicts")
 
+    # A FLAGGED profile, written and read back, must still answer `is True`. Step 7 selects with
+    # `[c for c in profile if c.get("FLAG") is True]`, and `"True" is True` is False - so a
+    # verdict left as text does not raise, it reports a table of 126 flagged clusters as having
+    # none, and the deliverable is described as sitting in no flagged cluster at all.
+    _fp = write_profile_csv(f.rows, Path(_d) / "flagged.csv")
+    _fb = read_profile_csv(_fp)
+    kinds = sorted({type(r[k]).__name__ for r in _fb for k in ("A", "B", "C", "D", "FLAG")})
+    n_is_true = sum(1 for r in _fb if r.get("FLAG") is True)
+    print(f" verdict types after the round trip: {kinds}")
+    print(f" clusters answering `FLAG is True`: {n_is_true} (in memory: {c['FLAG']})")
+    if n_is_true != c["FLAG"]:
+        fails.append(f"E: {n_is_true} of {c['FLAG']} flagged clusters survive `is True` through "
+                     f"the file; step 7 selects on exactly that")
+
     # A column that did not survive is a defect, and must not be absorbed as "unknown".
     _bad = Path(_d) / "corrupt.csv"
     with open(_p, encoding="utf-8", newline="") as _fh:

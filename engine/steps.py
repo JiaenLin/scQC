@@ -889,11 +889,18 @@ def _apply(task, pipeline, log):
     apply_block = (task.params["decisions"].get("apply") or {})
     action = apply_block.get("action") or action_string(resolved)
 
+    # Read through step 6's own reader, not csv.DictReader. `preflight` compares pct_doublet
+    # against a float and tests FLAG with `is True`; from a raw DictReader every cell is a string,
+    # so the first raised TypeError and the second silently found no flagged cluster in a table
+    # of 126 of them - it reported that none of the deliverable sits in one.
+    cf = step_module("cluster_flags")
     rows: list = []
     prof = _tables(pipeline) / "cluster_profile.csv"
     if prof.exists():
-        with open(prof, encoding="utf-8", newline="") as fh:
-            rows = list(_csv.DictReader(fh))
+        try:
+            rows = cf.read_profile_csv(prof)
+        except cf.ClusterRefusal as e:
+            raise Refusal(f"07_apply: step 6's profile cannot be read: {e}") from None
     for f in ap.preflight(rows, kept_total=0):
         pipeline.findings.append({"step": "07_apply", "check": f.check, "severity": f.severity,
                                   "message": f.message, "detail": []})
