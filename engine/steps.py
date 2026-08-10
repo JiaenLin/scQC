@@ -463,13 +463,19 @@ def _per_sample_thresholds(pipeline, samples: list) -> tuple:
     calls = table(_tables(pipeline) / "cell_calls.csv")
     ceilings = table(_tables(pipeline) / "mito_ceiling_per_sample.csv")
 
+    # A library that WAS profiled and had nothing flagged is a zero, not a blank. Counting only
+    # the hits left the two libraries with no flagged cluster indistinguishable from the ones
+    # step 6 never reached - the unknown-is-not-a-zero rule, running in the direction people
+    # forget: a measured zero must not read as unknown either.
     flagged: dict = {}
     prof = _tables(pipeline) / "cluster_profile.csv"
     if prof.exists():
         with prof.open(encoding="utf-8", newline="") as fh:
             for r in _csv.DictReader(fh):
+                s = r.get("sample", "")
+                flagged.setdefault(s, 0)
                 if str(r.get("FLAG", "")).strip().lower() == "true":
-                    flagged[r.get("sample", "")] = flagged.get(r.get("sample", ""), 0) + 1
+                    flagged[s] += 1
 
     rows = []
     for s in samples:
