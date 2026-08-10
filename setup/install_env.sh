@@ -156,10 +156,42 @@ make_env() {
     created+=("$name")
 }
 
+# The interpreter version a lock file was resolved against, read FROM the lock file.
+#
+# It was hardcoded below as 3.11 while the lock pinned a package requiring >= 3.12, and nothing
+# compared the two. The install died on the first package with a wall of resolver output listing
+# every anndata ever released; `set -e` then aborted before any other component was built, and
+# what remained was an environment that existed as a directory and contained nothing. A lock file
+# is only valid for the interpreter it was resolved against, so that interpreter belongs in it.
+lock_python() {
+    local f="$1" v
+    v="$(sed -n 's/^#[[:space:]]*scqc-python:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$f" | head -1)"
+    if [[ -z "$v" ]]; then
+        echo "ERROR: $f carries no '# scqc-python: X.Y' line." >&2
+        echo "       A lock file without the interpreter it was resolved against cannot be" >&2
+        echo "       installed safely - that version is part of the lock." >&2
+        exit 1
+    fi
+    printf '%s' "$v"
+}
+
 # --- core --------------------------------------------------------------------------------------
 echo
 echo "== core =="
-make_env core 3.11
+CORE_PY="$(lock_python "$CONF/requirements.lock.txt")"
+make_env core "$CORE_PY"
+# Verified BEFORE installing. Conda resolves to the nearest satisfiable build, so the environment
+# that exists is not necessarily the one requested, and the mismatch would otherwise surface as
+# an unreadable dependency error rather than as the version conflict it is.
+GOT_PY="$("$PREFIX/core/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+if [[ "$GOT_PY" != "$CORE_PY" ]]; then
+    echo "ERROR: the core environment has python $GOT_PY, but" >&2
+    echo "       conf/env/requirements.lock.txt was resolved against $CORE_PY." >&2
+    echo "       Installing it here would fail outright, or silently install versions other" >&2
+    echo "       than the ones locked. Remove $PREFIX/core and re-run, or re-lock for $GOT_PY." >&2
+    exit 1
+fi
+echo "  python $GOT_PY, matching the lock"
 "$PREFIX/core/bin/pip" install -q --no-input -r "$CONF/requirements.lock.txt"
 echo "  installed from conf/env/requirements.lock.txt"
 
