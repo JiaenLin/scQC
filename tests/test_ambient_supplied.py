@@ -34,7 +34,7 @@ def check(name, cond, detail=""):
 
 PROV = {"tool": "CellBender", "version": "0.3.2",
         "params": "--fpr 0 --learning-rate 5e-5",
-        "produced_by": "SAMBO stage 1, HPC, 2026-08-08"}
+        "produced_by": "the calibration cohort's own stage 1, 2026-08-08"}
 
 print("\nA. the three states are distinct")
 check("RUN", amb.plan_ambient("s", "snrna").state == "RUN")
@@ -85,7 +85,7 @@ for bad in ("yes", 1, ["CellBender"], object()):
 
 print("\nE. the recorded reason carries what a reader needs")
 r = amb.plan_ambient("s", "snrna", supplied=PROV).reason
-for needle in ("CellBender", "0.3.2", "5e-5", "SAMBO"):
+for needle in ("CellBender", "0.3.2", "5e-5", "calibration cohort"):
     check(f"reason names {needle!r}", needle in r)
 check("reason says this run did NOT perform it", "NOT performed by this run" in r)
 check("reason says the fraction removed is not measurable here", "NOT MEASURABLE" in r)

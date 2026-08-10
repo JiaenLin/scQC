@@ -49,9 +49,18 @@ _STEP_MODULES = {
     "apply": ROOT / "modules" / "07_apply" / "apply.py",
 }
 _loaded: dict = {}
+# Tasks now run concurrently, so the cache below is read and written from several threads. Without
+# this lock two workers can both miss, both exec_module, and both register in sys.modules - the
+# modules are idempotent so nothing breaks visibly, which is exactly why it would never be found.
+_load_lock = threading.Lock()
 
 
 def step_module(name: str):
+    with _load_lock:
+        return _step_module_locked(name)
+
+
+def _step_module_locked(name: str):
     if name in _loaded:
         return _loaded[name]
     path = _STEP_MODULES[name]
