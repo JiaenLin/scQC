@@ -2,7 +2,7 @@
 
 Every figure in `report/figures.py` had a data contract and a drawing routine, and nothing ever
 supplied the data: `payload["figures"]` was `{}` on every run, so a completed pipeline produced a
-text-only report while the report itself dutifully printed "NOT PRODUCED" twelve times. This
+text-only report while the report itself dutifully printed "NOT PRODUCED" for every one. This
 module is the missing half.
 
 TWO RULES IT FOLLOWS, BOTH FROM THE PROJECT'S EVIDENCE RULE
@@ -16,37 +16,75 @@ TWO RULES IT FOLLOWS, BOTH FROM THE PROJECT'S EVIDENCE RULE
 
 WHAT CANNOT BE BUILT FROM A FINISHED RUN, AND WHY
 
-Four of the twelve need data no step currently writes down. They are listed in `UNAVAILABLE`
-with what each would need, and that text is what the report shows. They are not defects in this
-module; they are steps that compute something, use it, and discard it.
+`UNAVAILABLE` holds the text the report prints where a figure would have been. It names the step
+that would have to record something rather than merely reporting that a file is absent.
+
+THE ENTRIES IT USED TO HOLD WERE MOSTLY WRONG, AND WRONGLY IN THE SAME DIRECTION
+
+Four of the five said a step "computes something, uses it and discards it". Three of them did no
+such thing:
+
+  F1   `adapters/matrix.barcode_rank()` existed, `--rank-points` was plumbed end to end, and
+       `run_summary_stats` COUNTED the pairs into `n_rank_points` and dropped the pairs. Step 0
+       was never asked for them.
+  F6   `_op_valley` has always written `<sample>.valley_density.csv`. It went to the scratch
+       directory, which nothing publishes and this module never looks in.
+  F5   `adapters/doublets.sweep()` existed, complete with its cross-setting version checks. No
+       task called it.
+
+Only F10/F11 were what the note claimed: no embedding was computed anywhere. All five are now
+built, and the lesson is recorded because it is the expensive one - A PLAUSIBLE EXPLANATION FOR
+A MISSING FIGURE READS EXACTLY LIKE A CORRECT ONE, and it is more durable than the defect,
+because it tells the next reader not to look.
 """
 from __future__ import annotations
 
 import csv
+import sys
 from pathlib import Path
 
-# What each absent figure would need. The text reaches the reader, so it names the step that
-# would have to record something, not merely the fact that a file is missing.
+# What each absent figure would need. The text reaches the reader, so it names what to do about
+# it. Every entry here is REMOVED as soon as its builder succeeds - see `_try`.
 UNAVAILABLE = {
-    "F1": "the barcode-rank curve of each RAW matrix. Step 0 reads those matrices to verify "
-          "they are unfiltered but records only the verdict, so the curve behind it is gone by "
-          "the time the report is built. Recording rank/count pairs during ingest would make "
-          "this figure free.",
-    "F5": "a sweep of the doublet prior. Step 4 scores each library at ONE prior (dbr), which "
-          "is a single point; the figure asks whether the called rate tracks the prior across "
-          "its range, and one point cannot answer it. It needs a sweep step this pipeline does "
-          "not run.",
-    "F6": "the density curve each valley was found on. Step 5 fits a KDE, takes the minimum, "
-          "records the valley position, and discards the curve.",
-    "F10": "a per-library embedding. Step 6 clusters each library on a neighbour graph but "
-           "computes no 2-D embedding and stores no coordinates.",
+    "F1": "the barcode-rank curve of each raw matrix. Step 0 measures it while verifying that "
+          "the input is unfiltered and writes `tables/<sample>.barcode_rank.csv`; this run has "
+          "none, which means either no library was ingested from a supplied matrix (a cohort "
+          "rebuilt from FASTQ has no such curve) or the run predates the table.",
+    "F5": "a sweep of the doublet prior. Step 4 scores each library at ONE dbr.sd, and one point "
+          "cannot say whether the called rate tracks the prior or the data. The sweep is not run "
+          "by default because it re-scores every library once per setting; request it with "
+          "`--dbr-sd-sweep default,dbr,1` and this figure is drawn from "
+          "`tables/doublet_sweep.csv`.",
+    "F6": "the density curve the UMI valley was found on, `tables/<sample>.valley_density.csv`.",
+    "F10": "a per-library embedding, `tables/<sample>.embedding.csv`, written by step 6.",
     "F11": "a per-library embedding, as F10.",
+    "F13": "the density curve the gene valley was found on, "
+           "`tables/<sample>.valley_density.csv`.",
 }
 
 
 # What each figure shows. A caption states what is drawn and what would be read off it; it does
 # not interpret the result, which belongs to whoever reads the run.
 CAPTIONS = {
+    "F1": "Every library's barcode-rank curve, from the RAW matrix step 0 verified, on shared "
+          "log-log axes. A curve that runs down into the single digits still holds its empty "
+          "droplets; one that stops at a floor has already been cell-called, and the floor is "
+          "usually a round number somebody chose. Neither is visible in the file's name or shape.",
+    "F5": "The called doublet rate at each swept setting of the detector's prior, all libraries "
+          "on one axis. A curve that follows the prior is a rate the prior set; one that stays "
+          "put was measured from the library.",
+    "F6": "Per library, the density the UMI valley was measured on, with that library's own "
+          "valley and the single cohort floor drawn at the same place on every panel. A library "
+          "the constant fits poorly shows as a cut sitting away from its own valley.",
+    "F13": "The same as F6 for the GENE axis. Step 5 derives and applies two count floors, and "
+           "each is only checkable against the density it came from.",
+    "F10": "Where the doublet calls sit in each library's manifold. Doublets on the boundaries "
+           "between clusters are behaving as doublets should; a coherent region called doublet "
+           "is a population, and that is a different finding.",
+    "F11": "The SAME coordinates as F10, coloured by whether any criterion removed the nucleus. "
+           "The embedding is built over every barcode the denoiser called, so the nuclei the "
+           "count floors and the ceiling removed are still in the picture - which is the only "
+           "way to see whether a removal took a coherent region or scattered points.",
     "F2": "Ambient counts removed per library, the distribution across genes, and the removal "
           "rate split by each design factor. A rate that differs across an arm of the design is "
           "a technical removal that will read as biology downstream.",
@@ -94,6 +132,192 @@ def _flag(value):
     if text in ("false", "0"):
         return False
     return None
+
+
+def _mapping_or_empty(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _per_sample_tables(tables: Path, suffix: str) -> dict:
+    """`{sample: rows}` for every `<sample><suffix>` in tables/, keyed by the file's OWN column.
+
+    Keyed by the column and not by the filename, because the filename is a rendering of the
+    sample and the column is the sample. A library whose name contains a dot, or one renamed
+    between the run and the read, breaks the stem and does not break the column. The stem is used
+    only when the file carries no `sample` column at all.
+    """
+    out: dict = {}
+    for path in sorted(tables.glob(f"*{suffix}")):
+        rows = _rows(path)
+        if not rows:
+            continue
+        name = str(rows[0].get("sample") or "").strip() or path.name[: -len(suffix)]
+        out.setdefault(name, []).extend(rows)
+    return out
+
+
+def _f1(tables: Path) -> dict:
+    """The raw barcode-rank curve per library, and the aligner's cut where step 2 recorded one."""
+    curves = _per_sample_tables(tables, ".barcode_rank.csv")
+    if not curves:
+        raise FileNotFoundError("no <sample>.barcode_rank.csv in tables/")
+    libraries = {}
+    for s, rows in curves.items():
+        pairs = [(_num(r.get("rank")), _num(r.get("total_counts"))) for r in rows]
+        pairs = [(r, t) for r, t in pairs if r is not None and t is not None]
+        pairs.sort(key=lambda p: p[0])
+        # `n_barcodes` is the matrix's own barcode count, not the number of points plotted: the
+        # curve is downsampled log-uniformly, so the two differ by orders of magnitude and the
+        # figure labels the panel with the one that describes the FILE.
+        n_bc = next((_num(r.get("n_barcodes")) for r in rows
+                     if _num(r.get("n_barcodes")) is not None), None)
+        libraries[s] = {"ranks": [p[0] for p in pairs], "counts": [p[1] for p in pairs],
+                        "n_barcodes": int(n_bc) if n_bc is not None else None}
+    data = {"libraries": libraries}
+    calls = tables / "cell_calls.csv"
+    if calls.exists():
+        called = {r["sample"]: _num(r.get("aligner")) for r in _rows(calls)}
+        if any(v is not None for v in called.values()):
+            data["called_cells"] = called
+    return data
+
+
+def _f5(tables: Path) -> dict:
+    """The doublet-prior sweep: called rate against the swept dbr.sd, one line per library."""
+    rows = _rows(tables / "doublet_sweep.csv")
+    if not rows:
+        raise ValueError("tables/doublet_sweep.csv is empty, so no setting was swept")
+    sweep: dict = {}
+    for r in rows:
+        x, y = _num(r.get("dbr_sd_value")), _num(r.get("rate_over_scored"))
+        if x is None or y is None:
+            continue
+        e = sweep.setdefault(str(r["sample"]), {"x": [], "y": []})
+        e["x"].append(x)
+        e["y"].append(y)
+    for e in sweep.values():
+        order = sorted(range(len(e["x"])), key=lambda i: e["x"][i])
+        e["x"] = [e["x"][i] for i in order]
+        e["y"] = [e["y"][i] for i in order]
+    if not sweep:
+        raise ValueError("no swept setting carried both a dbr.sd value and a rate. The token "
+                         "'default' has no numeric value by design - it means the argument was "
+                         "not passed - so a sweep of that alone cannot be drawn against an axis")
+    applied = {_num(r.get("dbr_sd_applied")) for r in rows}
+    applied.discard(None)
+    data = {"sweep": sweep, "param_label": "dbr.sd (the detector's prior on the expected rate)",
+            "rate_denominator": "of the nuclei actually scored; those below the light floor are "
+                                "in no denominator"}
+    if len(applied) == 1:
+        data["chosen"] = applied.pop()
+    return data
+
+
+#: Which metric each density figure draws, and what the axis is called. The two ids exist because
+#: `cut` is one cohort constant per figure and the two floors are in different units.
+DENSITY_FIGURES = {"F6": ("umi", "UMI per nucleus", "umi_floor_proposed"),
+                   "F13": ("genes", "genes per nucleus", "gene_floor_proposed")}
+
+
+def _f6(tables: Path, thresholds: list, fig_id: str, metric: str, metric_label: str,
+        cut_key: str, n_by_sample=None) -> dict:
+    """One metric's density per library, with that library's valley and the cohort cut.
+
+    The bounds come from `modules/05_quality`, imported rather than restated: they are the range
+    outside which a derived floor is REFUSED, and a figure shading a different range from the one
+    the code enforces would be reassuring about a guard that is not there.
+    """
+    curves = _per_sample_tables(tables, ".valley_density.csv")
+    if not curves:
+        raise FileNotFoundError("no <sample>.valley_density.csv in tables/")
+
+    # `n` is the population the density was ESTIMATED OVER, which is every barcode in the object
+    # - the valleys are measured before any floor, because a valley is a boundary between two
+    # modes and pre-cutting deletes the one made of debris. `<sample>.percell.csv` covers exactly
+    # that population, so its row count is the n; None when it was not read, never 0.
+    n_by_sample = _mapping_or_empty(n_by_sample)
+    densities = {}
+    for s, rows in curves.items():
+        pts = [(_num(r.get("grid")), _num(r.get("density"))) for r in rows
+               if str(r.get("metric", "")).strip() == metric]
+        pts = [(g, d) for g, d in pts if g is not None and d is not None]
+        if pts:
+            densities[s] = {"x": [p[0] for p in pts], "y": [p[1] for p in pts],
+                            "n": n_by_sample.get(s)}
+    if not densities:
+        raise ValueError(f"no library recorded a density for metric {metric!r}")
+
+    # The valley from the file written for it, at full precision - not the rounded copy in the
+    # per-library threshold table, which exists to be read by a human.
+    valleys = {}
+    vfile = tables / f"valleys_{metric}.csv"
+    if vfile.exists():
+        valleys = {r["sample"]: _num(r.get("valley")) for r in _rows(vfile)}
+
+    data = {"densities": densities, "metric_label": metric_label, "fig_id": fig_id}
+    if valleys:
+        data["valleys"] = valleys
+    cuts = {_num(r.get(cut_key)) for r in thresholds}
+    cuts.discard(None)
+    if len(cuts) == 1:
+        data["cut"] = cuts.pop()
+    try:
+        mod_dir = Path(__file__).resolve().parent.parent / "modules" / "05_quality"
+        if str(mod_dir) not in sys.path:
+            sys.path.insert(0, str(mod_dir))
+        import quality  # noqa: PLC0415
+
+        data["bounds"] = list(quality.UMI_BOUNDS if metric == "umi" else quality.GENE_BOUNDS)
+    except Exception:                                                     # noqa: BLE001
+        # A shaded margin nobody can attribute is worse than no margin. Absent is absent.
+        pass
+    return data
+
+
+def _f10(tables: Path, percell: dict, *, colour_by: str, fig_id: str) -> dict:
+    """The per-library embedding, with each barcode's doublet call and removal joined onto it.
+
+    JOINED BY BARCODE, NEVER BY POSITION. The embedding covers the barcodes the denoiser called;
+    the per-cell table covers every barcode the library held. The two files are written by
+    different steps in different orders, and zipping them would colour the wrong points with no
+    symptom on the page.
+
+    A barcode with no per-cell row, and one whose flag the run never determined, both arrive as
+    None. F10 draws those in their own colour and counts them out of the percentage, which is why
+    this must not turn either of them into False.
+    """
+    embeddings = _per_sample_tables(tables, ".embedding.csv")
+    if not embeddings:
+        raise FileNotFoundError("no <sample>.embedding.csv in tables/")
+
+    out = {}
+    for s, rows in embeddings.items():
+        by_barcode = {str(r.get("barcode")): r for r in (percell.get(s) or [])}
+        xs, ys, marks = [], [], []
+        for r in rows:
+            x, y = _num(r.get("x")), _num(r.get("y"))
+            if x is None or y is None:
+                continue
+            xs.append(x)
+            ys.append(y)
+            cell = by_barcode.get(str(r.get("barcode")))
+            if cell is None:
+                marks.append(None)
+            elif colour_by == "doublet":
+                # `doublet_class` is the call; `doublet_scored` says whether there was one to
+                # make. A barcode below the light floor was never examined and is UNKNOWN - it is
+                # not a singlet, and reading its blank class as one is the whole reason the
+                # scored flag is written.
+                scored = _flag(cell.get("doublet_scored"))
+                cls = str(cell.get("doublet_class") or "").strip().lower()
+                marks.append(None if scored is not True or not cls else cls == "doublet")
+            else:
+                marks.append(_flag(cell.get("removed")))
+        if xs:
+            out[s] = {"x": xs, "y": ys, colour_by: marks}
+    if not out:
+        raise ValueError("every embedding table was present and held no usable coordinate")
+    return {"embeddings": out, "colour_by": colour_by, "fig_id": fig_id}
 
 
 def _f2(tables: Path, sheet: list) -> dict:
@@ -294,14 +518,31 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     def _try(fid, source, build):
         try:
             data = build()
+        except FileNotFoundError as exc:
+            # THE STANDING NOTE SURVIVES A MISSING FILE, and this is not a detail.
+            #
+            # Every builder here opens a file, so the ordinary way for a figure to be absent is
+            # FileNotFoundError - and overwriting the note with the exception replaced the one
+            # sentence that tells a reader what to do ("request it with --dbr-sd-sweep") with a
+            # path and an errno, which tells them the pipeline is broken. A file that was never
+            # written is the case `UNAVAILABLE` exists to describe.
+            #
+            # A figure with no standing note has nothing better to say, so it keeps the error.
+            notes.setdefault(fid, f"could not be assembled - {type(exc).__name__}: {exc}")
+            return
         except Exception as exc:                                            # noqa: BLE001
+            # Anything else IS a defect - a column that changed name, a value that will not
+            # parse - and it replaces the standing note, because the standing note would now be
+            # a wrong explanation of a real fault.
             notes[fid] = f"could not be assembled - {type(exc).__name__}: {exc}"
             return
         figures[fid] = {"data": data, "source": source, "caption": CAPTIONS.get(fid, "")}
         notes.pop(fid, None)
 
+    _try("F1", "tables/<sample>.barcode_rank.csv + tables/cell_calls.csv", lambda: _f1(tables))
     _try("F2", "tables/ambient_summary.csv", lambda: _f2(tables, sheet))
     _try("F3", "tables/cell_calls.csv", lambda: _f3(tables))
+    _try("F5", "tables/doublet_sweep.csv", lambda: _f5(tables))
     _try("F8", "tables/cluster_profile.csv", lambda: _f8(tables))
 
     if samples:
@@ -311,17 +552,36 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
             for fid in ("F4", "F7", "F12"):
                 notes[fid] = (f"needs the per-cell tables, which could not be read - "
                               f"{type(exc).__name__}: {exc}")
+            for fid in ("F10", "F11"):
+                notes[fid] = (f"the embedding has no flags to colour without the per-cell "
+                              f"tables, which could not be read - {type(exc).__name__}: {exc}")
     if percell:
         src = "tables/<sample>.percell.csv"
         _try("F4", src + " + tables/thresholds_per_sample.csv",
              lambda: _f4(percell, floors))
         _try("F7", src, lambda: _f7(percell, umi_cut, scale="log", fig_id="F7"))
         _try("F12", src, lambda: _f7(percell, umi_cut, scale="linear", fig_id="F12"))
+        # F10 and F11 are the SAME coordinates under two colourings, and that is the point of
+        # storing an embedding rather than recomputing one: a reader comparing them is looking at
+        # the flags, never at the projection.
+        emb_src = "tables/<sample>.embedding.csv + " + src
+        _try("F10", emb_src, lambda: _f10(tables, percell, colour_by="doublet", fig_id="F10"))
+        _try("F11", emb_src, lambda: _f10(tables, percell, colour_by="removed", fig_id="F11"))
 
     # After the per-cell tables, because that is where the denominator comes from: F9 draws each
     # criterion's unique removals against the population they were removed FROM, and a bar chart
     # with no denominator cannot say whether a criterion removed much or little.
     n_considered = sum(len(r) for r in percell.values()) if percell else n_in
     _try("F9", "tables/removal_ledger.csv", lambda: _f9(tables, n_considered, n_removed))
+
+    # Also after them, for the same reason in a different place: the density figures label each
+    # panel with the population the estimate was made over, and the per-cell table is what counts
+    # it. The figures are still drawn without it - the n reads NOT SUPPLIED and the curve is
+    # unaffected - so this is an ordering preference, not a dependency.
+    n_by_sample = {s: len(rows) for s, rows in percell.items()} if percell else {}
+    for fid, (metric, label, cut_key) in DENSITY_FIGURES.items():
+        _try(fid, f"tables/<sample>.valley_density.csv + tables/valleys_{metric}.csv",
+             lambda f=fid, m=metric, lb=label, ck=cut_key:
+                 _f6(tables, thresholds, f, m, lb, ck, n_by_sample))
 
     return figures, notes

@@ -931,7 +931,7 @@ def fig_f5_doublet_sweep(sweep, *, published_band=None, chosen=None, rate_denomi
 
 
 def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, metric_label=None,
-                           dpi: int = DEFAULT_DPI):
+                           fig_id: str = "F6", dpi: int = DEFAULT_DPI):
     """F6 - where is the cut, and why there?
 
     `densities` maps a sample to `{"x": [...], "y": [...], "n": int|None}` - the density the
@@ -986,7 +986,7 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
         ax.tick_params(labelsize=7)
         _tidy(ax)
 
-    _finish(fig, "F6 · per-library density with the measured valley and the applied cut",
+    _finish(fig, f"{fig_id} · per-library density with the measured valley and the applied cut",
             "the same cut is drawn on every panel at the same scale; a shaded margin is outside "
             "the bounds a derived floor is allowed to take")
     return fig
@@ -1392,21 +1392,35 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
             # sequences by position and hoping.
             marks = [None] * len(xs)
             _panel_note(ax, "flags do not match the embedding", loc="lower left")
-        on, off = [], []
+        # THREE CATEGORIES, NOT TWO. A barcode the detector never examined is not a barcode it
+        # cleared, and folding the two together draws every nucleus below the light floor in the
+        # same colour as a measured singlet. On a cohort where a quarter of the embedded barcodes
+        # sat under that floor, the "not a doublet" cloud would have been a quarter unexamined
+        # with nothing on the page saying so.
+        on, off, unknown = [], [], []
         for x, y, m in zip(xs, ys, marks):
             if _unknown(x) or _unknown(y):
                 continue
-            (on if _tri(m) is True else off).append((float(x), float(y)))
+            t = _tri(m)
+            (on if t is True else (off if t is False else unknown)).append((float(x), float(y)))
+        if unknown:
+            ax.scatter([p[0] for p in unknown], [p[1] for p in unknown], s=1.4,
+                       c=PALETTE["unknown"], alpha=0.5, linewidths=0, rasterized=True)
         if off:
             ax.scatter([p[0] for p in off], [p[1] for p in off], s=1.4, c=rest,
                        alpha=0.45 if colour_by == "doublet" else 0.7, linewidths=0, rasterized=True)
         if on:
             ax.scatter([p[0] for p in on], [p[1] for p in on], s=1.8, c=highlight,
                        alpha=0.9 if colour_by == "doublet" else 0.3, linewidths=0, rasterized=True)
-        total = len(on) + len(off)
-        share = (100.0 * len(on) / total) if total else float("nan")
-        ax.set_title(f"{s}   {share:.1f}%" if total else f"{s}   {NOT_SUPPLIED}",
+        # The denominator is what was DETERMINED. A share over everything embedded would fall as
+        # the never-examined population grows, which reads as the rate improving.
+        determined = len(on) + len(off)
+        share = (100.0 * len(on) / determined) if determined else float("nan")
+        ax.set_title(f"{s}   {share:.1f}%" if determined else f"{s}   {NOT_SUPPLIED}",
                      fontsize=7.5, pad=3)
+        if unknown:
+            _panel_note(ax, f"{len(unknown):,} never determined", loc="lower left",
+                        colour=PALETTE["unknown"], wrap=28)
         ax.set_xticks([])
         ax.set_yticks([])
         for spine in ax.spines.values():
@@ -1417,8 +1431,9 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
             else "removed by any criterion")
     _finish(fig, f"{fig_id} - per-library embedding, coloured by whether a nucleus was {what}",
             label_text(subtitle, "one embedding per library; the percentage on each panel is the "
-                                 "share highlighted. The same coordinates are used before and "
-                                 "after, so a difference between the two is the data"))
+                                 "share highlighted, over the nuclei for which the flag was "
+                                 "DETERMINED. Points in the third colour were never determined "
+                                 "and are in no percentage"))
     return fig
 
 
@@ -1442,4 +1457,11 @@ FIGURE_FUNCTIONS = {
     "F10": fig_f10_umap_per_library,
     "F11": fig_f10_umap_per_library,
     "F12": fig_f7_before_after,
+    # The gene axis gets its own id for the same reason F12 does. Step 5 derives TWO count floors
+    # from two densities and applies both, and one F6 can carry only one metric: `cut` is a single
+    # cohort constant drawn on every panel, and the UMI floor drawn over a gene density would be a
+    # line in the wrong units on ten panels. Folding both into one figure under one id would also
+    # make "the density figure" ambiguous in a report whose whole point is that a reader can name
+    # what they looked at.
+    "F13": fig_f6_quality_density,
 }

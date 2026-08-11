@@ -166,7 +166,7 @@ Point the orchestrator at a project on shared storage and let it submit. Two pra
 | symptom | cause |
 |---|---|
 | report says NOT DETERMINED | no gate was evaluated in this run and none was stored — not a pass |
-| a figure says NOT PRODUCED | the run did not record the data it needs; the reason names the step |
+| a figure says NOT PRODUCED | the run did not record the data it needs; the reason names the file or the flag that would produce it. F5 is the expected one: its sweep is opt-in, and `--dbr-sd-sweep default,dbr,1` draws it |
 | a task will not re-run | it completed, its signature is unchanged and its outputs exist — delete an output |
 | every cell has `pct_counts_mt == 0` | wrong `mt_prefix` for the species; matching is case-sensitive |
 | `scqc report` says there is nothing to rebuild | that run finished before `payload.json` was written; re-run the report step |

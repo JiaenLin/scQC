@@ -117,6 +117,9 @@ All CSV, all readable with the standard library alone.
 | `<sample>_doublets.csv` | scored barcode | `barcode`, `doublet_score`, `doublet_class` |
 | `cell_calls.csv` | library | `aligner`, `denoiser`, `lost` |
 | `valleys_umi.csv`, `valleys_genes.csv` | library | `valley`, `bimodal`, `note` |
+| `<sample>.barcode_rank.csv` | **rank point** | the raw matrix's barcode-rank curve, downsampled log-uniformly: `rank`, `total_counts`, `n_barcodes`. Figure F1. Absent for a library rebuilt from FASTQ, which has no supplied matrix to measure |
+| `<sample>.valley_density.csv` | grid point × metric | the KDE the valley was read off: `grid`, `grid_log10`, `density`, `is_valley`, `is_mode`. Figures F6 and F13 |
+| `<sample>.embedding.csv` | **barcode** | the 2-D coordinates of every barcode the denoiser called, with `clustered` and `cluster` joined on: `x`, `y`. Figures F10 and F11 |
 | `mito_ceiling_per_sample.csv` | library | quartiles, `derived`, `ceiling`, `clamped`, and **the population it was derived over** |
 | `<sample>.percell.csv` | **barcode** | every barcode the library held: the four measured values, the doublet score and class, and which of the five criteria fired. Apply mode only |
 | `ambient_lr_diagnostics.csv` | library | `fraction_removed`, `convergence_indicator`, `measured` |
@@ -139,6 +142,15 @@ nothing.
 | `removal_ledger.csv` | **removed** barcode | every criterion that fired on it, not just the first |
 | `ambient_summary.csv` | library | fraction removed, genes fully removed |
 | `ambient_supplied.json` | — | provenance of any denoised object supplied rather than produced here |
+| `doublet_sweep.csv` | (library, setting) | the called rate at each swept `dbr.sd`. Figure F5. Written **only** when `--dbr-sd-sweep` was given; it applies nothing and changes no deliverable |
+
+> **The embedding is over the CELL-CALLED population, not the clustered one.** Step 6 clusters
+> the cells that reach the deliverable — otherwise its flags describe empty droplets — and embeds
+> every barcode the denoiser called, so the nuclei the count floors and the ceiling removed are
+> still in the picture. That is the only way F11 can answer whether a removal took a coherent
+> region. `clustered` is `False` for a barcode that was embedded and not clustered; it is never
+> blank, because "embedded and not clustered" is a fact about that barcode and a blank would read
+> as "not recorded".
 
 > **The ledger lists what LEFT, not what stayed.** It is the record that makes a removal
 > recoverable: re-read the input object with those barcodes and the removed population is back.

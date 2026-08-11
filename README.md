@@ -15,9 +15,9 @@ applies — the data, or a person in their own words — so the two can never be
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
 > process. It writes a report and, in apply mode, one filtered object per library plus a merged
 > cohort object, with a ledger naming every barcode removed and why.
-> It draws the report's figures. What still feeds nothing is the freshness check, so every
-> report says `NOT CHECKED` rather than claiming to be current. The per-step subcommands remain,
-> for judging tables you produced elsewhere.
+> It draws all thirteen of the report's figures. What still feeds nothing is the freshness
+> check, so every report says `NOT CHECKED` rather than claiming to be current. The per-step
+> subcommands remain, for judging tables you produced elsewhere.
 >
 > **[KNOWN_ISSUES.md](KNOWN_ISSUES.md) lists what is measured, reproduced and not yet fixed.**
 > Read it before quoting a number: it is where a defect lives between being found and being
@@ -227,7 +227,7 @@ See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each
 | [docs/OUTPUTS.md](docs/OUTPUTS.md) | **every file a run writes** — the object `obs` schema, every table's columns, and which files are meant to be read next |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | diagrams: the pipeline, the two phases, the parameter classes |
 | [docs/PRINCIPLES.md](docs/PRINCIPLES.md) | the removal checklist and the three other enforced rules |
-| [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | the report layout and its twelve figures. Both are built; five figures need data no step records yet, and each says so in its own place |
+| [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) | the report layout and its thirteen figures. All are built and all are drawn from a finished run's own tables; the one that is not drawn by default (F5) needs a sweep that re-scores every library, and the report names the flag that requests it |
 | [docs/TOOLS_AND_REFERENCES.md](docs/TOOLS_AND_REFERENCES.md) | tools, versions, reference resolution |
 | [CALIBRATION.md](CALIBRATION.md) | what was measured, how much it varied, what one cohort cannot establish |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | what a pull request has to answer before it can remove anything |
@@ -301,7 +301,7 @@ row below was checked against the tree rather than remembered.
 | ✅ **Built** | The execution layer. Steps invoke the aligner, the denoiser, the doublet caller and the analysis stack out of process, each under its own interpreter, and read count matrices through the adapters. Versions are obtained by asking the tool, never read from a lockfile. |
 | ✅ **Built** | The report. Every run writes `qc_report.html` and `report.json`, including a per-library table of every threshold the run derived with each column marked per-library or cohort constant. The report **audits itself**: anything the payload should have carried and did not is a defect counted on its own front page. |
 | ✅ **Built** | Decisions are read. `decisions.yml` is parsed and validated, and `--mode apply` refuses on a missing or incomplete one, naming every problem at once rather than one per run. |
-| ✅ **Built** | The figures. `report/figures.py` draws what the steps record, and the report shows each figure it cannot draw as a named absence with the step that would have to record something — not as a gap. |
+| ✅ **Built** | The figures — all thirteen. `report/collect.py` assembles each from a NAMED table a reader can open, and `tests/test_figure_collection.py` renders every one of them from a fixture, because a builder that returns a dict can still be unrenderable. A figure that genuinely cannot be drawn is shown as a named absence saying what would produce it — not as a gap. |
 | ⚠️ **Known defect** | Step 6's cluster flags were computed on the wrong population until `02a422d`; cohorts processed before it must be re-run before their flags are read. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). |
 | ⚠️ **Not fed — freshness** | `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be current. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
 | ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, verifies the ledger against the mask, audits the result, and only then writes the filtered cohort object. Measure, record, write — in that order, so nothing is materialised before what left has been written down. Where `decisions.yml` supplies an approval, it is additionally matched against the action the current thresholds derive. |

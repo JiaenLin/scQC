@@ -26,6 +26,39 @@ succeeds.** The broken attempt succeeded.
 Residual, and now a real question rather than an artefact: five libraries of ten report zero
 flagged clusters. That is no longer explained by clustering empty droplets.
 
+## 1b. Five of thirteen figures were never drawn — FIXED, and three of the reasons were wrong
+
+The report printed a reason where each missing figure should have been, and the reasons read as
+statements about the pipeline's design: a step "computes something, uses it, and discards it".
+For three of the five that was not what had happened.
+
+| | what the report said | what was true |
+|---|---|---|
+| F1 | step 0 "records only the verdict, so the curve behind it is gone" | `adapters/matrix.barcode_rank()` existed and `--rank-points` was plumbed end to end. `run_summary_stats` COUNTED the pairs into `n_rank_points` and dropped the pairs themselves. Nothing ever asked step 0 for them |
+| F5 | "it needs a sweep step this pipeline does not run" | `adapters/doublets.sweep()` existed, complete with its cross-setting version checks. No task called it |
+| F6 | step 5 "fits a KDE, takes the minimum, records the valley position, and discards the curve" | `_op_valley` had always written `<sample>.valley_density.csv`. It went to the scratch directory, which nothing publishes and the report never looks in |
+| F10, F11 | no embedding is computed | correct — that one really was absent |
+
+All five are now produced, and F13 is added because step 5 derives and applies TWO count floors
+while one density figure can carry only one of them.
+
+**The lesson is the wrong reasons, not the missing figures.** A plausible explanation for an
+absent result reads exactly like a correct one, it is more durable than the defect because it
+tells the next reader not to look, and every one of these was written in good faith by someone
+looking at the same code. Two things follow, and both are now in place:
+
+- `report/collect.py` states this in its own header, so the next person to meet an absent figure
+  checks the producing step before writing down why it cannot be produced.
+- `tests/test_figure_collection.py` renders every figure from a fixture written as files. A
+  builder can return a dict, be recorded as "assembled", and still be unrenderable, because
+  `render_figures` calls `FIGURE_FUNCTIONS[id](**data)` and a key that is not a parameter of that
+  function only fails at draw time. **The acceptance test for a figure is a figure.**
+
+Residual, and stated because it is a limit rather than a defect: the sweep behind F5 is opt-in
+(`--dbr-sd-sweep default,dbr,1`). It re-scores every library once per setting and applies
+nothing, so it is not imposed on a run that did not ask for it; where the figure would be, the
+report names the flag that produces it.
+
 ## 2. The run key does not cover the code — OPEN
 
 `engine/runkey.py` hashes mode, the samplesheet's content and the DECLARED parameters. It does not
@@ -57,7 +90,9 @@ is not something to do in the middle of measuring a different change. Pin it.
   interpreter, or have it re-exec.
 - The CLI hardcodes `samplesheet.csv`. `docs/QUICKSTART.md` says `samplesheet.tsv`. The delimiter
   is auto-detected; the filename is not.
-- `03_light_floor` has no `STEP_TEXT` entry, so the report's "what it does / what it cannot
-  establish" is blank for step 3 — the one place a step's stated limit is absent rather than
-  marked absent.
+- ~~`03_light_floor` has no `STEP_TEXT` entry~~ — FIXED. It now states what the floor is for and,
+  more importantly, what it is not: a barcode below it was never examined for doublets, which is
+  UNKNOWN and not a singlet. Step 5's entry was also stale in the same table — it still described
+  the mitochondrial ceiling as Tukey's fence, which 0.2.0 replaced with a MAD fence at a derived
+  k, keeping Tukey only as the calibrator.
 - Four `adapters/*.pyc.tmp` build artefacts are tracked in git.

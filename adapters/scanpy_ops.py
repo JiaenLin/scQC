@@ -1380,6 +1380,98 @@ def cluster(adata, resolution, seed, n_hvg=2000, n_pcs=50, n_neighbors=15, *,
     return adata
 
 
+def embed(adata, seed, *, n_hvg=2000, n_pcs=50, n_neighbors=15, min_dist=0.5,
+          hvg_flavor="seurat", target_sum=1e4, allow_transformed=False) -> tuple:
+    """normalize_total -> log1p -> HVG -> PCA -> neighbours -> UMAP. Returns `(coords, record)`.
+
+    `coords` is one `(x, y)` pair per observation IN THE ORDER `adata.obs_names` holds them, so a
+    caller zips it against the barcodes rather than trusting two sorted lists to agree.
+
+    THE COORDINATES ARE WRITTEN DOWN BECAUSE NOTHING ELSE CAN RECOVER THEM
+
+    Figures F10 and F11 are the only two that can show whether a removal took a COHERENT REGION or
+    scattered points, and both need the SAME coordinates: re-embedding the survivors gives a
+    different layout, and a reader comparing before with after would be reading the projection
+    rather than the data. UMAP is also not stable across versions or across a change in the input
+    set, so an embedding that is not stored is not reproducible - it is regenerated, which is a
+    different picture under the same name.
+
+    THE SAME PROCEDURE AS `cluster()`, DELIBERATELY, AND NOT THE SAME CALL
+
+    Every step up to the neighbour graph is what `cluster()` does, because a figure drawn on a
+    differently-built graph would not be showing the clustering it sits beside. It is not
+    `cluster()` itself because the two run over DIFFERENT POPULATIONS on purpose - see
+    `_op_cluster` - and because leiden over a population nothing will use is wasted work.
+
+    `min_dist` is a FIXED procedure parameter of the layout, not a threshold: it changes how tight
+    the picture looks and changes no number anywhere. It is recorded so two runs' figures can be
+    told apart.
+    """
+    import numpy as np
+    import scanpy as sc
+
+    _refuse_if_transformed(adata.X, "embed", allow_transformed=allow_transformed)
+
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(adata, n_top_genes=int(n_hvg), flavor=hvg_flavor)
+    if "highly_variable" not in adata.var.columns:
+        raise TaskFailure(
+            f"highly_variable_genes(flavor={hvg_flavor!r}) produced no 'highly_variable' column, "
+            f"so there is nothing to embed on. var columns present: "
+            f"{', '.join(map(str, adata.var.columns))}")
+    hv, _hv_unknown = _bool_array(adata.var["highly_variable"])
+    n_hv = int(hv.sum())
+    if n_hv == 0:
+        raise TaskFailure("no genes were selected as highly variable, so PCA has nothing to run "
+                          "on and there is no embedding to draw.")
+
+    # The same arithmetic `cluster()` refuses on, and refused here too rather than quietly
+    # lowering n_pcs: an embedding built on fewer components than the clustering is a different
+    # projection of the same cells, and nothing on the figure would say so.
+    max_comps = min(int(adata.n_obs), n_hv) - 1
+    if int(n_pcs) > max_comps:
+        raise TaskFailure(
+            f"n_pcs={n_pcs} but arpack can return at most {max_comps} components over the "
+            f"population being embedded ({adata.n_obs:,} cells, {n_hv:,} highly-variable "
+            f"genes). Lower n_pcs or raise n_hvg.")
+
+    sc.tl.pca(adata, n_comps=int(n_pcs), svd_solver="arpack", random_state=seed)
+    sc.pp.neighbors(adata, n_neighbors=int(n_neighbors), n_pcs=int(n_pcs), random_state=seed)
+    try:
+        sc.tl.umap(adata, min_dist=float(min_dist), random_state=seed)
+    except ImportError as e:
+        raise TaskFailure(
+            f"UMAP is unavailable in this environment: {e}. scanpy needs umap-learn installed. "
+            f"scQC does not substitute a different layout, because the figure's caption names "
+            f"the one it describes.") from None
+
+    if "X_umap" not in adata.obsm:
+        raise TaskFailure(f"sc.tl.umap wrote no obsm['X_umap']. obsm keys: "
+                          f"{', '.join(map(str, adata.obsm.keys()))}")
+    xy = np.asarray(adata.obsm["X_umap"], dtype=float)
+    if xy.ndim != 2 or xy.shape[0] != int(adata.n_obs) or xy.shape[1] < 2:
+        raise TaskFailure(
+            f"obsm['X_umap'] has shape {xy.shape}, which cannot be matched one-to-one to "
+            f"{adata.n_obs:,} observations. Coordinates that do not line up with their barcodes "
+            f"colour the wrong points, and there is no symptom of that on the page.")
+
+    record = {
+        "layout": "umap",
+        "n_obs": int(adata.n_obs),
+        "seed": int(seed),
+        "n_hvg_requested": int(n_hvg),
+        "n_hvg_selected": n_hv,
+        "hvg_flavor": hvg_flavor,
+        "n_pcs": int(n_pcs),
+        "n_neighbors": int(n_neighbors),
+        "min_dist": float(min_dist),
+        "target_sum": float(target_sum),
+        "versions": observed_versions(),
+    }
+    return [(float(a), float(b)) for a, b in xy[:, :2]], record
+
+
 # --------------------------------------------------------------------------------------------
 # the cluster profile - the rows step 6 consumes
 # --------------------------------------------------------------------------------------------
@@ -2302,6 +2394,54 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     return [valleys, density, jpath, cells_path], metrics
 
 
+#: The declared population's threshold criteria, as (declared key, obs column, comparison).
+#: The cell call is handled separately because it is a flag rather than a threshold.
+POPULATION_CRITERIA = (("umi_floor", "total_counts", "ge"),
+                       ("gene_floor", "n_genes_by_counts", "ge"),
+                       ("mito_ceiling", "pct_counts_mt", "le"))
+
+
+def _population_mask(adata, pop, *, honour=("cell_call_key", "umi_floor", "gene_floor",
+                                            "mito_ceiling")) -> tuple:
+    """`(keep, applied)` for a declared population - a boolean mask and what produced it.
+
+    `honour` names which of the declared criteria are applied, and it is the whole reason this is
+    a function rather than a block inside `_op_cluster`: the clustering takes all four, the
+    embedding takes the cell call alone, and both read the SAME declaration. Two copies of this
+    arithmetic would eventually disagree about what a cell call is, and the figure and the flags
+    would then describe populations that differ by an amount nothing measures.
+    """
+    import numpy as _np
+
+    keep = _np.ones(int(adata.n_obs), dtype=bool)
+    applied: list = []
+    cc = pop.get("cell_call_key")
+    if "cell_call_key" in honour and not _unknown(cc):
+        if cc not in adata.obs.columns:
+            raise TaskFailure(
+                f"population declares cell_call_key={cc!r} and obs has no such column. "
+                f"Clustering the unfiltered object instead would silently reproduce the "
+                f"defect this parameter exists to fix.")
+        keep &= _float_array(adata.obs[cc].astype(float)) > 0.5
+        applied.append(f"{cc}")
+    for key, col, op in POPULATION_CRITERIA:
+        if key not in honour:
+            continue
+        v = pop.get(key)
+        if _unknown(v):
+            continue
+        if col not in adata.obs.columns:
+            raise TaskFailure(
+                f"population declares {key}={v} and obs has no {col!r} to apply it to.")
+        arr = _float_array(adata.obs[col])
+        # An unmeasured value is NOT a pass. NaN fails both comparisons in numpy, which is the
+        # behaviour wanted here: a cell whose depth was never measured is not evidence of a
+        # cell that passed.
+        keep &= (arr >= float(v)) if op == "ge" else (arr <= float(v))
+        applied.append(f"{col}{'>=' if op == 'ge' else '<='}{v}")
+    return keep, applied
+
+
 def _op_cluster(adata, params, out_prefix) -> tuple:
     """Cluster at one resolution and profile the result."""
     if "resolution" not in params or _unknown(params["resolution"]):
@@ -2371,37 +2511,72 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
             "parameter 'population' must be present, and may be null. Omitting it and declaring "
             "an unfiltered population produce the same clustering, and which cells were clustered "
             "is what decides whether step 6's flags describe nuclei or empty droplets.")
+    # An omitted embedding and a declared "do not embed" are the same JSON and are not the same
+    # fact, for the reason every required-present-may-be-null parameter here exists: a run that
+    # produced no coordinates because nobody asked and one that produced none because the request
+    # was lost look identical in the report, and only the second is a defect.
+    if "embedding" not in params:
+        raise TaskFailure(
+            "parameter 'embedding' must be present, and may be null. It declares the population "
+            "whose 2-D coordinates are written out for figures F10 and F11; null means no "
+            "embedding is computed and the report says the coordinates were never asked for.")
     pop = params.get("population")
     n_before = int(adata.n_obs)
+
+    # --- THE EMBEDDING, COMPUTED FIRST AND OVER A WIDER POPULATION THAN THE CLUSTERING.
+    #
+    # First, because `cluster()` normalises adata.X IN PLACE and the embedding needs counts.
+    #
+    # Wider, because of what the two are for. The clustering must run over the cells that reach
+    # the deliverable, or its flags describe empty droplets. The embedding must contain the cells
+    # a criterion REMOVED, or F11 - "did the removed nuclei leave as a population, or scattered?"
+    # - is drawn over a population every one of them has already left, and it can only ever answer
+    # "there were none". So the embedding takes the cell call and stops there: every nucleus the
+    # count floors, the ceiling or the doublet call removed is still in the picture, marked.
+    embedding = params.get("embedding")
+    emb_barcodes, emb_coords, emb_record = None, None, None
+    if not _unknown(embedding):
+        if not isinstance(embedding, dict):
+            raise TaskFailure(
+                f"parameter 'embedding' is a {type(embedding).__name__}; it must be null or a "
+                f"mapping declaring at least a population. `true` would have to mean a default "
+                f"population chosen here, and which population is embedded is exactly what "
+                f"decides whether F11 can see the nuclei a criterion removed.")
+        emb_pop = embedding.get("population", "cell_called")
+        if emb_pop not in ("cell_called", "clustered"):
+            raise TaskFailure(
+                f"embedding declares population={emb_pop!r}; it must be 'cell_called' (every "
+                f"barcode the denoiser called, so the removed nuclei are in the picture) or "
+                f"'clustered' (exactly what step 6 clusters, which contains no nucleus the "
+                f"floors or the ceiling removed and cannot show where they sat).")
+        honour = (("cell_call_key",) if emb_pop == "cell_called"
+                  else ("cell_call_key", "umi_floor", "gene_floor", "mito_ceiling"))
+        emb_keep, emb_applied = ((_population_mask(adata, pop, honour=honour))
+                                 if not _unknown(pop) else (None, []))
+        emb_adata = adata[emb_keep].copy() if emb_keep is not None else adata.copy()
+        if int(emb_adata.n_obs) < 50:
+            raise TaskFailure(
+                f"the embedding population leaves {emb_adata.n_obs} cell(s) of {n_before} - too "
+                f"few to embed. A projection of that many points is not a manifold.")
+        emb_barcodes = [str(b) for b in emb_adata.obs_names]
+        emb_coords, emb_record = embed(
+            emb_adata, seed=int(params["seed"]),
+            n_hvg=int(embedding.get("n_hvg", params.get("n_hvg", 2000))),
+            n_pcs=int(embedding.get("n_pcs", params.get("n_pcs", 50))),
+            n_neighbors=int(embedding.get("n_neighbors", params.get("n_neighbors", 15))),
+            min_dist=float(embedding.get("min_dist", 0.5)),
+            allow_transformed=bool(params.get("allow_transformed", False)))
+        emb_record["population"] = emb_pop
+        emb_record["population_applied"] = emb_applied or ["nothing - every droplet embedded"]
+        emb_record["n_before"] = n_before
+        # Freed before the clustering copy is taken. Two copies of a droplet matrix alive at once
+        # is the difference between this op fitting in its memory request and being killed by the
+        # scheduler, and the kill arrives as an exit code with no message about why.
+        del emb_adata
+
     pop_note = "UNFILTERED - every droplet clustered, including empty ones"
     if not _unknown(pop):
-        import numpy as _np
-        keep = _np.ones(n_before, dtype=bool)
-        applied = []
-        cc = pop.get("cell_call_key")
-        if not _unknown(cc):
-            if cc not in adata.obs.columns:
-                raise TaskFailure(
-                    f"population declares cell_call_key={cc!r} and obs has no such column. "
-                    f"Clustering the unfiltered object instead would silently reproduce the "
-                    f"defect this parameter exists to fix.")
-            keep &= _float_array(adata.obs[cc].astype(float)) > 0.5
-            applied.append(f"{cc}")
-        for key, col, op in (("umi_floor", "total_counts", "ge"),
-                             ("gene_floor", "n_genes_by_counts", "ge"),
-                             ("mito_ceiling", "pct_counts_mt", "le")):
-            v = pop.get(key)
-            if _unknown(v):
-                continue
-            if col not in adata.obs.columns:
-                raise TaskFailure(
-                    f"population declares {key}={v} and obs has no {col!r} to apply it to.")
-            arr = _float_array(adata.obs[col])
-            # An unmeasured value is NOT a pass. NaN fails both comparisons in numpy, which is the
-            # behaviour wanted here: a cell whose depth was never measured is not evidence of a
-            # cell that passed.
-            keep &= (arr >= float(v)) if op == "ge" else (arr <= float(v))
-            applied.append(f"{col}{'>=' if op == 'ge' else '<='}{v}")
+        keep, applied = _population_mask(adata, pop)
         n_keep = int(keep.sum())
         if n_keep < 50:
             raise TaskFailure(
@@ -2468,6 +2643,30 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
             w.writerow([str(b), params.get("sample") or "", "" if _unknown(c) else str(c)])
 
     outputs = [profile, labels]
+
+    # THE COORDINATES, WITH THE CLUSTER LABEL JOINED ON WHERE THERE IS ONE.
+    #
+    # Written after the clustering rather than beside the embedding, so the file carries both:
+    # every embedded barcode, its position, whether it was one of the cells step 6 clustered, and
+    # which cluster if so. A reader can then put F8's flagged clusters on F10's manifold without
+    # this op having to draw anything.
+    #
+    # `clustered` is FALSE, not blank, for a cell the mask dropped. It was embedded and it was
+    # not clustered; both are facts about it, and a blank would read as "not recorded".
+    if emb_coords is not None:
+        clustered_at = {str(b): ("" if _unknown(c) else str(c))
+                        for b, c in zip(adata.obs_names, adata.obs[key])}
+        emb_path = Path(str(out_prefix) + ".embedding.csv")
+        with emb_path.open("w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["barcode", "sample", "x", "y", "clustered", "cluster"])
+            for b, (x, y) in zip(emb_barcodes, emb_coords):
+                lab = clustered_at.get(b)
+                w.writerow([b, params.get("sample") or "", f"{x:.6g}", f"{y:.6g}",
+                            lab is not None, "" if lab is None else lab])
+        outputs.append(emb_path)
+        emb_record["n_also_clustered"] = sum(1 for b in emb_barcodes if b in clustered_at)
+
     if params.get("write_h5ad"):
         h5 = Path(str(out_prefix) + ".clustered.h5ad")
         adata.write_h5ad(str(h5))
@@ -2479,7 +2678,10 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
                "leiden_flavor_default": u["leiden_flavor_default"],
                "flagged_hvg": u["flagged_hvg"],
                "profile_notes": adata.uns["scqc_cluster_profile"]["notes"],
-               "n_profile_rows": len(rows)}
+               "n_profile_rows": len(rows),
+               # Present and null when no embedding was asked for, so the report can tell "not
+               # requested" from "requested and it produced nothing".
+               "embedding": emb_record}
     return outputs, metrics
 
 

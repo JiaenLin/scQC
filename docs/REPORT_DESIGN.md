@@ -144,14 +144,25 @@ Named, each with what would close it and who it is blocked on. A run with no ope
 
 ## Figures
 
-Twelve, each answering a single question a reader would otherwise have to ask. Nine follow the
-steps; F10 to F12 are pairs — the same data drawn twice, because a comparison is what carries the
-meaning.
+Thirteen, each answering a single question a reader would otherwise have to ask. Nine follow the
+steps; F10/F11, F7/F12 and F6/F13 are pairs — the same treatment applied twice, because a
+comparison is what carries the meaning.
 
 **F10 and F11 must share one embedding.** Re-embedding the retained nuclei changes the layout, and
 a reader comparing the two panels would be looking at a difference that may be the projection
 rather than the data. `fig_f10_umap_per_library` therefore takes coordinates and never computes
 them.
+
+**The embedding is built over every barcode the denoiser called, and not over the population step
+6 clusters.** The clustering must run on the cells that reach the deliverable, or its flags
+describe empty droplets. The embedding must contain the cells a criterion REMOVED, or F11 is drawn
+over a population every one of them has already left, and it can only ever answer "there were
+none". Those are different populations, so they are two passes, and step 6 does both.
+
+**A flag with three values gets three colours.** A barcode below the light floor was never handed
+to the doublet detector: it is UNKNOWN, not a singlet. F10 draws it in its own colour and counts
+it out of the percentage, because the alternative is a "not a doublet" cloud that is a quarter
+unexamined with nothing on the page saying so.
 
 **A capped axis states what it hides.** F12 clips a long tail so the bulk is legible, and prints
 the share of nuclei that fall outside. A truncated axis that does not say it is truncated reports
@@ -164,17 +175,24 @@ a distribution nobody drew.
 | F3 | 2 cell call | did the denoiser drop cells the aligner kept? | aligner vs denoiser per library, gate lines drawn |
 | F4 | 3 floor | what was never examined? | stacked bar: scored / below floor / **never scored** |
 | F5 | 4 doublets | is the rate a measurement or the prior? | sweep curve per library, published band shaded |
-| F6 | 5 quality | where is the cut and why there? | per-library density, valley marked, cut drawn |
+| F6 | 5 quality | where is the UMI cut and why there? | per-library density, valley marked, cut drawn |
 | F7 | 5 quality | what did the cut change? | before/after violins, log and linear |
 | F8 | 6 clusters | are any clusters technical? | depth × mito scatter, flags coloured, thresholds drawn |
 | F9 | 7 apply | what did each criterion remove *uniquely*? | unique vs shared contribution per criterion |
 | F10 | 4 doublets | where in the manifold did the doublets sit? | one embedding per library, doublet calls coloured |
 | F11 | 7 apply | did the removed nuclei leave as a population, or scattered? | **the same embeddings**, removed nuclei coloured |
 | F12 | 5 quality | the same count distributions, on the scale people work in | F7's data on a linear axis, with the share above the cap stated |
+| F13 | 5 quality | where is the GENE cut and why there? - step 5 derives two floors and applies both | F6's form on the gene axis, with the gene floor drawn |
 
 **F2 and F6 are the two that matter most.** F2 is the only figure that can show a technical
 removal has become an apparent biological difference. F6 is the only one that shows a derived
 threshold sitting where the data actually separates — or not.
+
+**F13 exists because step 5 applies TWO floors.** `cut` is one cohort constant per figure and the
+two floors are in different units, so a single density figure can carry only one of them — and the
+UMI floor drawn over a gene density would be a line in the wrong units on every panel. A report
+that showed the derivation of one applied threshold and not the other would be showing half the
+filter while looking complete.
 
 ### Rules every figure obeys
 

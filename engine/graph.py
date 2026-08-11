@@ -235,6 +235,40 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         needs=tuple(dbl_keys), params={"design": design, "samples": list(by_sample)},
     ))
 
+    # --- step 4b: the dbr.sd sweep, DECLARED and off by default.
+    #
+    # It re-scores every library once per setting, so a three-point sweep is three more runs of
+    # scDblFinder per library and roughly quadruples the cost of step 4. That is not a price to
+    # impose on a run nobody asked it of - and it is the only way to answer figure F5's question,
+    # which is whether the rate the pipeline applied was measured or was the prior's. So it is
+    # requested by name and the report says, where the figure would be, how to ask for it.
+    #
+    # It changes NO deliverable. The applied calls come from the declared setting either way.
+    sweep_settings = tools.get("dbr_sd_sweep")
+    if sweep_settings:
+        sweep_keys = []
+        for s in by_sample:
+            k = f"04_doublet_sweep/{s}"
+            tasks.append(Task(
+                key=k, step="04_doublets", sample=s, fn=steps._doublet_sweep,
+                needs=(f"04_doublets/{s}",),
+                params={"sample": s,
+                        "h5": str(pipeline.results / "objects" / f"{s}_ambient.h5"),
+                        "rscript": tools.get("rscript", "Rscript"),
+                        "light_floor": tools.get("light_floor", 200),
+                        "settings": list(sweep_settings),
+                        "dbr": _num(by_sample[s].get("dbr"), tools.get("dbr")),
+                        "seed": tools.get("seed", 0)},
+                cpus=4, memory_gb=32, walltime_h=12,
+            ))
+            sweep_keys.append(k)
+        tasks.append(Task(
+            key="04_doublet_sweep", step="04_doublets", fn=steps._doublet_sweep_stage,
+            needs=tuple(sweep_keys),
+            params={"samples": list(by_sample),
+                    "dbr_sd_applied": tools.get("dbr_sd")},
+        ))
+
     # --- step 5: thresholds, derived per library and applied as one cohort constant.
     # Step 5 measures each library independently and then proposes ONE cohort constant from the
     # ten results. The measurement was a serial loop inside the single 05_quality task, which no
@@ -330,5 +364,10 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         ))
         last = "07_apply"
 
-    tasks.append(Task(key="report", step="report", fn=steps._report, needs=(last,), params={}))
+    # The sweep is named here as well as left to run on its own, because the report reads
+    # `tables/doublet_sweep.csv` off disk: a report written while the sweep is still scoring finds
+    # no file and says the sweep was not requested, which is the one thing it definitely was.
+    report_needs = (last,) + (("04_doublet_sweep",) if sweep_settings else ())
+    tasks.append(Task(key="report", step="report", fn=steps._report, needs=report_needs,
+                      params={}))
     return tasks

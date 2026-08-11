@@ -33,12 +33,53 @@ from .task import Refusal, Task, TaskFailure
 # helpers
 
 
+#: How many (rank, count) pairs step 0 keeps per library for figure F1. FIXED, not a threshold:
+#: the pairs are downsampled log-uniformly and the curve is read on log-log axes, so this changes
+#: how heavy the file is and nothing about where the knee falls. No decision reads it.
+RANK_POINTS = 2000
+
+
 def _tables(p) -> Path:
     return p.results / "tables"
 
 
 def _objects(p) -> Path:
     return p.results / "objects"
+
+
+def _promote(pipeline, result: dict, suffix: str, dest_name: str, *, what: str):
+    """Copy one output an op wrote under `scratch` into `results/tables/`, and return where.
+
+    WHY A COPY AND NOT A DIFFERENT out_prefix. The scanpy ops write four or five files at one
+    prefix and only some of them are evidence. `<sample>.valleys.json` and
+    `<sample>.called_barcodes.csv` are intermediates this pipeline reads and nothing else opens;
+    the density curve and the embedding are the data two figures are drawn FROM, and rule 1 of
+    `report/collect.py` is that a figure comes from a named file a reader can open. Pointing the
+    whole prefix at `tables/` would publish the intermediates too and invite them to be quoted.
+
+    WHY IT EXISTS AT ALL. The density curve was already being written, correctly, on every run -
+    and then left in a scratch directory the report never looks in. The report duly printed "step
+    5 fits a KDE, takes the minimum, records the valley position, and discards the curve" about a
+    curve sitting on disk. A figure's data being PRODUCED is not the same as its being KEPT, and
+    the gap between the two is invisible from either end.
+
+    Returns None when the op declared no such output - which is what a null declaration produces
+    and is not an error here. The caller reports the absence.
+    """
+    import shutil
+
+    src = next((Path(o) for o in (result.get("outputs") or []) if str(o).endswith(suffix)), None)
+    if src is None:
+        return None
+    if not src.exists():
+        raise TaskFailure(
+            f"{what}: the op declared {src} and it is not on disk, so it cannot be published to "
+            f"tables/. A declared output that is absent is a broken record of the run, not a "
+            f"missing figure.")
+    dst = _tables(pipeline) / dest_name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return dst
 
 
 def _design(samples: list[dict], max_levels: int = 6) -> dict:
@@ -118,6 +159,8 @@ def _ingest(task, pipeline, log):
             "00_ingest: no analysis interpreter was given. Measuring a matrix needs pandas and "
             "anndata, which the process running scqc is not required to have. Pass --python.")
 
+    measured: dict = {}
+
     def stats_fn(matrix_path):
         res = mx.run_summary_stats(
             matrix=matrix_path,
@@ -126,7 +169,19 @@ def _ingest(task, pipeline, log):
             python_exe=python_exe,
             expected_genes=task.params.get("expected_genes"),
             tmp_dir=pipeline.scratch / f"{sample}_extract",
+            # THE CURVE BEHIND THE VERDICT, measured in the pass that is already reading this
+            # matrix. Step 0 opens every raw matrix to establish that the empty droplets are
+            # still there; F1 is the picture of that same fact, and the only figure in the report
+            # a reader can check the claim "this input is raw" against. Asking for it here costs
+            # one more pass over row totals in a subprocess that has the matrix open.
+            #
+            # RANK_POINTS IS A FIXED PROCEDURE PARAMETER, not a threshold. The curve is read on
+            # log-log axes; the pairs are downsampled log-uniformly, so 2,000 of them draw the
+            # knee at the same place 200,000 would and no decision anywhere depends on the number.
+            rank_points=RANK_POINTS,
             executor=pipeline.executor)
+        measured["barcode_rank"] = res.get("barcode_rank")
+        measured["n_barcodes"] = res["metrics"].get("n_barcodes")
         # run_summary_stats returns {'outputs','metrics','versions'}; plan_one wants verify()'s
         # keyword arguments. verify_kwargs is the same selector the in-process path uses, so the
         # two routes cannot drift into accepting different keys.
@@ -138,11 +193,28 @@ def _ingest(task, pipeline, log):
         raise Refusal(f"{sample} cannot be ingested: {plan.reason}\n"
                       f"    A blocked sample is not skipped - a cohort missing a library is a "
                       f"different cohort, and continuing would not say so.")
-    # Step 0 decides; it writes nothing of its own, so it promises no outputs.
+
+    # Step 0 decides, and now also KEEPS what it measured while deciding. A sample rebuilt from
+    # FASTQ has no supplied matrix and no curve, which is why this is conditional rather than
+    # promised: the file is absent for that library and F1 draws the libraries it has, with the
+    # n stated on the figure.
     outs: list = []
+    curve = measured.get("barcode_rank")
+    if curve:
+        import csv as _csv
+
+        out = _tables(pipeline) / f"{sample}.barcode_rank.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w", newline="", encoding="utf-8") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["sample", "rank", "total_counts", "n_barcodes"])
+            for r, t in curve:
+                w.writerow([sample, r, t, measured.get("n_barcodes")])
+        outs.append(str(out))
     return {"outputs": outs,
             "metrics": {"mode": plan.mode, "processor": plan.processor,
-                        "reason": plan.reason},
+                        "reason": plan.reason,
+                        "n_rank_points": len(curve) if curve else None},
             "versions": {}}
 
 
@@ -821,6 +893,118 @@ def _doublet_health(task, pipeline, log):
                                        "never_scored": unscored_total}, "versions": {}}
 
 
+def _doublet_sweep(task, pipeline, log):
+    """Re-score ONE library at every swept dbr.sd. Writes no calls anyone downstream reads.
+
+    THIS DOES NOT CHANGE THE DELIVERABLE. The applied calls are the ones `_doublets` wrote at the
+    declared setting; these go to scratch and exist so figure F5 can show whether the rate the
+    pipeline applied moved with the data or with the prior. A flat rate across libraries that
+    differ 2.5-fold in size is the prior's flatness, and one point cannot reveal it.
+
+    PER LIBRARY, NOT PER COHORT, AND THE ADAPTER IS STILL CALLED ONCE PER SAMPLE. `db.sweep()`
+    loops over samples internally; handing it all ten would run thirty scDblFinder invocations in
+    a single task, serially, on a machine with a scheduler outside it. One sample at a time keeps
+    every cross-setting check the adapter makes - same seed, one version of the tool, no label
+    reused - and lets the ten run at once.
+    """
+    from adapters import doublets as db
+
+    p = task.params
+    s = p["sample"]
+    # Its OWN export, not the one `_doublets` left in scratch. Depending on another task's
+    # intermediate makes this step's correctness depend on when scratch is cleaned, and the
+    # export is cheap beside thirty seconds of xgboost.
+    mtx = pipeline.scratch / f"{s}_dbl_sweep_mtx"
+    export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]))
+    res = db.sweep(list(p["settings"]), p["rscript"], {s: mtx},
+                   pipeline.scratch / f"{s}_dbl_sweep", p["dbr"], int(p.get("seed", 0)),
+                   pipeline.work, pipeline.executor,
+                   unscored={s: export.unscored},
+                   # The deepest-decile alarm needs the per-barcode depth, and the export has just
+                   # measured it. Computed per library here; whether the COHORT figure can be
+                   # assembled from ten of them is settled at the barrier, which refuses to.
+                   umi_by_barcode={s: export.umi_by_barcode})
+    per_setting = (res.get("metrics") or {}).get("per_setting") or {}
+    for label in sorted(per_setting):
+        e = per_setting[label]
+        rate = (e.get("per_sample_rate_over_scored") or {}).get(s)
+        print(f"    {s:<14} dbr.sd={label:<8} "
+              + (f"{100 * rate:.2f}% of scored" if rate is not None else "NO RATE"))
+    return {"outputs": [], "metrics": {"sample": s, "per_setting": per_setting},
+            "versions": res.get("versions", {})}
+
+
+def _doublet_sweep_stage(task, pipeline, log):
+    """The barrier: one row per (library, setting) for F5, and what the sweep recommends.
+
+    THE DEEP-DECILE ARM IS NOT EVALUATED HERE, AND THAT IS RECORDED RATHER THAN PAPERED OVER.
+
+    `doublet.recommend()` rejects the fully-free setting when it calls half of the deepest UMI
+    decile - a cohort quantity, over every library's barcodes pooled. Ten per-library deciles are
+    not that number and no combination of them is: the worst of them is a different statistic, and
+    the mean of them is a different statistic again. Both would print. So `deep_decile_rate` is
+    left None, which `recommend()` is documented to read as NO EVIDENCE rather than as
+    reassurance, and the table says which arm was not evaluated.
+    """
+    import csv as _csv
+
+    d = step_module("doublet")
+    samples = list(task.params["samples"])
+    merged: dict = {}
+    absent = []
+    for s in samples:
+        r = pipeline.results_by_key.get(f"04_doublet_sweep/{s}")
+        per = ((getattr(r, "metrics", None) or {}) if r is not None else {}).get("per_setting")
+        if not per:
+            absent.append(s)
+            continue
+        for label, e in per.items():
+            slot = merged.setdefault(label, {"dbr_sd_value": e.get("dbr_sd_value"),
+                                             "rate": {}, "n_scored": {}, "n_called": {}})
+            slot["rate"].update(e.get("per_sample_rate_over_scored") or {})
+            slot["n_scored"].update(e.get("per_sample_n_scored") or {})
+            slot["n_called"].update(e.get("per_sample_n_called") or {})
+    if absent:
+        raise Refusal(
+            f"04_doublet_sweep: no swept rate was recorded for {', '.join(absent)}. A sweep "
+            f"missing a library is not a sweep of this cohort, and the spread across the "
+            f"remainder would still print as one.")
+    if not merged:
+        raise Refusal("04_doublet_sweep: no setting produced a rate, so nothing was swept.")
+
+    applied = task.params.get("dbr_sd_applied")
+    out = _tables(pipeline) / "doublet_sweep.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["sample", "setting", "dbr_sd_value", "n_scored", "n_called",
+                    "rate_over_scored", "dbr_sd_applied"])
+        for label in sorted(merged):
+            slot = merged[label]
+            for s in samples:
+                w.writerow([s, label, slot["dbr_sd_value"], slot["n_scored"].get(s),
+                            slot["n_called"].get(s), slot["rate"].get(s), applied])
+
+    results = [d.SweepResult(setting=label,
+                             per_sample_rate={s: v for s, v in slot["rate"].items()
+                                              if v is not None},
+                             deep_decile_rate=None)
+               for label, slot in sorted(merged.items())]
+    for r in results:
+        print(f"    {r}")
+    rec = d.recommend(results)
+    print(f"    {rec}")
+    print("    the deepest-decile arm was NOT evaluated - it is a cohort quantity and this "
+          "sweep measured it per library; see _doublet_sweep_stage")
+    return {"outputs": [str(out)],
+            "metrics": {"settings": sorted(merged), "samples": len(samples),
+                        "recommended": rec.setting, "reason": rec.reason,
+                        "rejected": rec.rejected,
+                        "deep_decile_evaluated": False,
+                        "applied": applied},
+            "versions": {}}
+
+
 # --------------------------------------------------------------------------------------------
 # step 5 - measure a valley per library, propose one cohort constant
 
@@ -888,7 +1072,14 @@ def _quality_measure(task, pipeline, log):
     # rather than opening the object again.
     called_csv = next((o for o in res.get("outputs", []) if str(o).endswith(".called_barcodes.csv")),
                       None)
-    return {"outputs": list(res.get("outputs", [])),
+    # THE CURVE THE VALLEY WAS FOUND ON, published rather than left in scratch. This is F6's
+    # only possible input: `valleys_umi.csv` carries the position of the minimum and nothing
+    # about the shape it sits in, and the whole question F6 answers - does the cut fall where the
+    # data separates - is about the shape.
+    density = _promote(pipeline, res, ".valley_density.csv", f"{s}.valley_density.csv",
+                       what=f"05_quality ({s})")
+    outputs = list(res.get("outputs", [])) + ([density] if density else [])
+    return {"outputs": outputs,
             "metrics": {"valleys": got, "bimodal": bim,
                         "mito_quartiles": m.get("mito_quartiles"),
                         # The ceiling's population travels with the ceiling. A threshold whose
@@ -1093,28 +1284,42 @@ def _population_for_cluster(pipeline, sample):
 def _cluster(task, pipeline, log):
     p = task.params
     _require_gene_patterns("06_cluster_check", p)
-    return _scanpy(pipeline, "cluster",
-                   pipeline.results / "objects" / f"{p['sample']}_ambient.h5",
-                   pipeline.scratch / f"{p['sample']}_clusters",
-                   {"sample": p["sample"],
-                    "resolution": p["resolution"], "seed": p["seed"],
-                    # Needed to measure this object at all: it is the denoised one, so nothing
-                    # has computed total_counts or pct_counts_mt on it, and cluster() refuses to
-                    # normalise over an object whose depth was never measured.
-                    "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
-                    # The doublet calls are ATTACHED here and applied nowhere. Step 6's criterion
-                    # D is only computable before a removal - afterwards every cluster is 0%
-                    # doublet by construction - and this is the last point at which that holds.
-                    "doublet_csv": p["doublet_csv"],
-                    "doublet_key": "doublet_class",
-                    "doublet_positive": "doublet",
-                    # The population cluster_flags.py specifies. Step 5 has already derived every
-                    # floor and this library's ceiling, so they are declared here rather than
-                    # re-derived: step 6 must cluster the cells that reach the deliverable, not
-                    # the droplet matrix they were selected from. The doublet criterion is
-                    # deliberately absent - see the op.
-                    "population": _population_for_cluster(pipeline, p["sample"])},
-                   log, p["python_exe"])
+    res = _scanpy(pipeline, "cluster",
+                  pipeline.results / "objects" / f"{p['sample']}_ambient.h5",
+                  pipeline.scratch / f"{p['sample']}_clusters",
+                  {"sample": p["sample"],
+                   "resolution": p["resolution"], "seed": p["seed"],
+                   # Needed to measure this object at all: it is the denoised one, so nothing
+                   # has computed total_counts or pct_counts_mt on it, and cluster() refuses to
+                   # normalise over an object whose depth was never measured.
+                   "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
+                   # The doublet calls are ATTACHED here and applied nowhere. Step 6's criterion
+                   # D is only computable before a removal - afterwards every cluster is 0%
+                   # doublet by construction - and this is the last point at which that holds.
+                   "doublet_csv": p["doublet_csv"],
+                   "doublet_key": "doublet_class",
+                   "doublet_positive": "doublet",
+                   # The population cluster_flags.py specifies. Step 5 has already derived every
+                   # floor and this library's ceiling, so they are declared here rather than
+                   # re-derived: step 6 must cluster the cells that reach the deliverable, not
+                   # the droplet matrix they were selected from. The doublet criterion is
+                   # deliberately absent - see the op.
+                   "population": _population_for_cluster(pipeline, p["sample"]),
+                   # THE COORDINATES F10 AND F11 ARE DRAWN ON, over a WIDER population than the
+                   # clustering. `cell_called` is not a looser version of the clustering
+                   # population, it is the only one that can answer F11: a projection built
+                   # after the floors and the ceiling have been applied contains no nucleus they
+                   # removed, so "did the removed nuclei leave as a population?" could only ever
+                   # come back "there were none to look at". The clustering itself is unchanged.
+                   "embedding": {"population": "cell_called"}},
+                  log, p["python_exe"])
+    # Published for the report, per `_promote`. A run whose embedding was declared null writes no
+    # such file and the report says the coordinates were never asked for.
+    emb = _promote(pipeline, res, ".embedding.csv", f"{p['sample']}.embedding.csv",
+                   what=f"06_cluster ({p['sample']})")
+    if emb:
+        res = {**res, "outputs": list(res.get("outputs", [])) + [emb]}
+    return res
 
 
 def _cluster_flags(task, pipeline, log):
@@ -1635,6 +1840,13 @@ STEP_TEXT = {
         "Compares the aligner's cell call with the denoiser's and gates the loss.",
         "Whether the cells LOST were real. It measures how many and how unevenly, never what "
         "they were; only annotation could say that."),
+    "03_light_floor": (
+        "Sets the depth below which a barcode is not handed to the doublet detector, because "
+        "scDblFinder documents a 200-UMI floor to avoid erroring on near-empty droplets.",
+        "Anything about QUALITY. It is a technical precondition of one tool and not a filter: "
+        "nothing is removed here, and a barcode below the floor is reported as never examined "
+        "for doublets - which is UNKNOWN, not a singlet. Reading it as a quality threshold is "
+        "the mistake the separate name exists to prevent."),
     "04_doublets": (
         "Scores doublets per library above the light floor and checks the calls for health.",
         "Whether a called doublet IS one. It checks that the rate is a measurement rather than "
@@ -1642,9 +1854,13 @@ STEP_TEXT = {
         "light floor were never scored and are reported as unknown, not as singlets."),
     "05_quality": (
         "Derives the count floors and the mitochondrial ceiling, in one pass over the same "
-        "population. The floors are the density valley measured per library and proposed as ONE "
-        "cohort constant; the ceiling is each library's OWN upper Tukey fence, Q3 + 1.5*IQR, "
-        "bounded by a declared statement about what a nucleus can be.",
+        "object and deliberately not the same population. The floors are the density valley "
+        "measured per library and proposed as ONE cohort constant, over every barcode; the "
+        "ceiling is each library's own median + k*1.4826*MAD taken over the barcodes above the "
+        "light floor, with k DERIVED as the cohort median of the multiple at which each "
+        "library's Tukey fence sits, and the whole bounded by a declared statement about what a "
+        "nucleus can be. Tukey is carried as an independent second derivation and is never "
+        "applied.",
         "Whether either threshold is RIGHT. For the floors it establishes that the distribution "
         "has two modes and that the cut sits between them and inside plausible bounds - a tight "
         "real population can be refused by the dispersion test and a large enough artifact can "
@@ -1678,6 +1894,7 @@ def step_text(step: str) -> tuple:
 __all__ = [
     "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
     "_ambient_audit", "_cellcall",
-    "_doublets", "_doublet_health", "_quality", "_quality_measure", "_quality_stage", "_cluster",
+    "_doublets", "_doublet_health", "_doublet_sweep", "_doublet_sweep_stage",
+    "_quality", "_quality_measure", "_quality_stage", "_cluster",
     "_cluster_flags", "_apply", "_apply_measure", "_ceilings_for", "_report",
 ]

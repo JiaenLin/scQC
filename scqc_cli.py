@@ -475,6 +475,11 @@ def cmd_run(a) -> int:
         # per-sample from the samplesheet - loading concentration can differ between libraries -
         # or cohort-wide from these flags.
         "dbr": a.dbr, "dbr_sd": a.dbr_sd,
+        # Split here rather than in the graph, so a malformed list is a usage error before any
+        # file is opened. An empty token is dropped: `default,,1` is a typo, not a request to
+        # sweep a setting with no name, and `resolve_dbr_sd` would refuse it three steps later.
+        "dbr_sd_sweep": ([t.strip() for t in str(a.dbr_sd_sweep).split(",") if t.strip()]
+                         if a.dbr_sd_sweep else None),
     }.items() if v is not None}
     # AFTER `tools`, because the run's output directory is named from the parameters it was given.
     pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
@@ -621,6 +626,14 @@ def build_parser() -> argparse.ArgumentParser:
                          "overrides it). No default: it describes how the libraries were loaded.")
     r2.add_argument("--dbr-sd", dest="dbr_sd", type=float,
                     help="uncertainty on --dbr (DECLARED; per-sample `dbr_sd` overrides it)")
+    # OFF by default because it re-scores every library once per setting. It changes no
+    # deliverable; it is the evidence behind figure F5, which asks whether the rate the run
+    # applied was measured or was the prior's, and one setting cannot answer that.
+    r2.add_argument("--dbr-sd-sweep", dest="dbr_sd_sweep",
+                    help="comma-separated dbr.sd settings to sweep for figure F5, e.g. "
+                         "'default,dbr,1'. 'default' omits the argument, 'dbr' sets dbr.sd = dbr, "
+                         "anything else is a number. Costs one extra scDblFinder run per library "
+                         "per setting and applies nothing.")
     r2.add_argument("--resolution", type=float, default=1.0)
     r2.add_argument("--seed", type=int, default=0)
     r2.add_argument("--force", action="store_true", help="re-run every task, ignoring the manifest")

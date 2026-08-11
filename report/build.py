@@ -147,7 +147,7 @@ STEPS = (
     ("04_doublets", "4 · doublets",
      "score per sample, before quality filtering; flag only", "nothing", ("F5", "F10")),
     ("05_quality", "5 · quality",
-     "derive count floors and mitochondrial ceiling", "nothing", ("F6", "F7", "F12")),
+     "derive count floors and mitochondrial ceiling", "nothing", ("F6", "F13", "F7", "F12")),
     ("06_cluster_check", "6 · cluster check",
      "per-cluster flags: depth, mitochondrial, markers, doublet", "nothing", ("F8",)),
     ("07_apply", "7 · apply", "pre-flight, verify approval, remove",
@@ -162,13 +162,14 @@ FIGURE_QUESTIONS = {
     "F3": "did the denoiser drop cells the aligner kept?",
     "F4": "what was never examined?",
     "F5": "is the rate a measurement or the prior?",
-    "F6": "where is the cut and why there?",
+    "F6": "where is the UMI cut and why there?",
     "F7": "what did the cut change?",
     "F8": "are any clusters technical?",
     "F9": "what did each criterion remove uniquely?",
     "F10": "where in the manifold did the doublets sit?",
     "F11": "did the removed nuclei leave as a population, or scattered?",
     "F12": "the same count distributions, on the scale people work in",
+    "F13": "where is the GENE cut and why there? - step 5 derives two floors and applies both",
 }
 
 PARAM_CLASSES = {
@@ -1293,7 +1294,7 @@ def render_figures(payload, defects: list) -> dict:
         # figure block, and the document is the only record of the run that produced it.
         _defect(defects, "figures",
                 f"payload['figures'] is a {type(figs).__name__}, not a dict keyed by figure id "
-                f"(F1..F9). No figure could be resolved from it and every figure block in this "
+                f"(F1..F13). No figure could be resolved from it and every figure block in this "
                 f"report is therefore empty.")
         return out
     module = None

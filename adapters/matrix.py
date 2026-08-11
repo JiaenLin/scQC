@@ -1624,13 +1624,25 @@ def run_summary_stats(matrix, out_json, log, python_exe, *, expected_genes=None,
 
     metrics = dict(payload["stats"])
     metrics["source_format"] = payload["format"]
+    result = {"outputs": [out], "metrics": metrics, "versions": dict(payload["versions"])}
     if rank_points:
         rank = payload.get("barcode_rank")
         if rank is None:
             raise TaskFailure(f"{rank_points} rank points were requested but {out} carries no "
                               f"'barcode_rank'")
         metrics["n_rank_points"] = len(rank)
-    return {"outputs": [out], "metrics": metrics, "versions": dict(payload["versions"])}
+        # THE CURVE ITSELF, RETURNED - beside the metrics rather than inside them.
+        #
+        # It was counted and thrown away: `n_rank_points` went into the manifest and the pairs the
+        # subprocess had just measured were dropped on the floor, so figure F1 - the only check
+        # that a matrix still holds its empty droplets - reported that step 0 "records only the
+        # verdict". It did record the verdict; it also measured the evidence and did not keep it.
+        #
+        # Beside the metrics because metrics are written into the run manifest, and a few thousand
+        # coordinate pairs per library belong in a table a reader opens, not in the record of what
+        # each task returned.
+        result["barcode_rank"] = [(int(r), float(t)) for r, t in rank]
+    return result
 
 
 # ---------------------------------------------------------------------------------------------
