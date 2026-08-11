@@ -1033,45 +1033,61 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
 def _population_for_cluster(pipeline, sample):
     """The cells step 6 is specified to cluster: quality-filtered, doublets NOT applied.
 
-    # rule-one: no-removal - this reads two tables step 5 wrote and returns four numbers.
+    # rule-one: no-removal - this reads a table and a task's metrics and returns four numbers.
 
-    Read from step 5's own output rather than recomputed, so the cells clustered are the cells
-    the deliverable will contain and the two cannot drift. Returns None when step 5 left no
-    table, which the op reports as an UNFILTERED clustering rather than silently accepting.
+    `cluster_flags.py` requires "the step-5 object: quality-filtered". The object step 6 opens is
+    the denoised FULL DROPLET matrix, so without this the flags describe empty droplets.
 
-    The doublet criterion is deliberately absent. Criterion D is only computable before a
-    removal; afterwards every cluster is 0% doublet by construction.
+    WHERE EACH NUMBER COMES FROM, and why it is not one place:
+
+      * the per-library mitochondrial ceiling from `mito_ceiling_per_sample.csv`, which the
+        05_quality task writes before step 6 runs;
+      * the two cohort count floors from that task's METRICS, not from
+        `thresholds_per_sample.csv`. That table is written by a LATER task - measured on
+        2026-08-11 at 17:29 against step 6 at 17:19 - so reading it here found nothing. The
+        floors are already in `results_by_key["05_quality"].metrics` as `umi_proposed` and
+        `genes_proposed`; the same lookup is used for the decisions layer.
+
+    The doublet criterion is deliberately absent: criterion D is only computable before a
+    removal, since afterwards every cluster is 0% doublet by construction.
+
+    REFUSES rather than returning None. A silent fallback here clustered the full droplet matrix
+    on 2026-08-11 while the run reported success, which is the failure this whole lookup exists
+    to prevent.
     """
     import csv as _csv
 
     tdir = _tables(pipeline)
+    ceiling_path = tdir / "mito_ceiling_per_sample.csv"
     ceiling = None
     try:
-        with open(tdir / "mito_ceiling_per_sample.csv", newline="", encoding="utf-8") as fh:
+        with open(ceiling_path, newline="", encoding="utf-8") as fh:
             for row in _csv.DictReader(fh):
                 if row.get("sample") == sample:
                     ceiling = float(row["ceiling"])
                     break
-    except (OSError, KeyError, ValueError):
-        return None
+    except (OSError, KeyError, ValueError) as e:
+        raise Refusal(
+            f"06_cluster_check ({sample}): could not read the mitochondrial ceiling from "
+            f"{ceiling_path} ({type(e).__name__}: {e}). Step 6 must cluster the cells that reach "
+            f"the deliverable; clustering the droplet matrix instead is the defect this lookup "
+            f"exists to fix, so it stops rather than falling back to it.") from None
+    if ceiling is None:
+        raise Refusal(
+            f"06_cluster_check ({sample}): {ceiling_path} carries no row for this library, so "
+            f"the population it should be clustered on is unknown.")
 
-    umi = gene = None
-    try:
-        with open(tdir / "thresholds_per_sample.csv", newline="", encoding="utf-8") as fh:
-            for row in _csv.DictReader(fh):
-                if str(row.get("sample", "")).strip().lower() == "scope":
-                    continue          # the scope row, not a library
-                if row.get("sample") == sample:
-                    umi = float(row["umi_floor_proposed"])
-                    gene = float(row["gene_floor_proposed"])
-                    break
-    except (OSError, KeyError, ValueError):
-        return None
+    cohort = (getattr(pipeline.results_by_key.get("05_quality"), "metrics", None) or {})
+    umi, gene = cohort.get("umi_proposed"), cohort.get("genes_proposed")
+    if umi is None or gene is None:
+        raise Refusal(
+            f"06_cluster_check ({sample}): the 05_quality task recorded no "
+            f"{'umi_proposed' if umi is None else 'genes_proposed'} in its metrics, so the count "
+            f"floors the deliverable will use are not knowable here. Do NOT read them from "
+            f"thresholds_per_sample.csv - that table is written after this step runs.")
 
-    if ceiling is None or umi is None or gene is None:
-        return None
-    return {"cell_call_key": "cellbender_cell", "umi_floor": umi,
-            "gene_floor": gene, "mito_ceiling": ceiling}
+    return {"cell_call_key": "cellbender_cell", "umi_floor": float(umi),
+            "gene_floor": float(gene), "mito_ceiling": float(ceiling)}
 
 
 def _cluster(task, pipeline, log):
