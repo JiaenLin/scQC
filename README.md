@@ -4,19 +4,25 @@
 threshold from applying it.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.1.0-blue.svg)](#status)
+[![Status](https://img.shields.io/badge/status-0.2.0-blue.svg)](#status)
 
 Most QC pipelines take thresholds as arguments. scQC treats them as findings: it measures what it
 can from your data, refuses to guess what it cannot, and records who set every threshold it
 applies — the data, or a person in their own words — so the two can never be confused later.
 
-> **Read [Status](#status) before you plan a run.** At `0.1.0` scQC runs a cohort end to end —
+> **Read [Status](#status) before you plan a run.** At `0.2.0` scQC runs a cohort end to end —
 > `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
 > process. It writes a report and, in apply mode, one filtered object per library plus a merged
 > cohort object, with a ledger naming every barcode removed and why.
-> What it does **not** yet produce is any figure, and nothing feeds its freshness check. The
-> per-step subcommands remain, for judging tables you produced elsewhere.
+> It draws the report's figures. What still feeds nothing is the freshness check, so every
+> report says `NOT CHECKED` rather than claiming to be current. The per-step subcommands remain,
+> for judging tables you produced elsewhere.
+>
+> **[KNOWN_ISSUES.md](KNOWN_ISSUES.md) lists what is measured, reproduced and not yet fixed.**
+> Read it before quoting a number: it is where a defect lives between being found and being
+> repaired, and one entry there is the difference between a figure that means something and one
+> that does not.
 
 ---
 
@@ -282,20 +288,21 @@ it has caught came from calling a function with a hostile input and looking at w
 
 ## Status
 
-**0.1.0.** Being precise about this, because a QC tool that overstates itself does damage
+**0.2.0.** Being precise about this, because a QC tool that overstates itself does damage
 quietly — and one that understates itself is wrong in the same way, just harder to notice. Every
 row below was checked against the tree rather than remembered.
 
 | | |
 |---|---|
-| ✅ **Built and tested** | The decision layer: each step's policy, contract, threshold derivation and gate, importable as Python, plus the `scqc` CLI over it. `scqc selftest` on a clean clone reports **15 passed, 0 failed, 1 skipped** — the skip needs pandas or a cohort (`COHORT_DIR`) and is not evidence either way. |
+| ✅ **Built and tested** | The decision layer: each step's policy, contract, threshold derivation and gate, importable as Python, plus the `scqc` CLI over it. `scqc selftest` reports **18 passed, 0 failed, 1 skipped** — the skip needs a cohort (`COHORT_DIR`) and is not evidence either way. **Run it with an interpreter that has the scientific stack**: `bin/scqc` is `#!/usr/bin/env python3`, so under a bare system python the suites needing numpy/anndata SKIP rather than run, and a skip counted as a pass is the defect this project exists to catch. |
 | ✅ **Built** | The `scqc` command, as **per-step subcommands** over tables you supply: `validate`, `verify`, `gate-cells`, `doublet-health`, `quality`, `cluster-preflight`, `selftest`. Exit code 2 on a refusal, `--json` for structured output. |
 | ✅ **Built** | Recoverable removal. Step 7 pairs each removed observation with the criteria that fired on it, refuses if that record and the mask disagree, and writes it as a CSV any reader can open. |
 | ✅ **Built, and run end to end** | The two-mode driver. `scqc run --project … --mode evidence\|apply` builds the task graph and runs it, locally or on PBS with one job per task. A ten-library cohort completes as 47 tasks with nothing reused. In `evidence` mode the apply task is **not placed in the graph at all**, so there is no code path from it to a removal. |
 | ✅ **Built** | The execution layer. Steps invoke the aligner, the denoiser, the doublet caller and the analysis stack out of process, each under its own interpreter, and read count matrices through the adapters. Versions are obtained by asking the tool, never read from a lockfile. |
 | ✅ **Built** | The report. Every run writes `qc_report.html` and `report.json`, including a per-library table of every threshold the run derived with each column marked per-library or cohort constant. The report **audits itself**: anything the payload should have carried and did not is a defect counted on its own front page. |
 | ✅ **Built** | Decisions are read. `decisions.yml` is parsed and validated, and `--mode apply` refuses on a missing or incomplete one, naming every problem at once rather than one per run. |
-| ⚠️ **Not built — the figures** | `report/figures.py` exists and the report expects F1–F9, but no step supplies one. Each absence is reported as a defect rather than omitted. The five sections and the nine figures in [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) remain a specification. |
+| ✅ **Built** | The figures. `report/figures.py` draws what the steps record, and the report shows each figure it cannot draw as a named absence with the step that would have to record something — not as a gap. |
+| ⚠️ **Known defect** | Step 6's cluster flags were computed on the wrong population until `02a422d`; cohorts processed before it must be re-run before their flags are read. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). |
 | ⚠️ **Not fed — freshness** | `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be current. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
 | ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, verifies the ledger against the mask, audits the result, and only then writes the filtered cohort object. Measure, record, write — in that order, so nothing is materialised before what left has been written down. Where `decisions.yml` supplies an approval, it is additionally matched against the action the current thresholds derive. |
 | ✅ **Built** | Content-addressed outputs. Each run writes under `results/<digest>/`, named from the samplesheet's content, the declared parameters and the mode. A run that would produce something different lands somewhere different, so nothing is overwritten by one that disagrees with it. |

@@ -5,7 +5,11 @@ abstract: >-
   scQC separates deriving quality-control thresholds from applying them. Every parameter
   carries a class recording whether it was fixed by the pipeline, derived from the data,
   declared in advance, or adjudicated by a human, and every removal requires a recorded
-  approval and remains recoverable.
+  approval and remains recoverable. Thresholds that can be measured are measured per cohort
+  rather than transferred: count floors from the density valley between the debris and cell
+  modes, and the mitochondrial ceiling per library from its own dispersion, at a multiple the
+  cohort's own Tukey fences calibrate. Checks that a removal has fallen unevenly across the
+  arms of the experimental design run at every step that removes.
 authors:
   - family-names: Lin
     given-names: Jiaen
