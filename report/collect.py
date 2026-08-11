@@ -103,10 +103,22 @@ def _f2(tables: Path, sheet: list) -> dict:
 
     # The design panel is the one that can show a technical removal masquerading as biology, so
     # it is built from whatever factors the samplesheet actually carries rather than a fixed list.
+    #
+    # It said that before, and then used a fixed list: ("age", "diet", "chemistry", "batch") -
+    # the four factor names of the cohort this pipeline was calibrated on. On that cohort the
+    # panel was therefore correct, and on any other it rendered EMPTY while the comment above it
+    # claimed otherwise. The gates in steps 1, 2 and 4 had always used the discovered factors, so
+    # a run could refuse on a design differential the report then declined to draw.
+    #
+    # `_design()` is the one discovery routine, in `engine/steps.py`, and it is imported rather
+    # than reimplemented here: it excludes constant columns, columns with too many levels, and -
+    # the one that is easy to get wrong - identifier columns with a single sample per level.
     by_design = {}
     if sheet:
+        from engine.steps import _design  # noqa: PLC0415  (avoids a circular import at module load)
+
         of_sample = {r.get("sample"): r for r in sheet}
-        factors = [c for c in ("age", "diet", "chemistry", "batch") if c in (sheet[0] or {})]
+        factors = list(_design(sheet))
         for factor in factors:
             levels = {}
             for s, frac in per_library.items():
