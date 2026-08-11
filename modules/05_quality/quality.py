@@ -211,12 +211,17 @@ def mito_ceiling_note() -> str:
     return (
         "mitochondrial ceiling: DERIVED PER LIBRARY, bounded by a DECLARED statement. The "
         "distribution is unimodal, so there is no valley and the count-floor route does not "
-        "apply - but 'no valley' does not mean 'no derivation'. Each library's own upper Tukey "
-        "fence (Q3 + 1.5*IQR of its own distribution) is derived by mito_ceiling(); the BOUND on "
-        "that fence is declared by the analyst, because it is a statement about what a nucleus "
-        "can be and not a property of this cohort. What stays ADJUDICATED is whether a "
-        "mitochondria-high POPULATION is damage or a mitochondria-rich cell type - that needs an "
-        "identity, so the pipeline emits cluster-level medians and stops.")
+        "apply - but 'no valley' does not mean 'no derivation'. The applied fence is "
+        "median + k*1.4826*MAD of each library's own distribution, where k is itself DERIVED: it "
+        "is the cohort median of the multiple at which Tukey's Q3 + 1.5*IQR sits, rounded to an "
+        "integer. Tukey calibrates how far out the fence belongs and is then retained per library "
+        "as an INDEPENDENT CROSS-CHECK; it is never applied, "
+        "because two robust routes to one number either agree - which is evidence - or disagree, "
+        "which is a finding. The BOUND on the fence is declared by the analyst, because it is a "
+        "statement about what a nucleus can be and not a property of this cohort. What stays "
+        "ADJUDICATED is whether a mitochondria-high POPULATION is damage or a mitochondria-rich "
+        "cell type - that needs an identity, so the pipeline emits cluster-level medians and "
+        "stops.")
 
 
 # --- the mitochondrial ceiling ------------------------------------------------------------------
@@ -252,33 +257,145 @@ def mito_ceiling_note() -> str:
 # bound is the analyst's statement of what a nucleus can be - "below X the filter risks cutting
 # real signal; above Y it is not a viable nucleus" - and it must be recorded in the analyst's own
 # words, because it is the one part of this that the data cannot supply. It is a GUARD RAIL: if
-# it binds in most libraries it has stopped being a policy and become the threshold, and
-# `derive_mito_ceiling` refuses in that case rather than letting a declared number masquerade as
-# a derived one.
+# it binds in most libraries it has stopped being a policy and become the threshold, and the
+# ceiling is then REPORTED AS BOUND-DOMINATED rather than derived, so that a declared number
+# never masquerades as a derived one.
 
 # Assay defaults. NOT thresholds - the outer limits within which a derived fence is allowed to
 # land. Whole cells retain cytoplasm and legitimately carry more mitochondrial signal than nuclei.
-MITO_BOUNDS = {"snrna": (5.0, 25.0), "scrna": (10.0, 30.0)}
+#
+# The snRNA lower bound was 5.0 until 2026-08-11. It was raised to 10.0 on a biological argument
+# rather than a statistical one: on the calibration cohort, 5.0 let a library's ceiling fall to
+# 6.12%, and the nuclei that cut removed were indistinguishable from the ones it kept - median
+# depth 0.88-0.96x that of retained nuclei in three of the four affected libraries, i.e. ordinary
+# cells, not debris. In heart especially, cardiomyocytes are the most mitochondria-rich cell type
+# in the body, so a 6% ceiling preferentially removes the cell type the study is about.
+#
+# The floor is also what a bound is FOR. Those libraries had low fences because their preps were
+# tight, not because their nuclei were biologically cleaner: across that cohort the fence varied
+# MORE between two mice of the same group (3.87x) than between the design groups (2.59x), so the
+# spread is a technical property. A declared floor is the right instrument against that - "however
+# tight this prep looks, an 8% cardiac nucleus is not an outlier" - and it is exactly the statement
+# about what a nucleus can be that the bound exists to carry.
+MITO_BOUNDS = {"snrna": (10.0, 25.0), "scrna": (10.0, 30.0)}
+
+# THE APPLIED FENCE IS MAD-BASED; TUKEY IS RETAINED AS AN INDEPENDENT SECOND DERIVATION.
+#
+#     applied     median + MAD_K * 1.4826 * MAD
+#     cross-check Q3 + IQR_MULT * IQR
+#
+# 1.4826 makes the scaled MAD equal sigma for normal data, so MAD_K reads as a z-score.
+#
+# Why two, and why this one applied. The two estimators do NOT measure the same thing on a skewed
+# distribution: Tukey is anchored at Q3 and grows with the middle-50% width, MAD is anchored at the
+# median and grows with a symmetric spread. Mitochondrial percentage is bounded at 0 and strongly
+# right-skewed, so IQR/(1.4826*MAD) - exactly 1.349 for a normal - ran 1.59 to 2.82 across the
+# calibration cohort. That is why no single MAD_K reproduces Tukey: the k that would match it
+# tracks each library's skew, from 3.44 to 6.56.
+#
+# k IS DERIVED, NOT DECLARED. Tukey is the calibration instrument; MAD is the applied estimator.
+#
+# For each library, solve for the k that would put the MAD fence exactly on the Tukey fence:
+#
+#     k_i = (Q3_i + mult*IQR_i - median_i) / (1.4826 * MAD_i)
+#
+# and take the cohort median, rounded to an integer. This is the same shape as the count floors:
+# measure per library, propose ONE cohort constant. It makes k a property of the data rather than
+# a number someone chose - on the calibration cohort it lands on 4 (per-library 3.44 to 6.56,
+# median 4.26), and on a cohort with different skew it will land elsewhere, which is the point.
+#
+# Why not simply apply Tukey, if Tukey selects k. Because the two do different jobs. Tukey adapts
+# without limit to a wide tail - to 25.88% on one calibration library - and adapting that far is a
+# statement about that prep, not about what a nucleus can be. The MAD fence at the calibrated k
+# tracks the same cohort-level scale while compressing the extremes, so the applied ceiling stays
+# inside a biologically defensible range. Tukey decides HOW FAR out the fence should sit; MAD
+# decides how much any single library is allowed to differ in getting there.
+#
+# k is rounded to an integer deliberately. The per-library k values span 1.9x, so the cohort
+# summary is not precise to a decimal, and a k of 4.26 would imply a resolution the spread does
+# not support.
+#
+# WHAT IT COSTS, measured, and recorded because it is not visible from the number: threshold
+# evenness and removal evenness trade off monotonically, across every rule tested.
+#
+#     rule                       ceiling spread   removal differential (interaction arm)
+#     cohort constant 12.65%          1.00x                 2.77x
+#     MAD k=4, bound 10-25            2.05x                 1.75x   <- applied
+#     MAD k=5, bound 10-25            2.46x                 1.60x
+#     Tukey,   bound 10-25            2.50x                 1.37x
+#     Tukey,   unbounded              4.23x                 1.09x
+#
+# Every step toward a more uniform THRESHOLD costs a less uniform EFFECT. The reason is that the
+# quantity being fenced genuinely varies: Q3 spreads 3.91x and IQR 4.75x across those libraries,
+# so an estimator whose output spreads less than that is not being more consistent, it is
+# under-adapting. `ceiling_spread` reports the first property, the design differential the second,
+# and a reader needs both.
+MAD_SCALE = 1.4826
 IQR_MULT = 1.5
-# If the bound binds in more than this fraction of libraries it IS the threshold, not a rail.
+# Sanity limits on the DERIVED k. Not a tuning knob: a cohort whose Tukey-implied k falls outside
+# these has a tail shape this calibration does not describe, and the run says so rather than
+# quietly using the edge value. k below 2 fences inside the bulk of the distribution; k above 10
+# is so permissive that the bound, not the derivation, is doing all the work.
+MAD_K_BOUNDS = (2, 10)
+# Per-library implied k spreading more than this says no single k fits the cohort - the libraries
+# differ in SHAPE, not just in scale, and a cohort constant is then a compromise rather than a
+# measurement. Reported, because the calibration cohort itself spans 1.90x.
+K_SPREAD_REVIEW = 2.0
+# Tukey and the MAD fence differing by more than this on a library the bound did NOT clamp is
+# reported. Only unclamped libraries count: two clamped values agree because the bound made them
+# agree, and reading that as corroboration is confidence the data did not supply.
+CROSS_CHECK_REVIEW = 1.5
+# If the bound binds in more than this fraction of libraries it IS the threshold, not a rail - the
+# ceiling is reported as bound-dominated rather than derived. Lower- and upper-binding are counted
+# SEPARATELY because they are opposite events: an upper clamp removes MORE than the library's own
+# fence asks, a lower clamp retains more. Only one of those can delete signal.
 BOUND_BINDS_REVIEW = 0.5
+# Applied ceilings differing by more than this across libraries are worth a look, by the same
+# reasoning as SPREAD_REVIEW for valleys: one filter is then treating samples of one experiment
+# very differently, and that difference is technical unless something says otherwise.
+CEILING_SPREAD_REVIEW = 3.0
 
 
 @dataclass
 class MitoCeiling:
-    """One library's derived ceiling and the quantities it came from."""
+    """One library's derived ceiling and the quantities it came from.
+
+    `derived` is the APPLIED fence (MAD-based). `tukey` is the independent second derivation,
+    carried so a reader can see whether the two routes agreed rather than being told they did.
+    """
     sample: str
     n: int
     median: float
     q1: float
     q3: float
-    derived: float          # the raw fence, before the bound
+    mad: float
+    derived: float          # the raw APPLIED fence (MAD route), before the bound
+    tukey: float            # the cross-check fence (Q3 + 1.5*IQR), never applied
     ceiling: float          # what would be applied
     clamped: str            # "", "lower" or "upper"
 
     @property
     def iqr(self) -> float:
         return self.q3 - self.q1
+
+    @property
+    def smad(self) -> float:
+        """MAD on the same scale as sigma, which is what MAD_K multiplies."""
+        return MAD_SCALE * self.mad
+
+    @property
+    def skew_ratio(self):
+        """IQR / scaled MAD. Exactly 1.349 for a normal distribution; higher means right-skewed.
+
+        This is why the two fences diverge, so it is reported beside them rather than left for a
+        reader to reconstruct from the quartiles.
+        """
+        return (self.iqr / self.smad) if self.smad > 0 else None
+
+    @property
+    def cross_check(self):
+        """Tukey / applied fence. 1.0 means the two independent routes landed together."""
+        return (self.tukey / self.derived) if self.derived > 0 else None
 
 
 def fence(values, mult: float = IQR_MULT) -> tuple:
@@ -303,8 +420,65 @@ def fence(values, mult: float = IQR_MULT) -> tuple:
     return q1, q3, q3 + mult * (q3 - q1)
 
 
+def select_mad_k(stats, mult=IQR_MULT, k_bounds=MAD_K_BOUNDS) -> dict:
+    """Derive the MAD multiplier from the Tukey fence. Tukey calibrates; MAD applies.
+
+    # rule-one: no-removal - this reads a per-library summary and returns a number.
+
+    For each library the k that would place the MAD fence exactly on the Tukey fence is
+    `(tukey - median) / (1.4826 * MAD)`. The cohort value is the median of those, rounded to an
+    integer, because the per-library values do not agree closely enough to justify a decimal.
+
+    Libraries with `MAD == 0` are EXCLUDED from the calibration rather than skipped silently: the
+    implied k is undefined there (division by zero), and a library that cannot contribute to the
+    calibration must not be able to change it by being counted as some default.
+    """
+    implied, undefined = {}, []
+    for s, st in stats.items():
+        mad = float(st.get("mad", 0.0) or 0.0)
+        med, q1, q3 = float(st["median"]), float(st["q1"]), float(st["q3"])
+        if mad <= 0:
+            undefined.append(s)
+            continue
+        implied[s] = ((q3 + mult * (q3 - q1)) - med) / (MAD_SCALE * mad)
+    if not implied:
+        raise ThresholdRefusal(
+            "no library has a positive MAD, so the Tukey-implied k is undefined everywhere and "
+            "there is nothing to calibrate against. A cohort in which more than half of every "
+            "library shares one mitochondrial value is not one this fence describes.")
+
+    vals = sorted(implied.values())
+    n = len(vals)
+    med_k = vals[n // 2] if n % 2 else 0.5 * (vals[n // 2 - 1] + vals[n // 2])
+    k = int(round(med_k))
+    lo_k, hi_k = k_bounds
+    clamped = ""
+    if k < lo_k:
+        k, clamped = lo_k, "lower"
+    elif k > hi_k:
+        k, clamped = hi_k, "upper"
+
+    spread = max(vals) / min(vals) if min(vals) > 0 else None
+    notes = [f"MAD k DERIVED from the Tukey fence: per-library {min(vals):.2f}-{max(vals):.2f}, "
+             f"median {med_k:.2f}, applied k = {k}"]
+    if undefined:
+        notes.append(f"excluded from the calibration (MAD is zero): {', '.join(sorted(undefined))}")
+    if clamped:
+        notes.append(
+            f"REVIEW - the derived k was clamped at the {clamped} sanity limit {k_bounds}. A "
+            f"cohort whose Tukey-implied k falls outside those limits has a tail shape this "
+            f"calibration does not describe; the applied number is the limit, not a derivation")
+    if spread is not None and spread > K_SPREAD_REVIEW:
+        notes.append(
+            f"REVIEW - the implied k spans {spread:.2f}x across libraries, so no single k fits "
+            f"them all. The libraries differ in the SHAPE of their tail, not only its scale, and "
+            f"the cohort k is a compromise. The libraries at the extremes are the ones to look at")
+    return {"k": k, "median_k": med_k, "per_library": implied, "spread": spread,
+            "undefined": tuple(sorted(undefined)), "clamped": clamped, "notes": notes}
+
+
 def derive_mito_ceiling(per_library, assay="snrna", bounds=None, mult=IQR_MULT,
-                        declared_by=None) -> dict:
+                        declared_by=None, k=None) -> dict:
     """Derive one mitochondrial ceiling per library, bounded by a DECLARED statement.
 
     `per_library` maps sample -> an iterable of that library's per-nucleus mitochondrial
@@ -325,18 +499,30 @@ def derive_mito_ceiling(per_library, assay="snrna", bounds=None, mult=IQR_MULT,
     for s, vals in per_library.items():
         v = sorted(float(x) for x in vals if x == x)
         q1, q3, _ = fence(v, mult)
-        stats[s] = {"n": len(v), "median": v[len(v) // 2], "q1": q1, "q3": q3}
+        # The median by linear interpolation, matching `fence()` - not v[len//2], which is a
+        # different statistic on even n and would make the applied fence disagree with the
+        # cross-check for a reason that has nothing to do with the data.
+        h = (len(v) - 1) * 0.5
+        lo_i = int(h)
+        hi_i = min(lo_i + 1, len(v) - 1)
+        med = v[lo_i] + (h - lo_i) * (v[hi_i] - v[lo_i])
+        dev = sorted(abs(x - med) for x in v)
+        mad = dev[lo_i] + (h - lo_i) * (dev[hi_i] - dev[lo_i])
+        stats[s] = {"n": len(v), "median": med, "q1": q1, "q3": q3, "mad": mad}
     return derive_mito_ceiling_from_quartiles(
-        stats, assay=assay, bounds=bounds, mult=mult, declared_by=declared_by)
+        stats, assay=assay, bounds=bounds, mult=mult, declared_by=declared_by, k=k)
 
 
 def derive_mito_ceiling_from_quartiles(stats, assay="snrna", bounds=None, mult=IQR_MULT,
-                                       declared_by=None) -> dict:
-    """As `derive_mito_ceiling`, from precomputed per-library quartiles.
+                                       declared_by=None, k=None) -> dict:
+    """As `derive_mito_ceiling`, from a precomputed per-library summary.
 
-    `stats` maps sample -> {"n", "median", "q1", "q3"}. This is what the pipeline uses: the
-    worker that already has the matrix open computes four numbers per library instead of
+    `stats` maps sample -> {"n", "median", "q1", "q3", "mad"}. This is what the pipeline uses: the
+    worker that already has the matrix open computes five numbers per library instead of
     returning a per-nucleus array, so nothing scales with cell count across the task boundary.
+
+    The APPLIED fence is `median + k * 1.4826 * MAD`. Tukey's `Q3 + mult * IQR` is computed from
+    the same summary and carried as an independent cross-check; it is never applied.
     """
     if assay not in MITO_BOUNDS and bounds is None:
         raise ThresholdRefusal(
@@ -351,39 +537,150 @@ def derive_mito_ceiling_from_quartiles(stats, assay="snrna", bounds=None, mult=I
         raise ThresholdRefusal(f"mitochondrial bounds must satisfy 0 <= lo < hi <= 100; got "
                                f"{lo}-{hi}.")
 
+    # k is DERIVED from the Tukey fence unless the caller states one. A caller-supplied k is
+    # allowed - a re-run reproducing an earlier cohort needs it - but it is recorded as declared,
+    # because a number that came from an argument did not come from the data.
+    if k is None:
+        sel = select_mad_k({s: st for s, st in stats.items()
+                            if all(key in st for key in ("median", "q1", "q3", "mad"))},
+                           mult=mult)
+        k, k_notes, k_source = sel["k"], sel["notes"], "derived"
+    else:
+        sel = None
+        k_notes = [f"MAD k = {k} DECLARED by the caller, not derived from this cohort's Tukey "
+                   f"fences. Reproducing an earlier run is the reason to do this; choosing a "
+                   f"number because the result looked better is not."]
+        k_source = "declared"
+    if not (k > 0):
+        raise ThresholdRefusal(f"MAD multiplier k must be positive; got {k}. A fence at or below "
+                               f"the median is not an upper fence.")
+
     out = {}
     for s, st in stats.items():
-        missing = [k for k in ("n", "median", "q1", "q3") if k not in st]
+        # "mad" is required, not defaulted. A summary produced before this module applied the MAD
+        # fence has no `mad` key, and silently falling back to Tukey would apply a DIFFERENT
+        # threshold under the same name - the exact substitution this pipeline exists to prevent.
+        missing = [key for key in ("n", "median", "q1", "q3", "mad") if key not in st]
         if missing:
             raise ThresholdRefusal(
-                f"{s}: quartile summary is missing {missing}. A ceiling cannot be derived from a "
-                f"partial summary, and defaulting the missing part would invent the threshold.")
+                f"{s}: per-library summary is missing {missing}. A ceiling cannot be derived from "
+                f"a partial summary, and defaulting the missing part would invent the threshold. "
+                f"If 'mad' is the missing key, the summary predates the MAD fence and the run must "
+                f"be recomputed rather than reinterpreted.")
         q1, q3 = float(st["q1"]), float(st["q3"])
         if not (q1 <= q3):
             raise ThresholdRefusal(f"{s}: q1 ({q1}) exceeds q3 ({q3}) - the summary is not a "
                                    f"quartile summary of anything.")
-        raw = q3 + mult * (q3 - q1)
+        mad = float(st["mad"])
+        if mad < 0:
+            raise ThresholdRefusal(f"{s}: MAD is {mad}, which is not a deviation.")
+        med = float(st["median"])
+        raw = med + k * MAD_SCALE * mad          # APPLIED
+        tuk = q3 + mult * (q3 - q1)              # cross-check, never applied
         c = min(max(raw, lo), hi)
         out[s] = MitoCeiling(
-            sample=s, n=int(st["n"]), median=float(st["median"]), q1=q1, q3=q3,
-            derived=raw, ceiling=c,
+            sample=s, n=int(st["n"]), median=med, q1=q1, q3=q3, mad=mad,
+            derived=raw, tukey=tuk, ceiling=c,
             clamped="upper" if c < raw else ("lower" if c > raw else ""))
 
-    n_clamped = sum(1 for m in out.values() if m.clamped)
+    lower = sorted(s for s, m in out.items() if m.clamped == "lower")
+    upper = sorted(s for s, m in out.items() if m.clamped == "upper")
+    n_clamped = len(lower) + len(upper)
     notes = [f"bound {lo}-{hi}% ({'assay default: ' + assay if bounds is None else 'DECLARED'})"]
+    notes.extend(k_notes)
     if declared_by:
         notes.append(f"declared by the analyst: {declared_by!r}")
-    if out and n_clamped / len(out) > BOUND_BINDS_REVIEW:
-        raise ThresholdRefusal(
-            f"the declared bound {lo}-{hi}% binds in {n_clamped} of {len(out)} libraries. A bound "
-            f"is a guard rail on a derived fence; when it binds in most libraries it IS the "
-            f"threshold, and reporting it as derived would be false. Either widen the bound, or "
-            f"apply it deliberately as a declared constant and say so.")
-    notes.append(f"bound binds in {n_clamped} of {len(out)} libraries")
-    notes.append("DERIVED per library, but the BOUND is declared - and what a mitochondria-high "
-                 "population IS remains adjudicated; see mito_ceiling_note()")
-    return {"ceilings": out, "bounds": (lo, hi), "mult": mult, "assay": assay,
-            "declared_by": declared_by, "notes": notes}
+
+    # The two directions are reported apart because they are opposite events. An UPPER clamp means
+    # the library's own fence asked for a ceiling higher than the analyst allows, so the bound
+    # REMOVES nuclei the derivation would have kept - that is the direction that can delete signal.
+    # A LOWER clamp means the fence was stricter than the analyst allows, so the bound RETAINS
+    # nuclei the derivation would have cut. Counting them together gives one number that cannot
+    # answer the only question worth asking of it: which way did the declaration push?
+    notes.append(
+        f"bound binds in {n_clamped} of {len(out)} libraries "
+        f"(lower {len(lower)}: {', '.join(lower) if lower else 'none'}; "
+        f"upper {len(upper)}: {', '.join(upper) if upper else 'none'})")
+
+    # Reclassification, not refusal. Until 2026-08-11 this raised, on the reasoning that a bound
+    # binding in most libraries IS the threshold and reporting it as derived would be false. The
+    # reasoning is right and the remedy was wrong: refusing does not stop the number being wrongly
+    # classified, it stops the run - and it fires hardest exactly when an analyst has deliberately
+    # narrowed the bound, which is a legitimate thing to do. So the class changes instead, and it
+    # travels with the result. A parameter whose class is honest can be argued with; a run that
+    # will not start cannot.
+    bound_dominated = bool(out) and n_clamped / len(out) > BOUND_BINDS_REVIEW
+    provenance = "bound_dominated" if bound_dominated else "derived"
+    if bound_dominated:
+        notes.append(
+            f"REVIEW - BOUND-DOMINATED, not derived. The bound {lo}-{hi}% decides the ceiling in "
+            f"{n_clamped} of {len(out)} libraries, so for most of this cohort the applied number "
+            f"is the DECLARATION and not that library's own fence. It is reported as such rather "
+            f"than described as derived. This is usable and it is not a measurement: to make it a "
+            f"derivation again, widen the bound; to keep it, say in the record that the ceiling "
+            f"here is a declared constant with a per-library exception where the fence is tighter")
+    else:
+        notes.append("DERIVED per library, but the BOUND is declared - and what a mitochondria-high "
+                     "population IS remains adjudicated; see mito_ceiling_note()")
+
+    # Spread of the APPLIED ceiling. This is not the same property as the design differential and
+    # is not implied by it: the differential asks whether removal falls evenly across the arms of
+    # the design, this asks whether one filter is treating samples of one experiment alike at all.
+    # A cohort can pass the differential while its ceiling varies fourfold, which is how a 6.12%
+    # library and a 25.00% library sat in one deliverable without either check objecting.
+    ceilings = [m.ceiling for m in out.values()]
+    spread = (max(ceilings) / min(ceilings)) if ceilings and min(ceilings) > 0 else None
+    if spread is not None:
+        notes.append(f"applied ceiling spans {min(ceilings):.2f}-{max(ceilings):.2f}% "
+                     f"({spread:.2f}x across {len(ceilings)} libraries)")
+        if spread > CEILING_SPREAD_REVIEW:
+            notes.append(
+                f"REVIEW - the applied ceiling differs {spread:.2f}x between the least and most "
+                f"permissive library. One filter is treating samples of one experiment very "
+                f"differently; that is technical unless the libraries themselves differ that "
+                f"much. Check whether the widest and narrowest sit in different arms of the "
+                f"design before accepting it")
+
+    # A MAD of zero means more than half this library's nuclei share one mitochondrial value, so
+    # the fence collapses onto the median and every nucleus above it is called an outlier. The
+    # bound catches the case where the median is below `lo`; above it, nothing else would.
+    flat = sorted(s for s, m in out.items() if m.mad <= 0)
+    if flat:
+        notes.append(
+            f"REVIEW - MAD is zero in {', '.join(flat)}. More than half of those libraries' nuclei "
+            f"carry one mitochondrial value, so the fence sits ON the median and roughly half the "
+            f"library is above it. That is a property of the measurement, not an outlier "
+            f"population; do not apply the ceiling there without looking at the distribution")
+
+    # The independent second derivation. Only UNCLAMPED libraries are compared: two clamped values
+    # agree because the bound made them agree, and counting that as corroboration reports
+    # confidence the data did not supply.
+    checked = {s: m for s, m in out.items() if not m.clamped and m.cross_check is not None}
+    diverged = sorted(s for s, m in checked.items()
+                      if m.cross_check > CROSS_CHECK_REVIEW or m.cross_check < 1 / CROSS_CHECK_REVIEW)
+    if checked:
+        ratios = [m.cross_check for m in checked.values()]
+        notes.append(
+            f"cross-check against Tukey (Q3 + {mult}*IQR), on the {len(checked)} of {len(out)} "
+            f"libraries the bound did not clamp: ratio {min(ratios):.2f}-{max(ratios):.2f}")
+    else:
+        notes.append(
+            f"cross-check against Tukey NOT EVALUATED - the bound clamped every library, so the "
+            f"two routes cannot be compared on any of them. This is not agreement")
+    if diverged:
+        notes.append(
+            f"REVIEW - the two independent fences disagree by more than {CROSS_CHECK_REVIEW}x in "
+            f"{', '.join(diverged)}. They are anchored differently (median vs Q3) and respond "
+            f"differently to skew, so a large divergence says that library's tail has a shape "
+            f"unlike its cohort's, not that one estimator is wrong. Look at it before accepting "
+            f"the ceiling")
+
+    return {"ceilings": out, "bounds": (lo, hi), "mult": mult, "assay": assay, "k": k,
+            "k_source": k_source, "k_selection": sel,
+            "declared_by": declared_by, "notes": notes, "provenance": provenance,
+            "clamped_lower": tuple(lower), "clamped_upper": tuple(upper),
+            "ceiling_spread": spread, "cross_check_diverged": tuple(diverged),
+            "cross_check_evaluated": tuple(sorted(checked)), "mad_zero": tuple(flat)}
 
 
 # The design-differential refusal line and the materiality floor below which a ratio is not a

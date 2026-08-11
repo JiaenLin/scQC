@@ -63,8 +63,16 @@ CHECKS = [
     ("valley spread review", const(Q, "SPREAD_REVIEW") == "2.0", "**2.0×**" in doc),
     ("Tukey multiplier", const(Q, "IQR_MULT") == "1.5", "1.5 x IQR" in doc),
     ("mitochondrial bounds",
-     const(Q, "MITO_BOUNDS") == '{"snrna": (5.0, 25.0), "scrna": (10.0, 30.0)}',
-     "5 – 25%" in doc and "10 – 30%" in doc),
+     const(Q, "MITO_BOUNDS") == '{"snrna": (10.0, 25.0), "scrna": (10.0, 30.0)}',
+     "10 – 25%" in doc and "10 – 30%" in doc),
+    # k is DERIVED per cohort, so there is no k constant to check - what must stay true is that
+    # the document says so, and that the sanity limits on the derived value match the code.
+    ("MAD k is derived, not a constant",
+     "MAD_K =" not in src(Q) and "def select_mad_k" in src(Q),
+     "**derived, not declared**" in doc),
+    ("MAD k sanity limits", const(Q, "MAD_K_BOUNDS") == "(2, 10)",
+     "`MAD_K_BOUNDS = (2, 10)`" in doc),
+    ("MAD scale factor", const(Q, "MAD_SCALE") == "1.4826", "1.4826" in doc),
     ("light floor default", const(L, "DEFAULT_FLOOR") == "200", "defaulting to **200**" in doc),
     ("doublet silence", const(D, "ZERO_RATE") == "0.005", "< 0.5%" in doc),
     ("doublet rate imposed", const(D, "SPREAD_IMPOSED") == "1.05", "1.05×" in doc),

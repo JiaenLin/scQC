@@ -147,27 +147,75 @@ the percentage of a barcode's counts falling in genes matched by the declared `m
 Per library, over the population defined below:
 
 ```
+# 1. calibrate: what multiple of the scaled MAD does Tukey's fence sit at, per library?
 IQR   = Q3 - Q1
-raw   = Q3 + 1.5 x IQR          # Tukey's upper fence
-ceiling = min(max(raw, lo), hi) # clamped to the assay's bounds
+tukey = Q3 + 1.5 x IQR                       # the calibration instrument, never applied
+k_i   = (tukey - median) / (1.4826 x MAD)
+k     = round(median(k_i))                   # ONE cohort constant, DERIVED
+
+# 2. apply
+raw     = median + k x 1.4826 x MAD          # the applied fence
+ceiling = min(max(raw, lo), hi)              # clamped to the assay's bounds
 ```
 
-Quartiles are linearly interpolated. The bounds are a **declared statement about what a nucleus
-can be**, not a measurement:
+**Two estimators, two jobs.** Tukey decides *how far out* a fence should sit — it is anchored at
+Q3 and adapts to a right-skewed tail, which is what makes it a good calibrator. The MAD fence is
+what gets applied, because it is anchored at the median and compresses the extremes, so no single
+library's ceiling runs away from the cohort. Tukey is then retained per library as an
+**independent cross-check** and is never applied.
+
+`k` is **derived, not declared** — a property of the cohort's tail shape rather than a number
+someone chose. It is rounded to an integer because the per-library `k_i` typically span far more
+than a decimal's worth: on the calibration cohort they ran **3.44 to 6.56** (1.90×) for a median
+of 4.26, applied as **k = 4**. `MAD_K_BOUNDS = (2, 10)` are sanity limits; a cohort landing outside
+them is reported, not silently clamped to the edge. A library with `MAD = 0` is excluded from the
+calibration, because its implied k is undefined and a library that cannot contribute must not be
+able to change the answer by being counted as a default.
+
+Quartiles and the MAD are linearly interpolated. The bounds are a **declared statement about what
+a nucleus can be**, not a measurement:
 
 | Assay | Bounds |
 |---|---|
-| `snrna` | 5 – 25% |
+| `snrna` | 10 – 25% |
 | `scrna` | 10 – 30% |
 
 An unknown assay with no explicit bounds is refused — guessing a bound for an unknown assay is
 guessing what a cell can be. Non-default bounds require `declared_by`: the analyst's own words for
 why they are what they are, because the bound is the one part of this the data cannot supply.
 
+> **The snRNA lower bound was 5% until 2026-08-11.** It was raised because 5% permitted an applied
+> ceiling to vary **4.08×** across ten libraries of one cohort (6.12% to 25.00%) — one filter doing
+> very different things to samples of one experiment. A library whose fence lands at 6% is being
+> cut close to its own third quartile, and nothing establishes that a nuclei prep separating at 6%
+> differs biologically from one separating at 25% by that factor. At 10–25% the same cohort spreads
+> 2.50×.
+>
+> **The trade this makes**, measured, because it is not obvious: raising the floor acts only on
+> libraries with a low fence, so where those correlate with a design arm it makes the *applied
+> threshold* more even while making the *removal rate* less even. On that cohort, mitochondrial
+> removal by diet moved 1.10× → 1.30×, and within the arm carrying the interaction 0.91× → 0.73×
+> — both far below the 3× refusal line — while 1,228 more nuclei of 117,021 were retained.
+> Threshold-evenness and removal-evenness are different properties that pull against each other.
+
 **When the bound binds, the per-library derivation was not used.** Each library's `clamped` field
-records `upper`, `lower` or blank, and the count of clamped libraries is reported. If the bound
-binds in more than half the cohort, that is flagged: a "per-library" ceiling that is really the
-declared constant for most libraries should not be described as derived.
+records `upper`, `lower` or blank, and the two directions are counted and named **separately**,
+because they are opposite events: an **upper** clamp removes nuclei the library's own fence would
+have kept — the only direction that can delete signal — while a **lower** clamp retains nuclei the
+fence would have cut.
+
+If the bound decides the ceiling in more than half the cohort, the result is **reclassified rather
+than refused**: `provenance` becomes `bound_dominated` instead of `derived`, and a REVIEW note says
+so. A ceiling that is really the declared constant for most libraries must not be *described* as
+derived — but refusing to run does not fix the classification, it only stops the analysis, and it
+fires hardest when an analyst has deliberately narrowed the bound, which is legitimate.
+
+**The spread of the applied ceiling is reported, and reviewed above `CEILING_SPREAD_REVIEW`
+(3.0×).** This is not implied by the design differential: the differential asks whether removal
+falls evenly across the arms of the design, the spread asks whether one filter is treating samples
+of one experiment alike at all. A cohort can pass the first while its ceiling varies fourfold —
+which is exactly how a 6.12% library and a 25.00% library came to sit in one deliverable with
+neither check objecting.
 
 ### Which population the quartiles are taken over
 

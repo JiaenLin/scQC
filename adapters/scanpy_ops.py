@@ -2237,7 +2237,19 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                 lo_i = int(h)
                 hi_i = min(lo_i + 1, len(_v) - 1)
                 return _v[lo_i] + (h - lo_i) * (_v[hi_i] - _v[lo_i])
-            mito = {"n": len(_v), "median": _q(0.5), "q1": _q(0.25), "q3": _q(0.75),
+            # MAD travels with the quartiles because both are needed and the matrix is open
+            # exactly once. The ceiling is derived from median + k*1.4826*MAD; Tukey's
+            # Q3 + 1.5*IQR is carried alongside as an independent second derivation, and the
+            # two disagreeing is a finding rather than something for one of them to absorb.
+            # Computing it here rather than in the decision layer keeps the per-nucleus array
+            # on this side of the task boundary - nothing that scales with cell count crosses.
+            _med = _q(0.5)
+            _dev = sorted(abs(x - _med) for x in _v)
+            _h = (len(_dev) - 1) * 0.5
+            _lo_i = int(_h)
+            _hi_i = min(_lo_i + 1, len(_dev) - 1)
+            mito = {"n": len(_v), "median": _med, "q1": _q(0.25), "q3": _q(0.75),
+                    "mad": _dev[_lo_i] + (_h - _lo_i) * (_dev[_hi_i] - _dev[_lo_i]),
                     "max": _v[-1]}
     # Recorded whether or not quartiles were placed, so a reader can never see a ceiling without
     # seeing the population it was taken over.

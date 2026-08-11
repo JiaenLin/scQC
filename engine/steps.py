@@ -997,15 +997,23 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
         # population it was taken over: two implementations of the same published rule, applied to
         # the same libraries, disagreed on 7 of 10 ceilings for no other reason than this column
         # being absent on both sides, and neither could tell which one was different.
-        w.writerow(["sample", "n", "median", "q1", "q3", "iqr", "derived", "ceiling", "clamped",
-                    "iqr_mult", "assay", "bound_lo", "bound_hi",
+        # `derived` is the APPLIED fence (MAD route); `tukey` is the independent cross-check and is
+        # never applied. Both are written, with the skew ratio that explains any gap between them,
+        # so a reader can see whether the two routes agreed instead of being told that they did.
+        w.writerow(["sample", "n", "median", "q1", "q3", "iqr", "mad", "smad", "skew_iqr_over_smad",
+                    "derived", "tukey_crosscheck", "tukey_over_derived", "ceiling", "clamped",
+                    "mad_k", "iqr_mult", "assay", "bound_lo", "bound_hi",
                     "pop_floor_umi", "pop_n_all_called"])
         for s in samples:
             m = ceil[s]
             pp = (mito_pop or {}).get(s) or {}
             w.writerow([s, m.n, f"{m.median:.6f}", f"{m.q1:.6f}", f"{m.q3:.6f}",
-                        f"{m.iqr:.6f}", f"{m.derived:.6f}", f"{m.ceiling:.6f}", m.clamped,
-                        d["mult"], assay, lo, hi,
+                        f"{m.iqr:.6f}", f"{m.mad:.6f}", f"{m.smad:.6f}",
+                        "" if m.skew_ratio is None else f"{m.skew_ratio:.6f}",
+                        f"{m.derived:.6f}", f"{m.tukey:.6f}",
+                        "" if m.cross_check is None else f"{m.cross_check:.6f}",
+                        f"{m.ceiling:.6f}", m.clamped,
+                        d.get("k", ""), d["mult"], assay, lo, hi,
                         pp.get("floor_umi", ""), pp.get("n_all_with_a_value", "")])
 
     out = dict(out)

@@ -72,9 +72,70 @@ Two things this row should teach a reader of another cohort:
 - **The 6.12–25.00% range is not transferable.** It is what ten libraries of one cohort produced.
   The **procedure** ships; the numbers do not.
 - **The bound is the only DECLARED part**, and it must be re-declared in the analyst's own words.
-  On this cohort it bound in 3 of 10 libraries — a guard rail. `derive_mito_ceiling` refuses if it
-  binds in most, because a declared number that overrides most libraries has become the threshold
-  while still being reported as derived.
+
+### Revised 2026-08-11 — Tukey calibrates, MAD applies, and `k` is derived
+
+The account above describes the fence as `Q3 + 1.5 × IQR` applied directly. That is no longer what
+is applied, and the reasoning for the change is worth more than the change itself.
+
+**What was wrong with applying Tukey.** Nothing statistically — it is the better estimator for a
+right-skewed tail, and on this cohort it gave the most even *removal* of anything tested (1.09×
+across the interaction arm, unbounded). The objection is biological. Tukey adapts without limit to
+a wide tail, and on one library it adapted to **25.88%**. A ceiling that high is a statement about
+that prep, not about what a nucleus can be. In heart in particular, where cardiomyocytes are the
+most mitochondria-rich cell type in the body, letting the ceiling track a library's own tail that
+far means the filter's severity is set by prep quality.
+
+**Why the spread is prep, not biology.** The decisive measurement is available because the design
+has replicates: the fence varied **more between two mice of the same group (3.87×) than between
+the design groups (2.59×)**. A biological replicate cannot differ by more than the design and
+still have that variation be the design. The UMI valley is the control and behaves oppositely —
+within-group 1.33× against between-group 1.52× — which is why *it* collapses safely to one cohort
+constant and the mitochondrial fence does not.
+
+**The design now applied.** Tukey is retained as the *calibration instrument* and never applied:
+
+```
+k_i = (Q3_i + 1.5*IQR_i - median_i) / (1.4826 * MAD_i)      per library
+k   = round(median(k_i))                                     ONE cohort constant, DERIVED
+raw = median + k * 1.4826 * MAD                              applied
+```
+
+On this cohort `k_i` ran **3.44 to 6.56** (1.90×) for a median of **4.26**, giving **k = 4**. The
+per-library k is a perfect monotone function of skew (`IQR / 1.4826·MAD`, which is 1.349 for a
+normal distribution and ran 1.59–2.82 here) — which is also why no single k reproduces Tukey, and
+why the cohort value is rounded to an integer rather than carried to a decimal it cannot support.
+
+Applied at bound 10–25%, this cohort gives ceilings **10.00–20.51% (2.05×)**, with the bound
+binding in 4 of 10 libraries — all lower, none upper — so the result classifies as `derived`
+rather than `bound_dominated`. Tukey then flags **Young1**, the most skewed library, as the one
+place the two independent routes disagree by more than 1.5×.
+
+### The trade this makes, measured, because it is not visible from the number
+
+Threshold evenness and removal evenness pull against each other, monotonically, across every rule
+tested on this cohort:
+
+| rule | ceiling spread | removal differential (interaction arm) |
+|---|---|---|
+| cohort constant 12.65% | 1.00× | 2.77× |
+| **MAD k=4, bound 10–25 — applied** | **2.05×** | **1.75×** |
+| MAD k=5, bound 10–25 | 2.46× | 1.60× |
+| Tukey, bound 10–25 | 2.50× | 1.37× |
+| Tukey, unbounded | 4.23× | 1.09× |
+
+Every step toward a more uniform *threshold* costs a less uniform *effect*. The reason is that the
+quantity being fenced genuinely varies — Q3 spreads 3.91× and IQR 4.75× across these libraries —
+so an estimator whose output spreads less is not being more consistent, it is under-adapting. The
+choice of where to sit on that curve is the analyst's, and it is a judgement about which error is
+worse for the study at hand. Here it was made deliberately in favour of the biological ceiling.
+
+**Two costs recorded rather than smoothed over.** The nuclei a ~6–7% ceiling was removing were
+indistinguishable from those it kept in three of four affected libraries (median depth 0.88–0.96×
+that of retained nuclei) — which is what motivated the floor. But in the fourth, `Aging_HFD1`, the
+band *did* look damaged (0.52×), so the floor admits ~173 questionable nuclei there. And because
+nuclei above 10% also carry normal depth in this cohort, nothing here establishes that 10% is
+where to stop — only that 6% was too low.
 
 ## What one cohort cannot establish
 
