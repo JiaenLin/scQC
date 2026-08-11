@@ -518,8 +518,19 @@ def cmd_run(a) -> int:
                 bad = [f"{k}: {r.status.value}" for k, r in sorted(pipe.results_by_key.items())
                        if r.status.value in ("refused", "failed")]
                 stopped = "; ".join(bad) or None
-            build_report(pipe.report_payload(stopped=stopped), html,
-                         pipe.results / "reports" / "report.json")
+            payload = pipe.report_payload(stopped=stopped)
+            # THE PAYLOAD IS REWRITTEN WITH THE DOCUMENT BUILT FROM IT.
+            #
+            # This wrote the HTML and the JSON and left `payload.json` as whatever the report TASK
+            # had written - and on a resumed run that task is SKIPPED, so the payload on disk was
+            # the previous version's while the report beside it was this one's. `scqc report`
+            # rebuilds from `payload.json`, so running it would have regenerated an OLDER document
+            # over a newer one: on this cohort, a report with no parameter table and freshness
+            # NOT CHECKED, replacing one that had both. Staleness with no symptom, between two
+            # files that are meant to be two views of the same thing.
+            (pipe.results / "reports" / "payload.json").write_text(
+                json.dumps(payload, indent=1, default=str), encoding="utf-8")
+            build_report(payload, html, pipe.results / "reports" / "report.json")
             print(f"\nreport   : {html}")
         except Exception as e:                                        # noqa: BLE001
             print(f"\nreport   : COULD NOT BE WRITTEN - {type(e).__name__}: {e}",

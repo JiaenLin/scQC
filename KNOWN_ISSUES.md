@@ -62,6 +62,20 @@ Residual, and stated because it is a limit rather than a defect: the sweep behin
 nothing, so it is not imposed on a run that did not ask for it; where the figure would be, the
 report names the flag that produces it.
 
+## 1c. The payload and the report beside it could disagree — FIXED
+
+`scqc report <results>` rebuilds a document from `payload.json`, and `finish()` wrote the HTML and
+the JSON while leaving the payload as whatever the report TASK had written. On a resumed run that
+task is SKIPPED, so the payload on disk was the previous version's while the report beside it was
+this one's — two files meant to be two views of one thing, quietly describing different runs.
+
+Caught on this cohort with the worst possible timing: the stale payload predated the parameter
+table and the freshness feed, so running `scqc report` would have regenerated a document with **no
+section 2 and freshness NOT CHECKED**, over one that had both. It exits 0 and the result opens and
+reads like a correct report.
+
+`finish()` now writes the payload it built the document from.
+
 ## 2. The run key does not cover the code — OPEN
 
 `engine/runkey.py` hashes mode, the samplesheet's content and the DECLARED parameters. It does not
