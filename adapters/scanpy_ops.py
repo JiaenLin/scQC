@@ -2347,6 +2347,72 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
             barcode_column=str(params.get("doublet_barcode_column", "barcode")),
             class_column=str(params.get("doublet_class_column", "doublet_class")))
 
+    # THE POPULATION STEP 6 IS SPECIFIED TO CLUSTER.
+    #
+    # `cluster_flags.py` requires "the step-5 object: quality-filtered, with the doublet flags
+    # ATTACHED and NOT applied". The object this op reads is the DENOISED FULL DROPLET MATRIX, so
+    # without this mask the clustering runs over empty droplets. Measured on the calibration
+    # cohort, that cost: 1,398 of 1,531 clusters held no cell that reached the deliverable; leiden
+    # spends a fixed resolution over what it is given, so the real cells were left UNDER-RESOLVED
+    # at 245 clusters for a library with 8 real ones; and because every criterion is a cluster
+    # MEDIAN, the libraries with the most droplet noise raised the FEWEST flags - backwards, and
+    # on that cohort the bias ran along a design factor.
+    #
+    # THE MASK IS THE QUALITY FILTER WITHOUT THE DOUBLET CRITERION. Doublets stay attached and
+    # unapplied because criterion D is only computable before a removal: afterwards every cluster
+    # is 0% doublet by construction, which is the tautology the doublet_key check above guards.
+    #
+    # NOTHING IS REMOVED FROM A DELIVERABLE HERE. This op writes cluster labels for step 7 to
+    # carry; step 7 remains the only place an observation is dropped. `population` is required to
+    # be PRESENT and may be null - an omitted key and a deliberate "cluster everything" are the
+    # same JSON and are not the same fact.
+    if "population" not in params:
+        raise TaskFailure(
+            "parameter 'population' must be present, and may be null. Omitting it and declaring "
+            "an unfiltered population produce the same clustering, and which cells were clustered "
+            "is what decides whether step 6's flags describe nuclei or empty droplets.")
+    pop = params.get("population")
+    n_before = int(adata.n_obs)
+    pop_note = "UNFILTERED - every droplet clustered, including empty ones"
+    if not _unknown(pop):
+        import numpy as _np
+        keep = _np.ones(n_before, dtype=bool)
+        applied = []
+        cc = pop.get("cell_call_key")
+        if not _unknown(cc):
+            if cc not in adata.obs.columns:
+                raise TaskFailure(
+                    f"population declares cell_call_key={cc!r} and obs has no such column. "
+                    f"Clustering the unfiltered object instead would silently reproduce the "
+                    f"defect this parameter exists to fix.")
+            keep &= _float_array(adata.obs[cc].astype(float)) > 0.5
+            applied.append(f"{cc}")
+        for key, col, op in (("umi_floor", "total_counts", "ge"),
+                             ("gene_floor", "n_genes_by_counts", "ge"),
+                             ("mito_ceiling", "pct_counts_mt", "le")):
+            v = pop.get(key)
+            if _unknown(v):
+                continue
+            if col not in adata.obs.columns:
+                raise TaskFailure(
+                    f"population declares {key}={v} and obs has no {col!r} to apply it to.")
+            arr = _float_array(adata.obs[col])
+            # An unmeasured value is NOT a pass. NaN fails both comparisons in numpy, which is the
+            # behaviour wanted here: a cell whose depth was never measured is not evidence of a
+            # cell that passed.
+            keep &= (arr >= float(v)) if op == "ge" else (arr <= float(v))
+            applied.append(f"{col}{'>=' if op == 'ge' else '<='}{v}")
+        n_keep = int(keep.sum())
+        if n_keep < 50:
+            raise TaskFailure(
+                f"the declared population leaves {n_keep} cell(s) of {n_before} - too few to "
+                f"cluster. A threshold this severe is a mistake in the declaration, and "
+                f"clustering the remainder would produce flags about nothing.")
+        adata = adata[keep].copy()
+        pop_note = (f"quality-filtered before clustering: {n_keep} of {n_before} "
+                    f"({100.0 * n_keep / n_before:.1f}%) by {', '.join(applied)}; "
+                    f"doublets ATTACHED and NOT applied")
+
     uninformative = params.get("uninformative_genes")
     if _unknown(uninformative):
         # The locked set is the mt+ribo symbols qc_metrics MATCHED in this object, taken as a

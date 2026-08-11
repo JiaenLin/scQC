@@ -1030,6 +1030,50 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
 # step 6 - cluster, profile, flag
 
 
+def _population_for_cluster(pipeline, sample):
+    """The cells step 6 is specified to cluster: quality-filtered, doublets NOT applied.
+
+    # rule-one: no-removal - this reads two tables step 5 wrote and returns four numbers.
+
+    Read from step 5's own output rather than recomputed, so the cells clustered are the cells
+    the deliverable will contain and the two cannot drift. Returns None when step 5 left no
+    table, which the op reports as an UNFILTERED clustering rather than silently accepting.
+
+    The doublet criterion is deliberately absent. Criterion D is only computable before a
+    removal; afterwards every cluster is 0% doublet by construction.
+    """
+    import csv as _csv
+
+    tdir = _tables(pipeline)
+    ceiling = None
+    try:
+        with open(tdir / "mito_ceiling_per_sample.csv", newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                if row.get("sample") == sample:
+                    ceiling = float(row["ceiling"])
+                    break
+    except (OSError, KeyError, ValueError):
+        return None
+
+    umi = gene = None
+    try:
+        with open(tdir / "thresholds_per_sample.csv", newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                if str(row.get("sample", "")).strip().lower() == "scope":
+                    continue          # the scope row, not a library
+                if row.get("sample") == sample:
+                    umi = float(row["umi_floor_proposed"])
+                    gene = float(row["gene_floor_proposed"])
+                    break
+    except (OSError, KeyError, ValueError):
+        return None
+
+    if ceiling is None or umi is None or gene is None:
+        return None
+    return {"cell_call_key": "cellbender_cell", "umi_floor": umi,
+            "gene_floor": gene, "mito_ceiling": ceiling}
+
+
 def _cluster(task, pipeline, log):
     p = task.params
     _require_gene_patterns("06_cluster_check", p)
@@ -1047,7 +1091,13 @@ def _cluster(task, pipeline, log):
                     # doublet by construction - and this is the last point at which that holds.
                     "doublet_csv": p["doublet_csv"],
                     "doublet_key": "doublet_class",
-                    "doublet_positive": "doublet"},
+                    "doublet_positive": "doublet",
+                    # The population cluster_flags.py specifies. Step 5 has already derived every
+                    # floor and this library's ceiling, so they are declared here rather than
+                    # re-derived: step 6 must cluster the cells that reach the deliverable, not
+                    # the droplet matrix they were selected from. The doublet criterion is
+                    # deliberately absent - see the op.
+                    "population": _population_for_cluster(pipeline, p["sample"])},
                    log, p["python_exe"])
 
 
