@@ -15,9 +15,11 @@ references/*/
 work/
 results/
 
-# Python.
+# Python. `*.pyc.tmp` is the half-written byte-code CPython leaves when a compile is
+# interrupted; four of them were committed and shipped to every user of this repository.
 __pycache__/
 *.pyc
+*.pyc.tmp
 .venv/
 venv/
 *.egg-info/

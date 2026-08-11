@@ -379,8 +379,8 @@ def _defect(defects: list, where: str, what: str, severity: str = "defect") -> N
     defects.append({"where": where, "what": what, "severity": severity})
 
 
-#: `finding 7 (per_setting (Aging1))` and `finding 12 (per_setting (Young2))` are ONE fact about
-#: the pipeline, written ten times. The index and the library differ; neither is the cause.
+#: `finding 7 (per_setting (lib1))` and `finding 12 (per_setting (lib7))` are ONE fact about the
+#: pipeline, written once per library. The index and the library differ; neither is the cause.
 _FINDING_INSTANCE = re.compile(r"finding \d+ \(([^()]+?)(?: \(([^()]+)\))?\)")
 
 

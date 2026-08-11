@@ -108,8 +108,8 @@ why the cohort value is rounded to an integer rather than carried to a decimal i
 
 Applied at bound 10–25%, this cohort gives ceilings **10.00–20.51% (2.05×)**, with the bound
 binding in 4 of 10 libraries — all lower, none upper — so the result classifies as `derived`
-rather than `bound_dominated`. Tukey then flags **Young1**, the most skewed library, as the one
-place the two independent routes disagree by more than 1.5×.
+rather than `bound_dominated`. Tukey then flags **the most skewed library** as the one place
+the two independent routes disagree by more than 1.5×.
 
 ### The trade this makes, measured, because it is not visible from the number
 
@@ -132,8 +132,8 @@ worse for the study at hand. Here it was made deliberately in favour of the biol
 
 **Two costs recorded rather than smoothed over.** The nuclei a ~6–7% ceiling was removing were
 indistinguishable from those it kept in three of four affected libraries (median depth 0.88–0.96×
-that of retained nuclei) — which is what motivated the floor. But in the fourth, `Aging_HFD1`, the
-band *did* look damaged (0.52×), so the floor admits ~173 questionable nuclei there. And because
+that of retained nuclei) — which is what motivated the floor. But in the fourth the band *did*
+look damaged (0.52×), so the floor admits ~173 questionable nuclei there. And because
 nuclei above 10% also carry normal depth in this cohort, nothing here establishes that 10% is
 where to stop — only that 6% was too low.
 

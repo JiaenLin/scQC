@@ -492,14 +492,144 @@ class Pipeline:
             # payload without them and wrote a figure-less document over the top - the identical
             # failure this comment already described, reproduced one key lower.
             **self._figures_block(),
+            # ONE ROW PER PARAMETER, WITH WHO WAS ALLOWED TO SET IT. `report/build.py` has
+            # validated this table since the report existed and nothing ever supplied it, so the
+            # section the design document calls "the point of this report" has never rendered.
+            "parameters": self._parameters_block(),
             "provenance": {**self.prov.snapshot(
                 self.project / "decisions.yml"
                 if (self.project / "decisions.yml").exists() else None),
-                **self._input_check_block()},
+                **self._input_check_block(),
+                **self._newest_input_block()},
             "open_items": ([f"{k} did not run: {first_line(self.results_by_key[k].message)}"
                             for k in sorted(stat) if stat[k] == "blocked"][:20]
                            or ["none recorded"]),
         }
+
+    #: The parameters that are true regardless of dataset. Changing one is a code change, which
+    #: is what FIXED means - they are listed rather than inferred because a contract nobody wrote
+    #: down is not a contract.
+    FIXED_PARAMETERS = (
+        ("cell caller", "the denoiser's output",
+         "pipeline contract: cell selection belongs to QC thresholds and doublet detection, not "
+         "to the tool chosen for denoising"),
+        ("variable-gene selection", "every gene, no class excluded",
+         "no mitochondrial, ribosomal or haemoglobin exclusion term exists; the flagged genes "
+         "selection CHOSE are reported instead"),
+        ("removal point", "step 7 only",
+         "no other step drops an observation, so a removal is recoverable from the ledger"),
+    )
+
+    #: Declared parameters, as the CLI names them: (tools key, label, the flag that sets it).
+    DECLARED_PARAMETERS = (
+        ("dbr", "doublet rate prior (dbr)", "--dbr"),
+        ("dbr_sd", "doublet prior uncertainty (dbr.sd)", "--dbr-sd"),
+        ("dbr_sd_sweep", "dbr.sd sweep", "--dbr-sd-sweep"),
+        ("light_floor", "light floor (UMI)", "--light-floor"),
+        ("resolution", "clustering resolution", "--resolution"),
+        ("seed", "seed", "--seed"),
+        ("device", "device", "--cpu"),
+    )
+
+    def _parameters_block(self) -> list | None:
+        """Every parameter this run applied, with its CLASS and the basis for it.
+
+        THE CLASS IS THE CLAIM. `DERIVED` says the data produced this number and it is
+        reproducible from the data alone; `ADJUDICATED` says a person chose it after seeing the
+        evidence, and carries their own words. The two look identical as values on a page and
+        carry completely different weight, which is the whole reason this section exists.
+
+        BUILT FROM THE MANIFEST AND THE DECLARATION, NOT FROM A STEP'S METRICS. The class of a
+        threshold is decided exactly as `steps._apply_thresholds` decides it - a decisions file
+        declares it or the pipeline derived it - so it is re-read from the same two sources here
+        rather than carried out of step 7. That keeps this buildable on a resumed run, where
+        step 7 is skipped and restores whatever metrics it recorded under an older version.
+
+        Returns None - never `[]` - when the run applied nothing, because the report reads an
+        empty list as "there were no parameters" and a null as "nobody wrote them down".
+        """
+        rows: list = []
+        for name, value, basis in self.FIXED_PARAMETERS:
+            rows.append({"name": name, "value": value, "class": "FIXED", "basis": basis})
+
+        for key, label, flag in self.DECLARED_PARAMETERS:
+            v = self.tools.get(key)
+            if v is None or v == "":
+                continue
+            rows.append({"name": label, "value": v, "class": "DECLARED",
+                         "basis": f"supplied as {flag} before the run; no default exists for it"})
+
+        # The thresholds step 7 applies. ADJUDICATED where the decisions file declares one - and
+        # the operator's own words travel with it, because a row asserting a human decided
+        # without any way to check that assertion is withheld by the report rather than printed.
+        from . import steps as _s
+
+        q = (self.decisions or {}).get("quality") or {}
+        cohort = (getattr(self.results_by_key.get("05_quality"), "metrics", None) or {})
+        applied = (getattr(self.results_by_key.get("07_apply"), "metrics", None) or {})
+        for leaf, label, derived_key in (("umi_floor", "UMI floor", "umi_proposed"),
+                                         ("gene_floor", "gene floor", "genes_proposed"),
+                                         ("mito_ceiling_pct", "mitochondrial ceiling", None)):
+            # `_attested`, NOT `isinstance(block, dict)`. A decisions entry with a value and no
+            # `approved_by`, or none of the operator's own words, is a number somebody typed and
+            # step 7 uses the DERIVED value instead. Reading it as adjudicated here would print a
+            # class the run did not apply - the report describing a different filter from the one
+            # that ran, which is the one failure this section exists to make impossible. The
+            # decision is taken by the same function step 7 takes it with, not by a copy of it.
+            block = q.get(leaf)
+            if _s._attested(block) is not None:
+                rows.append({"name": label, "value": block.get("value"),
+                             "class": "ADJUDICATED",
+                             "basis": "declared in decisions.yml, overriding what step 5 derived",
+                             "verbatim": block.get("verbatim") or "",
+                             "decided_by": block.get("approved_by") or "",
+                             "decided_on": block.get("approved_on") or ""})
+                continue
+            if derived_key:
+                value = cohort.get(derived_key)
+                basis = (f"step 5: the density valley measured per library, proposed as one "
+                         f"cohort constant and bounded")
+            else:
+                value = applied.get("ceilings") or "per library"
+                basis = ("step 5: median + k*1.4826*MAD over the barcodes above the light floor, "
+                         "with k derived from each library's Tukey fence and the whole bounded")
+            if value is None:
+                continue
+            rows.append({"name": label, "value": value, "class": "DERIVED", "basis": basis})
+
+        return rows or None
+
+    def _newest_input_block(self) -> dict:
+        """`{"newest_input": iso}` over the files this run READ, for the freshness comparison.
+
+        WHAT COUNTS AS AN INPUT is the whole question, and getting it wrong in either direction
+        breaks the check rather than tightening it. Everything this run wrote is excluded: an
+        artifact is trivially older than its own outputs, and a check that compares a report
+        against files the report caused would refuse every correct run. What is included is what
+        the run read and did not write - the samplesheet, the decisions file, and each library's
+        declared matrix and supplied ambient object.
+
+        Absent files are LISTED by `newest_input_time` rather than skipped, so a time computed
+        over three inputs where there were five cannot pass as the same measurement.
+        """
+        from report.build import newest_input_time
+
+        paths = [self.project / "samplesheet.csv"]
+        d = self.project / "decisions.yml"
+        if d.exists():
+            paths.append(d)
+        for row in self.samples:
+            for col in ("matrix", "ambient_h5"):
+                v = str(row.get(col) or "").strip()
+                if v:
+                    paths.append(v)
+        got = newest_input_time(paths)
+        if not got.get("newest_input"):
+            return {}
+        return {"newest_input": got["newest_input"],
+                "newest_input_path": got.get("newest_path"),
+                "inputs_absent": got.get("absent") or [],
+                "inputs_checked": got.get("n_checked")}
 
     def _input_check_block(self) -> dict:
         """`{"input_check": [...]}` from step 0, or `{}` so the report reports the absence.

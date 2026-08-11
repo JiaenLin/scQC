@@ -105,4 +105,6 @@ is not something to do in the middle of measuring a different change. Pin it.
   **The lesson is the same one this file already records about step 6:** a fix that leaves the
   symptom in place was not a fix, and "I edited the thing named in the defect" is not evidence.
   The acceptance test is that the REPORT changes.
-- Four `adapters/*.pyc.tmp` build artefacts are tracked in git.
+- ~~Four `adapters/*.pyc.tmp` build artefacts are tracked in git.~~ — FIXED. Removed from
+  the index and `*.pyc.tmp` added to `.gitignore`. They are half-written byte-code CPython
+  leaves behind when a compile is interrupted, and they were being shipped to every user.
