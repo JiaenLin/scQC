@@ -3,60 +3,28 @@
 Defects that are measured, reproduced and not yet fixed. A pipeline that reports its own limits is
 the point of this project, so they are written here rather than left in a run log.
 
-## 1. Step 6 clusters the wrong population — STILL OPEN. A fix is committed and DOES NOT WORK
+## 1. Step 6 clustered the wrong population — FIXED in `02a422d`, verified
 
-**Read this before assuming the mask is live.** Commit `96f76d4` added a `population` mask to
-`_op_cluster` and wired `_population_for_cluster()` in `engine/steps.py` to supply it. On a full
-re-run of the calibration cohort (2026-08-11) the mask **did not take effect**: step 6 reported
-the identical "1413 of 1531 clusters have a median UMI of zero", and the deliverable came out
-byte-identical. `_population_for_cluster()` returned None and the op fell back to clustering
-everything.
+`_op_cluster` opened the denoised FULL DROPLET matrix while `cluster_flags.py` specified the
+quality-filtered one. It now receives a `population` — cell call, count floors and the library's
+mitochondrial ceiling — and applies it before clustering. Doublets stay ATTACHED and NOT applied,
+because criterion D is only computable before a removal.
 
-The cause is in the fix, not the pipeline. `_population_for_cluster()` wraps its table reads in
-`except (OSError, KeyError, ValueError): return None`, so a failed read is indistinguishable from
-a deliberate "cluster everything" — the exact anti-pattern this project exists to prevent, sitting
-inside the repair for it. It is why the run looked healthy while doing the old thing.
+**Verified on the calibration cohort:** the `population clustered` REVIEW is gone; clusters per
+library are 11–15 where they were 8–21 set by droplet contamination (one library went 8 → 14,
+another 21 → 14); the deliverable is unchanged, since step 6 removes nothing.
 
-**Next step:** replace that `return None` with a refusal naming the file and the missing key, then
-re-run. The op's own refusals — absent population, unknown cell-call column, over-strict mask —
-are correct and covered by `tests/test_cluster_population.py`; only the supplier is broken. Check
-`_tables(pipeline)` at step-6 execution time first: `mito_ceiling_per_sample.csv` has no scope row
-while `thresholds_per_sample.csv` does, and the two readers treat them differently.
+**Two things this cost, both worth repeating to anyone touching this path.** The first fix
+(`96f76d4`) *never applied*: it read the count floors from `thresholds_per_sample.csv`, which a
+later task writes, so the read raised and an `except … return None` turned that into "cluster
+everything" — while the run exited 0 and produced a byte-identical deliverable. The floors were
+already in `results_by_key["05_quality"].metrics`. Both fallbacks are now refusals.
 
-Everything below describes the defect itself and remains accurate.
+**The acceptance test for anything here is that the step-6 finding CHANGES, not that the run
+succeeds.** The broken attempt succeeded.
 
-## 1. Step 6 clusters the wrong population — OPEN, affects every cohort
-
-**What happens.** `engine/steps.py::_cluster()` opens `results/objects/<sample>_ambient.h5`, the
-denoised FULL DROPLET matrix: no cell call, no count floor. `modules/06_cluster_check/
-cluster_flags.py` specifies the opposite in its own docstring — *"On the step-5 object:
-quality-filtered, with the doublet flags ATTACHED and NOT applied."* The pipeline reports the
-mismatch at runtime (`06_cluster_check / population clustered`) instead of refusing.
-
-**Why it happens.** An ordering gap, not a typo. Step 6 needs a filtered population and nothing
-builds one until step 7, and the doublet calls must still be attached-not-applied at that point
-because criterion D is uncomputable after a removal.
-
-**What it costs**, measured on the calibration cohort (10 libraries, 305,425 barcodes):
-
-- **1,398 of 1,531 clusters (91.3%) contain no cell that reaches the deliverable.**
-- Leiden spends a fixed resolution over what it is given, so the real cells are left
-  UNDER-RESOLVED: one library received 245 clusters, of which **8** hold retained cells.
-- Step 6's criteria are cluster MEDIANS and cannot fire on a blob that averages a library
-  together. **The five libraries raising zero flags are the five with the fewest real clusters** —
-  the dirtier the library, the fewer warnings it produces, which is backwards.
-- On that cohort four of those five sat in one arm of the design, so the bias ran along a design
-  factor and would have reached the study's primary readout.
-
-Any figure of the form "N cells in M flagged clusters" inherits this and should not be quoted.
-
-**The fix.** Step 5 already derives every floor and the per-library ceiling. Hand step 6 a
-KEEP-MASK — cell call AND count floors AND mitochondrial ceiling — and apply it in memory before
-`cluster()` runs. Doublets stay ATTACHED and are NOT applied. No object is written and nothing is
-removed, so step 7 remains the only place a removal happens.
-
-**Cost of fixing.** It regenerates the cluster flags, so any cohort already processed needs a
-re-run before its flags are usable. Cell counts are unaffected — step 6 removes nothing.
+Residual, and now a real question rather than an artefact: five libraries of ten report zero
+flagged clusters. That is no longer explained by clustering empty droplets.
 
 ## 2. The run key does not cover the code — OPEN
 
