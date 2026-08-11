@@ -3,6 +3,28 @@
 Defects that are measured, reproduced and not yet fixed. A pipeline that reports its own limits is
 the point of this project, so they are written here rather than left in a run log.
 
+## 1. Step 6 clusters the wrong population — STILL OPEN. A fix is committed and DOES NOT WORK
+
+**Read this before assuming the mask is live.** Commit `96f76d4` added a `population` mask to
+`_op_cluster` and wired `_population_for_cluster()` in `engine/steps.py` to supply it. On a full
+re-run of the calibration cohort (2026-08-11) the mask **did not take effect**: step 6 reported
+the identical "1413 of 1531 clusters have a median UMI of zero", and the deliverable came out
+byte-identical. `_population_for_cluster()` returned None and the op fell back to clustering
+everything.
+
+The cause is in the fix, not the pipeline. `_population_for_cluster()` wraps its table reads in
+`except (OSError, KeyError, ValueError): return None`, so a failed read is indistinguishable from
+a deliberate "cluster everything" — the exact anti-pattern this project exists to prevent, sitting
+inside the repair for it. It is why the run looked healthy while doing the old thing.
+
+**Next step:** replace that `return None` with a refusal naming the file and the missing key, then
+re-run. The op's own refusals — absent population, unknown cell-call column, over-strict mask —
+are correct and covered by `tests/test_cluster_population.py`; only the supplier is broken. Check
+`_tables(pipeline)` at step-6 execution time first: `mito_ceiling_per_sample.csv` has no scope row
+while `thresholds_per_sample.csv` does, and the two readers treat them differently.
+
+Everything below describes the defect itself and remains accurate.
+
 ## 1. Step 6 clusters the wrong population — OPEN, affects every cohort
 
 **What happens.** `engine/steps.py::_cluster()` opens `results/objects/<sample>_ambient.h5`, the
