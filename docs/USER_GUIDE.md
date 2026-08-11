@@ -27,15 +27,21 @@ whether it is reached through the pipeline or by hand.
 ### `scqc run`
 
 ```bash
-scqc run --project ~/projects/my-study [--jobs N] [--mode apply|measure] [--decisions FILE]
+scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--decisions FILE]
 ```
 
 - `--jobs` — independent tasks run at once. `0` (default) uses the machine, capped at 16. Use `1`
   when a failure has to be read in a single log.
-- `--mode` — `apply` (default) writes filtered objects; `measure` computes and reports every
-  threshold but writes no filtered object.
+- `--mode` — `apply` (default) writes filtered objects; `evidence` computes and reports every
+  threshold but writes no filtered object. **Evidence mode refuses `--decisions`**, because it
+  exists to produce the evidence those decisions are made from.
 - `--decisions` — a YAML file recording thresholds a person has approved, and their words. See
   [approvals](#approvals-and-adjudicated-values).
+
+> This guide documented the second mode as `measure` until 2026-08-11. The CLI has only ever
+> accepted `evidence`, so `--mode measure` failed at argument parsing — a reader following this
+> page could not run the command it gave them. `tests/test_docs.py` did not catch it because it
+> validates the numeric constants quoted in `docs/FILTERS.md`, not prose or option names.
 
 ## Run keys and resuming
 
