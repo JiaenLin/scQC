@@ -337,9 +337,23 @@ class Pipeline:
                 pre = _classify(key)
                 if pre is not None:
                     self.results_by_key[key] = pre
-                    self.state.record(pre)
+                    # A SKIP IS NOT RECORDED, AND THE MANIFEST IS WHY.
+                    #
+                    # `should_skip` requires the recorded status to be DONE. Recording the skip
+                    # overwrote that DONE with `skipped`, so the NEXT run found a non-done record
+                    # and re-ran the task - and the run after that re-ran everything again. A run
+                    # could therefore be resumed exactly once, and the second resume silently
+                    # became a full re-execution: hours of compute, and every concurrency hazard
+                    # in the pipeline exercised again, to rebuild a report.
+                    #
+                    # There is nothing to record in any case. The record that justified the skip
+                    # is already there, and it is the one with the signature, the outputs and the
+                    # metrics; the skip result is a copy of it with a worse status. A BLOCKED
+                    # result IS recorded, because that is new information about this run.
                     if pre.status is Status.SKIPPED:
                         print(f"  SKIP    {key}")
+                    else:
+                        self.state.record(pre)
                     pending.remove(key)
                     continue
                 batch.append(key)

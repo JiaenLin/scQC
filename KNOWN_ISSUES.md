@@ -76,6 +76,29 @@ reads like a correct report.
 
 `finish()` now writes the payload it built the document from.
 
+## 1d. Two defects a resumed run walked straight into — both FIXED
+
+**A run could be resumed exactly once.** `should_skip` requires the recorded status to be DONE,
+and the orchestrator recorded the SKIPPED result over that DONE record. The next resume found a
+non-done record and re-ran the task; the one after that re-ran everything. Silent: exit 0, same
+deliverable, and the only visible difference is RUN where SKIP should be, in a log of seventy
+near-identical lines. On the cohort that found it, a second resume re-copied 2.5 GB of matrices,
+re-scored every library for doublets and re-clustered all ten — to rebuild one report. Nothing is
+recorded for a skip now; the record that justified it is already there and is the better one.
+
+**UMAP's numba cache is shared and was not serialised.** numba caches compiled functions into the
+INSTALLED PACKAGE directory, which on a cluster is one NFS path every concurrent job writes to.
+Ten libraries embedding at once raced, and one died with `OSError: [Errno 116] Stale file handle`
+inside `numba/core/caching.py`. The traceback names numba, so it reads as an environment fault; it
+is concurrency over a shared cache nothing was serialising, and it arrived with the embedding
+(figures F10/F11). Each scanpy op now gets a `NUMBA_CACHE_DIR` unique to its prefix and op. The
+cost is recompilation per job; the alternative fails one library in ten, and a cohort missing a
+library is a different cohort.
+
+**The second is why the first matters.** A full re-execution nobody asked for is not just slow —
+it re-exercises every concurrency hazard in the pipeline. These two were found together because
+one caused the other to be reached.
+
 ## 2. The run key does not cover the code — OPEN
 
 `engine/runkey.py` hashes mode, the samplesheet's content and the DECLARED parameters. It does not

@@ -2148,7 +2148,22 @@ def run_scanpy_op(op, h5ad_in, out_prefix, params, log, executor, python_exe=Non
     cmd = build_scanpy_cmd(python_exe if python_exe else sys.executable, op, h5ad_in,
                            out_prefix, params_path, script=script)
 
-    executor.shell(cmd, log=Path(log), timeout_s=timeout_s)
+    # A PRIVATE NUMBA CACHE PER INVOCATION, and it is a correctness fix rather than a tuning one.
+    #
+    # UMAP is numba-compiled, and numba caches its compiled functions into the INSTALLED PACKAGE
+    # directory by default. On a cluster that directory is one NFS path shared by every concurrent
+    # job, and ten libraries embedding at once raced on it: one job died with
+    # `OSError: [Errno 116] Stale file handle` inside `numba/core/caching.py` while reading the
+    # cache index another job was rewriting. The traceback names numba, so it reads as an
+    # environment fault rather than as a pipeline one - it is neither; it is concurrency over a
+    # shared cache that nothing was serialising.
+    #
+    # The path is unique per (prefix, op), so no two jobs can meet in it. The cost is that numba
+    # recompiles each time instead of reusing a warm cache; the alternative is a race that fails
+    # one library in ten, and a failed library is a different cohort.
+    cache = Path(str(out_prefix) + f".{op}.numba")
+    cache.mkdir(parents=True, exist_ok=True)
+    executor.shell(cmd, log=Path(log), env={"NUMBA_CACHE_DIR": str(cache)}, timeout_s=timeout_s)
 
     # --- AFTER: it exists, it is ours, and every file it names is the one it wrote.
     #
