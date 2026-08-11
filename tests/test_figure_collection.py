@@ -54,12 +54,16 @@ def build_tables(tables: Path) -> None:
     """One finished run's tables/, as the steps write them."""
     tables.mkdir(parents=True, exist_ok=True)
 
+    # The mitochondrial ceiling DIFFERS between the libraries, deliberately: it is the one
+    # threshold this pipeline derives per library, and a fixture giving both the same value would
+    # pass whether or not F15 collapsed ten rules into one cohort line.
     write(tables / "thresholds_per_sample.csv",
           ["sample", "light_floor_umi", "umi_valley", "umi_floor_proposed",
-           "gene_valley", "gene_floor_proposed"],
+           "gene_valley", "gene_floor_proposed", "mito_ceiling_pct"],
           [["scope", "cohort constant", "per library", "cohort constant",
-            "per library", "cohort constant"]]
-          + [[s, 200, 340, 350, 250, 260] for s in SAMPLES])
+            "per library", "cohort constant", "per library"]]
+          + [[s, 200, 340, 350, 250, 260, ceil]
+             for s, ceil in zip(SAMPLES, (12.5, 19.75))])
 
     write(tables / "ambient_summary.csv", ["sample", "fraction_removed_overall"],
           [[s, 0.11] for s in SAMPLES])
@@ -103,6 +107,9 @@ def build_tables(tables: Path) -> None:
             "False", "False"] for s in SAMPLES for c in (0, 1)])
 
     # --- F4/F7/F12/F10/F11: the per-cell record, and the coordinates joined onto it
+    # EVERY COLUMN AN APPLIED CRITERION IS MEASURED ON. Step 7 applies a count floor, a gene
+    # floor and a mitochondrial ceiling, so a fixture carrying only `total_counts` lets F14 and
+    # F15 "render" as blank panels and report PASS - a probe that cannot fail.
     for s in SAMPLES:
         cells = []
         emb = []
@@ -111,12 +118,13 @@ def build_tables(tables: Path) -> None:
             scored = i % 4 != 0                      # a quarter below the light floor: UNKNOWN
             doublet = scored and i % 9 == 0
             removed = doublet or i % 11 == 0
-            cells.append([bc, s, 120 + 7 * i, scored, "doublet" if doublet else
-                          ("singlet" if scored else ""), removed, not removed])
+            cells.append([bc, s, 120 + 7 * i, 40 + 3 * (i % 210), 1.5 + (i % 37),
+                          scored, "doublet" if doublet else ("singlet" if scored else ""),
+                          removed, not removed])
             emb.append([bc, s, math.cos(i / 7.0) * 4, math.sin(i / 5.0) * 4, True, i % 2])
         write(tables / f"{s}.percell.csv",
-              ["barcode", "sample", "total_counts", "doublet_scored", "doublet_class",
-               "removed", "keep"], cells)
+              ["barcode", "sample", "total_counts", "n_genes", "pct_counts_mt",
+               "doublet_scored", "doublet_class", "removed", "keep"], cells)
         write(tables / f"{s}.embedding.csv",
               ["barcode", "sample", "x", "y", "clustered", "cluster"], emb)
 
@@ -144,12 +152,42 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # The five that had a "not produced" note are exactly the ones this change is about, so they
     # are named individually: a count would pass while the wrong five were present.
-    for fid in ("F1", "F5", "F6", "F10", "F11", "F13"):
+    for fid in ("F1", "F5", "F6", "F10", "F11", "F13", "F14", "F15"):
         check(f"{fid} is assembled", fid in figures,
               notes.get(fid, "absent with no note, which is worse"))
     for fid in ("F2", "F3", "F4", "F7", "F8", "F9", "F12"):
         check(f"{fid} still assembles", fid in figures, notes.get(fid, ""))
     check("no figure is left with a note", not notes, str(sorted(notes)))
+
+    print("\nthe applied axes carry values, not empty panels")
+    # A figure whose distributions are all empty still RENDERS - as a blank panel saying so - and
+    # would report PASS below. Each applied axis is checked for values before that happens.
+    for fid, axis in (("F7", "counts"), ("F14", "genes"), ("F15", "mitochondrial %")):
+        dists = (figures.get(fid, {}).get("data") or {}).get("distributions") or {}
+        n_before = sum(len(v.get("before") or []) for v in dists.values())
+        n_after = sum(len(v.get("after") or []) for v in dists.values())
+        check(f"{fid} ({axis}) has values before and after the cut",
+              n_before > 0 and n_after > 0, f"before={n_before} after={n_after}")
+
+    # F15's cut is the one threshold this pipeline derives PER LIBRARY. Handed over as a scalar it
+    # would draw one line across every panel, asserting a cohort constant that was never applied.
+    f15_cut = (figures.get("F15", {}).get("data") or {}).get("cut")
+    check("F15's ceiling reaches the figure as a per-library mapping",
+          isinstance(f15_cut, dict) and len(f15_cut) == len(SAMPLES), str(f15_cut))
+    check("...and the libraries genuinely differ, so a collapse would be visible",
+          isinstance(f15_cut, dict) and len(set(f15_cut.values())) > 1, str(f15_cut))
+    check("F15 says it is a ceiling, not a floor",
+          (figures.get("F15", {}).get("data") or {}).get("cut_word") == "ceiling")
+    # The mitochondrial axis is measured over the barcodes above the light floor - the population
+    # the ceiling was derived over - so it must hold FEWER values than the count axis.
+    f7_n = sum(len(v.get("before") or [])
+               for v in ((figures.get("F7", {}).get("data") or {}).get("distributions")
+                         or {}).values())
+    f15_n = sum(len(v.get("before") or [])
+                for v in ((figures.get("F15", {}).get("data") or {}).get("distributions")
+                          or {}).values())
+    check("F15 is restricted to the population its ceiling was derived over",
+          0 < f15_n < f7_n, f"F15={f15_n} F7={f7_n}")
 
     print("\nthe data each builder emits is what its function accepts")
     try:

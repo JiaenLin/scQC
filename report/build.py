@@ -147,7 +147,8 @@ STEPS = (
     ("04_doublets", "4 · doublets",
      "score per sample, before quality filtering; flag only", "nothing", ("F5", "F10")),
     ("05_quality", "5 · quality",
-     "derive count floors and mitochondrial ceiling", "nothing", ("F6", "F13", "F7", "F12")),
+     "derive count floors and mitochondrial ceiling", "nothing",
+     ("F6", "F13", "F7", "F12", "F14", "F15")),
     ("06_cluster_check", "6 · cluster check",
      "per-cluster flags: depth, mitochondrial, markers, doublet", "nothing", ("F8",)),
     ("07_apply", "7 · apply", "pre-flight, verify approval, remove",
@@ -170,6 +171,8 @@ FIGURE_QUESTIONS = {
     "F11": "did the removed nuclei leave as a population, or scattered?",
     "F12": "the same count distributions, on the scale people work in",
     "F13": "where is the GENE cut and why there? - step 5 derives two floors and applies both",
+    "F14": "what did the GENE floor change?",
+    "F15": "what did the MITOCHONDRIAL ceiling change, library by library?",
 }
 
 PARAM_CLASSES = {
@@ -374,6 +377,71 @@ def _text(value, absent: str = NOT_STATED) -> str:
 
 def _defect(defects: list, where: str, what: str, severity: str = "defect") -> None:
     defects.append({"where": where, "what": what, "severity": severity})
+
+
+#: `finding 7 (per_setting (Aging1))` and `finding 12 (per_setting (Young2))` are ONE fact about
+#: the pipeline, written ten times. The index and the library differ; neither is the cause.
+_FINDING_INSTANCE = re.compile(r"finding \d+ \(([^()]+?)(?: \(([^()]+)\))?\)")
+
+
+def group_defects(defects: list) -> list:
+    """One entry per distinct CAUSE, carrying how many times it occurred and in which libraries.
+
+    WHY THE COUNT CHANGED, AND WHY IT IS NOT A WEAKENING
+
+    Every rule here fires per occurrence, and several occurrences are per library. One structural
+    fact - "this task declares no output file" - therefore arrived as thirty defects on a
+    ten-library cohort, one per (metric x library). A reader seeing 44 assumes 44 problems; there
+    were 17, and the three largest were one cause each. A count nobody can act on is a count nobody
+    reads, and this document's whole claim is that its own gaps are legible.
+
+    NOTHING IS HIDDEN. Each group keeps every instance, so the per-library detail is still in
+    `report.json`; what changes is that the headline counts causes and the table carries `x10`
+    beside the one line describing them.
+
+    Order is preserved - first occurrence wins - because defects are emitted in the order the
+    document is assembled, and that order is itself information about where the run thinned out.
+    """
+    grouped: dict = {}
+    for d in defects:
+        what = str(d.get("what", ""))
+        key = (str(d.get("severity", "")), str(d.get("where", "")),
+               _FINDING_INSTANCE.sub(lambda m: f"finding <{m.group(1)}>", what))
+        m = _FINDING_INSTANCE.search(what)
+        who = m.group(2) if m and m.group(2) else None
+        slot = grouped.get(key)
+        if slot is None:
+            grouped[key] = {"severity": key[0], "where": key[1], "what": key[2],
+                            "count": 1, "instances": [who] if who else []}
+        else:
+            slot["count"] += 1
+            if who:
+                slot["instances"].append(who)
+    return list(grouped.values())
+
+
+def _regroup(entries: list) -> list:
+    """Group a list that already holds grouped entries mixed with raw ones.
+
+    `render_figures` runs after `assemble` and appends raw defects to the already-grouped list, so
+    what reaches the front page is a mixture. Passing that back through `group_defects` alone
+    would reset every carried count to 1 - the figure failures counted right and everything before
+    them undercounted, which is worse than either mistake alone because the total still looks
+    plausible. This carries existing counts forward.
+    """
+    out: dict = {}
+    for e in entries:
+        n = int(e.get("count", 1) or 1)
+        one = group_defects([e])[0]
+        key = (one["severity"], one["where"], one["what"])
+        slot = out.get(key)
+        if slot is None:
+            out[key] = {**one, "count": n,
+                        "instances": list(e.get("instances") or one["instances"])}
+        else:
+            slot["count"] += n
+            slot["instances"].extend(e.get("instances") or one["instances"])
+    return list(out.values())
 
 
 def _attr(obj, name):
@@ -775,6 +843,13 @@ def build_step_sections(payload, verdict_block: dict, defects: list) -> list:
         sections.append(_one_step(key, key, None, None, (), supplied[key], payload,
                                   verdict_block, defects,
                                   after_stop=False, stopped_after=stopped_after))
+        # NOT a defect for `report` itself. Every run appends a `report` step, so this fired
+        # on every run that ever completed - the document noticing its own last section. A
+        # notice that is raised by correct behaviour teaches a reader to skip the list it is
+        # in, which costs more than the one it would ever catch. An UNEXPECTED extra key is
+        # still worth saying, so only the known one is exempt.
+        if key == "report":
+            continue
         _defect(defects, f"section 3 · {key}",
                 "this step key is not one of the pipeline's eight. It is rendered at the end "
                 "rather than dropped.", severity="notice")
@@ -985,10 +1060,16 @@ def build_provenance(payload, defects: list, *, now=None) -> dict:
 
     decisions = _get(prov, "decisions")
     decisions = decisions if isinstance(decisions, dict) else {}
-    if not _stated(_get(decisions, "hash")):
+    # ONLY WHEN A DECISIONS FILE WAS USED. The file is optional by design: a run with none
+    # applies what the pipeline derived and records every threshold as DERIVED, which is a
+    # complete and honest account. Raising a notice because the operator overrode nothing
+    # fires on correct behaviour on most runs. What IS worth saying is a decisions file that
+    # was read and not hashed, because then two different files are one run.
+    if _stated(_get(decisions, "path")) and not _stated(_get(decisions, "hash")):
         _defect(defects, "section 4 · provenance",
-                "no hash for a decisions file. Two runs with the same data and the same "
-                "decisions file are the same run; a command line does not have that property.",
+                "a decisions file was used and not hashed. Two runs with the same data and "
+                "the same decisions file are the same run; a command line does not have that "
+                "property.",
                 severity="notice")
 
     reference = _get(prov, "reference")
@@ -1228,10 +1309,15 @@ def assemble(payload, *, now=None) -> dict:
         "provenance": provenance,
         "open_items": open_items,
         "figures": {},
-        "defects": defects,
+        # GROUPED BY CAUSE. `defects` is the raw emission order; what the document carries
+        # is one entry per cause with its count, because a per-library rule fired ten times
+        # is one thing to fix. Every instance is kept inside the group.
+        "defects": group_defects(defects),
     }
-    doc["verdict"]["defect_count"] = sum(1 for d in defects if d["severity"] == "defect")
-    doc["verdict"]["notice_count"] = sum(1 for d in defects if d["severity"] == "notice")
+    doc["verdict"]["defect_count"] = sum(1 for d in doc["defects"]
+                                         if d["severity"] == "defect")
+    doc["verdict"]["notice_count"] = sum(1 for d in doc["defects"]
+                                         if d["severity"] == "notice")
     doc["verdict"]["lines"] = verdict_lines(doc)
     return doc
 
@@ -1867,9 +1953,10 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     rows = [
         ("Counts per nucleus", "F7", f"≥ {_fmt(umi_cut)}", "UMI floor",
          "DERIVED · cohort constant"),
-        ("Genes detected", None, f"≥ {_fmt(gene_cut)}", "gene floor",
+        ("Genes detected", "F14", f"≥ {_fmt(gene_cut)}", "gene floor",
          "DERIVED · cohort constant"),
-        ("Mitochondrial %", None, f"≤ {mito_txt}", "mito ceiling", "DERIVED · per library"),
+        ("Mitochondrial %", "F15", f"≤ {mito_txt}", "mito ceiling",
+         "DERIVED · per library"),
         ("Where the doublets sat", "F10", "scDblFinder", "doublet call", "DECLARED · per library"),
         ("What survived, same embedding", "F11", "", "", ""),
     ]
@@ -2026,13 +2113,27 @@ def render_html(doc: dict, figure_uris: dict) -> str:
                      + "".join(f"<li>{_e(str(o))}</li>" for o in open_items)
                      + "</ul></div></section>")
     if doc.get("defects"):
-        rows_d = "".join(
-            f"<tr><td>{_e(str(x.get('severity', '')))}</td><td>{_e(str(x.get('where', '')))}</td>"
-            f"<td>{_e(str(x.get('what', '')))}</td></tr>" for x in doc["defects"])
+        def _row(x):
+            n = int(x.get("count", 1) or 1)
+            # The libraries are named where they fit. A cause that fired on three of ten is a
+            # different problem from one that fired on all ten, and the count alone cannot say
+            # which - so the names are printed while they are short enough to read.
+            who = [str(i) for i in (x.get("instances") or []) if i]
+            where = _e(str(x.get("where", "")))
+            if n > 1:
+                where += (f"<br><span class='note'>×{n}"
+                          + (f" · {_e(', '.join(who[:6]))}" if who else "")
+                          + (" …" if len(who) > 6 else "") + "</span>")
+            return (f"<tr><td>{_e(str(x.get('severity', '')))}</td><td>{where}</td>"
+                    f"<td>{_e(str(x.get('what', '')))}</td></tr>")
+
+        rows_d = "".join(_row(x) for x in doc["defects"])
         parts.append(
             "<section><div class='head'><h2>Defects and notices in this report</h2>"
             "<p class='sub'>What this document could not state, and why. A report that omits a "
-            "required block reads exactly like a complete one.</p></div>"
+            "required block reads exactly like a complete one. One row per CAUSE: a rule that "
+            "fires per library is one thing to fix, and its multiplicity is printed beside it "
+            "rather than filling the table.</p></div>"
             "<div class='scroll'><table><thead><tr><th>kind</th><th>where</th>"
             "<th>what is missing</th></tr></thead><tbody>" + rows_d
             + "</tbody></table></div></section>")
@@ -2096,6 +2197,11 @@ def build_report(payload: dict, out_html, out_json, *, now=None, render_figures_
                     f["status"] = block["source"]
     # The defect count and the verdict block are recomputed after the figures, so the front page
     # counts the figure failures too rather than reporting a number that was true before them.
+    # Regrouped as well: `render_figures` appends raw entries to an already-grouped list, and
+    # a count taken over the mixture would be neither causes nor occurrences. `group_defects`
+    # is idempotent on entries it has already grouped except for the count, which is why the
+    # grouped ones carry it forward rather than being recounted from one.
+    doc["defects"] = _regroup(doc["defects"])
     doc["verdict"]["defect_count"] = sum(1 for d in doc["defects"] if d["severity"] == "defect")
     doc["verdict"]["notice_count"] = sum(1 for d in doc["defects"] if d["severity"] == "notice")
     doc["verdict"]["lines"] = verdict_lines(doc)

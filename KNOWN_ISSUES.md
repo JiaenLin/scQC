@@ -26,7 +26,7 @@ succeeds.** The broken attempt succeeded.
 Residual, and now a real question rather than an artefact: five libraries of ten report zero
 flagged clusters. That is no longer explained by clustering empty droplets.
 
-## 1b. Five of thirteen figures were never drawn — FIXED, and three of the reasons were wrong
+## 1b. Five of fifteen figures were never drawn — FIXED, and three of the reasons were wrong
 
 The report printed a reason where each missing figure should have been, and the reasons read as
 statements about the pipeline's design: a step "computes something, uses it, and discards it".
@@ -39,8 +39,11 @@ For three of the five that was not what had happened.
 | F6 | step 5 "fits a KDE, takes the minimum, records the valley position, and discards the curve" | `_op_valley` had always written `<sample>.valley_density.csv`. It went to the scratch directory, which nothing publishes and the report never looks in |
 | F10, F11 | no embedding is computed | correct — that one really was absent |
 
-All five are now produced, and F13 is added because step 5 derives and applies TWO count floors
-while one density figure can carry only one of them.
+All five are now produced. Two figures were added on the same reasoning: **F13**, because step 5
+derives and applies TWO count floors and one density figure can carry only one of them, and
+**F14/F15**, because the report's decision spine names three applied criteria and two of its
+three rows read "no figure is produced for this axis" — a report showing a third of the filter
+while looking complete.
 
 **The lesson is the wrong reasons, not the missing figures.** A plausible explanation for an
 absent result reads exactly like a correct one, it is more durable than the defect because it
@@ -90,9 +93,16 @@ is not something to do in the middle of measuring a different change. Pin it.
   interpreter, or have it re-exec.
 - The CLI hardcodes `samplesheet.csv`. `docs/QUICKSTART.md` says `samplesheet.tsv`. The delimiter
   is auto-detected; the filename is not.
-- ~~`03_light_floor` has no `STEP_TEXT` entry~~ — FIXED. It now states what the floor is for and,
-  more importantly, what it is not: a barcode below it was never examined for doublets, which is
-  UNKNOWN and not a singlet. Step 5's entry was also stale in the same table — it still described
-  the mitochondrial ceiling as Tukey's fence, which 0.2.0 replaced with a MAD fence at a derived
-  k, keeping Tukey only as the calibrator.
+- ~~`03_light_floor` has no `STEP_TEXT` entry~~ — FIXED, and the first attempt was only half of
+  it. Adding the entry was necessary and did nothing: `step_text()` is consulted only for steps
+  that have TASKS, and no task carried the key `03_light_floor` — the floor is a declared
+  parameter consumed inside step 4's export. The report went on saying "no record of this step
+  at all", which was accurate. It now has a task that REPORTS what the floor did per library
+  (`tables/light_floor.csv`) without applying or being able to change it. Step 5's entry was
+  stale in the same table — it still described the mitochondrial ceiling as Tukey's fence, which
+  0.2.0 replaced with a MAD fence at a derived k, keeping Tukey only as the calibrator.
+
+  **The lesson is the same one this file already records about step 6:** a fix that leaves the
+  symptom in place was not a fix, and "I edited the thing named in the defect" is not evidence.
+  The acceptance test is that the REPORT changes.
 - Four `adapters/*.pyc.tmp` build artefacts are tracked in git.

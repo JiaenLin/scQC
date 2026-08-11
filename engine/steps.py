@@ -198,6 +198,23 @@ def _ingest(task, pipeline, log):
     # FASTQ has no supplied matrix and no curve, which is why this is conditional rather than
     # promised: the file is absent for that library and F1 draws the libraries it has, with the
     # n stated on the figure.
+    # THE VERDICT ITSELF, in the shape the report's provenance block reads.
+    #
+    # Step 0's whole job is to establish P1 (raw VALUES) and P2 (raw DROPLETS), it did establish
+    # them for every library, and the verdict went to the console and nowhere else - so the report
+    # said "the raw-input verification was not recorded. A pre-filtered matrix cannot be
+    # un-filtered and nothing downstream detects it." That was true of the RECORD and false of the
+    # run, which is the worst pairing: the check happened and the document could not say so.
+    #
+    # Recorded even when it FAILED, and even when there was no matrix to check - `plan.verdict` is
+    # None for a library rebuilt from FASTQ, and that is written as a name with no determination
+    # rather than omitted. The report is three-valued here: NOT CHECKED is not a PASS.
+    v = plan.verdict
+    check = {"name": sample,
+             "p1_raw_values": None if v is None else bool(v.p1_raw_values),
+             "p2_raw_droplets": None if v is None else bool(v.p2_raw_droplets),
+             "reasons": list(getattr(v, "reasons", []) or [])}
+
     outs: list = []
     curve = measured.get("barcode_rank")
     if curve:
@@ -214,7 +231,8 @@ def _ingest(task, pipeline, log):
     return {"outputs": outs,
             "metrics": {"mode": plan.mode, "processor": plan.processor,
                         "reason": plan.reason,
-                        "n_rank_points": len(curve) if curve else None},
+                        "n_rank_points": len(curve) if curve else None,
+                        "input_check": check},
             "versions": {}}
 
 
@@ -825,6 +843,8 @@ def _align(task, pipeline, log):
 
 
 def _doublets(task, pipeline, log):
+    import csv as _csv
+
     from adapters import doublets as db
 
     p = task.params
@@ -846,11 +866,104 @@ def _doublets(task, pipeline, log):
     # Both reasons are unioned here because both end up UNKNOWN, which is what the doublet rate's
     # denominator needs. They stay separable on `export` for anyone asking which threshold did it.
     unscored = tuple(export.below_floor) + tuple(export.not_selected)
-    return db.run_scdblfinder(
+
+    # WHAT THE LIGHT FLOOR DID, written down where it was applied.
+    #
+    # The floor is applied HERE, in the export, and its consequence lived only in this local
+    # `export` object: `<sample>_doublets.csv` holds the SCORED barcodes and nothing else, so the
+    # never-examined population existed nowhere on disk and step 3 had no record in the report at
+    # all. The two reasons stay apart, as `ExportedMatrix` keeps them - below the floor is the
+    # threshold doing its documented job; not selected is the caller handing in a smaller
+    # population - because only the first is explained by a threshold.
+    floor_csv = _tables(pipeline) / f"{p['sample']}.light_floor.csv"
+    floor_csv.parent.mkdir(parents=True, exist_ok=True)
+    with floor_csv.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["sample", "light_floor_umi", "n_exported", "n_below_floor",
+                    "n_not_selected", "n_never_examined"])
+        w.writerow([p["sample"], int(p["light_floor"]), len(export.exported),
+                    len(export.below_floor), len(export.not_selected), len(unscored)])
+
+    res = db.run_scdblfinder(
         rscript=p["rscript"], mtx_dir=mtx, out_csv=out_csv,
         dbr=p.get("dbr"), dbr_sd=p.get("dbr_sd"), seed=int(p.get("seed", 0)),
         log=log, executor=pipeline.executor, sample=p["sample"],
         unscored=unscored)
+    res = {**res, "outputs": list(res.get("outputs") or []) + [str(floor_csv)]}
+    res["metrics"] = {**(res.get("metrics") or {}),
+                      "light_floor_umi": int(p["light_floor"]),
+                      "n_exported": len(export.exported),
+                      "n_below_floor": len(export.below_floor),
+                      "n_not_selected": len(export.not_selected)}
+    return res
+
+
+def _light_floor(task, pipeline, log):
+    """Step 3's record: what the light floor left out, per library. Removes nothing.
+
+    WHY THIS IS A TASK AND NOT A PARAMETER. `03_light_floor` is one of the report's eight steps
+    and had no task at all, so every run said "no record of this step at all. Whether it ran is
+    unknown, and unknown is not the same as did-not-run". That was accurate: the floor is applied
+    inside step 4's export and nothing reported on it. A step in the spine with nothing filling it
+    is the report's own defect, and adding STEP_TEXT does not fix it - `step_text()` is only
+    consulted for steps that have tasks.
+
+    IT REPORTS, IT DOES NOT DECIDE. The floor is DECLARED (`--light-floor`), applied in step 4,
+    and this reads what that application recorded. It is deliberately not a place where the floor
+    could be changed: a threshold that can be set in two places is a threshold nobody can trace.
+    """
+    import csv as _csv
+
+    lf = step_module("light_floor")
+    samples = list(task.params["samples"])
+    rows, absent = [], []
+    for s in samples:
+        r = pipeline.results_by_key.get(f"04_doublets/{s}")
+        m = (getattr(r, "metrics", None) or {}) if r is not None else {}
+        if m.get("n_exported") is None:
+            absent.append(s)
+            continue
+        rows.append({"sample": s, "light_floor_umi": m.get("light_floor_umi"),
+                     "n_exported": m.get("n_exported"),
+                     "n_below_floor": m.get("n_below_floor"),
+                     "n_not_selected": m.get("n_not_selected")})
+    if absent:
+        raise Refusal(
+            f"03_light_floor: step 4 recorded no export for {', '.join(absent)}, so what the "
+            f"floor left out in that library is unknown. Reporting the cohort from the rest "
+            f"would state a coverage this run did not measure.")
+
+    out = _tables(pipeline) / "light_floor.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["sample", "light_floor_umi", "n_exported",
+                                            "n_below_floor", "n_not_selected"])
+        w.writeheader()
+        w.writerows(rows)
+
+    floors = set()
+    for r in rows:
+        floors.add(r["light_floor_umi"])
+    total_below = sum(int(r["n_below_floor"] or 0) for r in rows)
+    total_other = sum(int(r["n_not_selected"] or 0) for r in rows)
+    for r in rows:
+        print(f"    {r['sample']:<14} exported {int(r['n_exported'] or 0):>7,}   "
+              f"below floor {int(r['n_below_floor'] or 0):>7,}   "
+              f"not selected {int(r['n_not_selected'] or 0):>6,}")
+    print(f"    floor {sorted(floors)} - DECLARED; {total_below:,} barcode(s) below it were "
+          f"never examined for doublets, which is UNKNOWN and not a singlet")
+
+    # The module's own statement of what the floor is for, so the number and its meaning cannot
+    # drift apart in the report.
+    note = getattr(lf, "PURPOSE", None)
+    return {"outputs": [str(out)],
+            "metrics": {"light_floor_umi": sorted(floors)[0] if len(floors) == 1 else None,
+                        "libraries": len(rows),
+                        "n_below_floor": total_below,
+                        "n_not_selected": total_other,
+                        "class": "DECLARED - --light-floor; applied in step 4's export",
+                        **({"purpose": note} if note else {})},
+            "versions": {}}
 
 
 def _doublet_health(task, pipeline, log):
@@ -889,8 +1002,25 @@ def _doublet_health(task, pipeline, log):
     findings = dh.health(known, task.params["design"], n_kept_unscored=unscored_total,
                          detector_name="scDblFinder", reproducible=True)
     pipeline.gate("04_doublets", findings, dh.verdict(findings))
-    return {"outputs": [], "metrics": {"libraries": len(known),
-                                       "never_scored": unscored_total}, "versions": {}}
+
+    # THE RATES THIS GATE JUDGED, written down. They were returned as metrics and the task
+    # declared no output, so the report said every one of them "states a value with no source
+    # file" - correctly: the numbers the health check refuses or passes on were nowhere a reader
+    # could open them. A gate whose evidence is not on disk cannot be re-checked.
+    import csv as _csv
+
+    out = _tables(pipeline) / "doublet_health.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["sample", "n_scored", "n_called_doublet", "rate_over_scored"])
+        for s in sorted(rates):
+            calls = db.read_calls(_tables(pipeline) / f"{s}_doublets.csv", sample=s)
+            n_pos = sum(1 for _score, is_doublet in calls.values() if is_doublet)
+            w.writerow([s, len(calls), n_pos, rates[s]])
+    return {"outputs": [str(out)],
+            "metrics": {"libraries": len(known), "never_scored": unscored_total},
+            "versions": {}}
 
 
 def _doublet_sweep(task, pipeline, log):
@@ -925,12 +1055,39 @@ def _doublet_sweep(task, pipeline, log):
                    # assembled from ten of them is settled at the barrier, which refuses to.
                    umi_by_barcode={s: export.umi_by_barcode})
     per_setting = (res.get("metrics") or {}).get("per_setting") or {}
-    for label in sorted(per_setting):
-        e = per_setting[label]
-        rate = (e.get("per_sample_rate_over_scored") or {}).get(s)
-        print(f"    {s:<14} dbr.sd={label:<8} "
-              + (f"{100 * rate:.2f}% of scored" if rate is not None else "NO RATE"))
-    return {"outputs": [], "metrics": {"sample": s, "per_setting": per_setting},
+
+    # THE SWEPT RATES AS A FILE, not as a nested blob in the manifest.
+    #
+    # This returned `per_setting` - a mapping of mappings - as a metric, and declared no output.
+    # The report turned each metric into a finding whose source is the task's first output, so
+    # every library produced two findings reading "states a value with no source file", and the
+    # "value" was a dict nobody could read anyway. One table per library, exactly the pairing
+    # `<sample>.percell.csv` has with `removal_ledger.csv`.
+    import csv as _csv
+
+    out = _tables(pipeline) / f"{s}.doublet_sweep.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    scalars: dict = {}
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["sample", "setting", "dbr_sd_value", "n_scored", "n_called",
+                    "rate_over_scored"])
+        for label in sorted(per_setting):
+            e = per_setting[label]
+            rate = (e.get("per_sample_rate_over_scored") or {}).get(s)
+            n_scored = (e.get("per_sample_n_scored") or {}).get(s)
+            n_called = (e.get("per_sample_n_called") or {}).get(s)
+            w.writerow([s, label, e.get("dbr_sd_value"), n_scored, n_called, rate])
+            print(f"    {s:<14} dbr.sd={label:<8} "
+                  + (f"{100 * rate:.2f}% of scored" if rate is not None else "NO RATE"))
+            # Scalars only. A metric is rendered as one line of a findings table, and a nested
+            # mapping there is a value no reader reads and no reviewer can check.
+            if rate is not None:
+                scalars[f"rate_at_dbr_sd_{label}"] = rate
+            if n_scored is not None:
+                scalars["n_scored"] = n_scored
+    return {"outputs": [str(out)],
+            "metrics": {"settings": sorted(per_setting), **scalars},
             "versions": res.get("versions", {})}
 
 
@@ -952,18 +1109,29 @@ def _doublet_sweep_stage(task, pipeline, log):
     samples = list(task.params["samples"])
     merged: dict = {}
     absent = []
+    # FROM THE FILES THE TASKS DECLARED, taken out of the manifest rather than found by a glob -
+    # the rule `_cluster_flags` states and for the same two reasons: a glob cannot tell this run's
+    # output from an earlier one's, and it silently accepts nine files where ten were swept.
     for s in samples:
         r = pipeline.results_by_key.get(f"04_doublet_sweep/{s}")
-        per = ((getattr(r, "metrics", None) or {}) if r is not None else {}).get("per_setting")
-        if not per:
+        paths = [o for o in (getattr(r, "outputs", None) or [])
+                 if str(o).endswith(".doublet_sweep.csv")]
+        if not paths:
             absent.append(s)
             continue
-        for label, e in per.items():
-            slot = merged.setdefault(label, {"dbr_sd_value": e.get("dbr_sd_value"),
+        with open(paths[0], encoding="utf-8", newline="") as fh:
+            rows = list(_csv.DictReader(fh))
+        if not rows:
+            absent.append(s)
+            continue
+        for row in rows:
+            label = str(row["setting"])
+            slot = merged.setdefault(label, {"dbr_sd_value": row.get("dbr_sd_value") or None,
                                              "rate": {}, "n_scored": {}, "n_called": {}})
-            slot["rate"].update(e.get("per_sample_rate_over_scored") or {})
-            slot["n_scored"].update(e.get("per_sample_n_scored") or {})
-            slot["n_called"].update(e.get("per_sample_n_called") or {})
+            rate = row.get("rate_over_scored")
+            slot["rate"][s] = float(rate) if str(rate).strip() else None
+            slot["n_scored"][s] = row.get("n_scored")
+            slot["n_called"][s] = row.get("n_called")
     if absent:
         raise Refusal(
             f"04_doublet_sweep: no swept rate was recorded for {', '.join(absent)}. A sweep "
@@ -996,10 +1164,14 @@ def _doublet_sweep_stage(task, pipeline, log):
     print(f"    {rec}")
     print("    the deepest-decile arm was NOT evaluated - it is a cohort quantity and this "
           "sweep measured it per library; see _doublet_sweep_stage")
+    # Every metric a scalar or a plain string: the report renders each as one row of a findings
+    # table, and `rec.rejected` is a mapping whose values are paragraphs. Flattened rather than
+    # dropped, because WHY a setting was rejected is the useful half of a recommendation.
+    rejected_text = "; ".join(f"{k}: {v}" for k, v in sorted(rec.rejected.items())) or "none"
     return {"outputs": [str(out)],
-            "metrics": {"settings": sorted(merged), "samples": len(samples),
+            "metrics": {"settings": ", ".join(sorted(merged)), "samples": len(samples),
                         "recommended": rec.setting, "reason": rec.reason,
-                        "rejected": rec.rejected,
+                        "rejected": rejected_text,
                         "deep_decile_evaluated": False,
                         "applied": applied},
             "versions": {}}
@@ -1894,7 +2066,7 @@ def step_text(step: str) -> tuple:
 __all__ = [
     "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
     "_ambient_audit", "_cellcall",
-    "_doublets", "_doublet_health", "_doublet_sweep", "_doublet_sweep_stage",
+    "_doublets", "_doublet_health", "_doublet_sweep", "_doublet_sweep_stage", "_light_floor",
     "_quality", "_quality_measure", "_quality_stage", "_cluster",
     "_cluster_flags", "_apply", "_apply_measure", "_ceilings_for", "_report",
 ]

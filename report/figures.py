@@ -992,21 +992,34 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
     return fig
 
 
-def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name):
+def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name, cut_word="floor"):
     """One panel of paired per-library violins. Returns (positions, n_above_cap).
 
     PAIRED, AND LABELLED ONCE PER LIBRARY. Each library gets a `before` violin and an `after`
     violin side by side; the axis is labelled with the library, not with four lines of state and
     n under every shape. A reader compares within a pair first and across libraries second, and
     the layout should make the first of those the easy one.
+
+    `cut` IS EITHER ONE NUMBER OR ONE PER LIBRARY, and the drawing differs because the claim
+    differs. A cohort constant is a single rule and is drawn as a line crossing every library, so
+    a library it fits badly is visible as a line in the wrong place. A per-library threshold is
+    ten different rules and CANNOT honestly be drawn that way: one line across all of them would
+    assert a cohort constant that was never applied, and the reader has no way to see it is not
+    one. It is drawn as a segment over each library's own pair instead.
+
+    `cut_word` is "floor" or "ceiling". The mitochondrial criterion removes cells ABOVE its
+    threshold and every count criterion removes cells below theirs, so a figure that says "floor"
+    over a ceiling is telling the reader the filter runs the other way.
     """
     import math
 
     data, positions, colours, ticks, tick_at = [], [], [], [], []
+    centre_of = {}
     dropped = above = 0
     for j, s in enumerate(names):
         entry = distributions[s] or {}
         centre = j * 2.2
+        centre_of[s] = centre
         for k, (state, colour) in enumerate((("before", PALETTE["before"]),
                                              ("after", PALETTE["after"]))):
             raw = entry.get(state)
@@ -1051,13 +1064,37 @@ def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name):
             ax.annotate(f"{shown:,.0f}", (pos, m), textcoords="offset points", xytext=(0, 6),
                         ha="center", fontsize=6.5, fontweight="bold", zorder=5)
 
-    if not _unknown(cut):
-        value = float(cut)
-        if not (log and value <= 0):
-            level = math.log10(value) if log else value
+    def _level(v):
+        """The y position of a threshold, or None where the axis cannot show it."""
+        if _unknown(v):
+            return None
+        value = float(v)
+        if log and value <= 0:
+            return None
+        return math.log10(value) if log else value
+
+    if isinstance(cut, dict):
+        drawn = []
+        for s, v in cut.items():
+            level = _level(v)
+            if level is None or s not in centre_of:
+                continue
+            c = centre_of[s]
+            ax.hlines(level, c - 0.45, c + 1.30, color=PALETTE["refuse"], linestyle="--",
+                      linewidth=1.4, zorder=3)
+            drawn.append(float(v))
+        if drawn:
+            span = (f"{min(drawn):,.2f}" if min(drawn) == max(drawn)
+                    else f"{min(drawn):,.2f}-{max(drawn):,.2f}")
+            _panel_note(ax, f"applied {cut_word}: PER LIBRARY, {span} - each segment is that "
+                            f"library's own, and there is no cohort value",
+                        loc="lower right", colour=PALETTE["refuse"], wrap=38)
+    elif not _unknown(cut):
+        level = _level(cut)
+        if level is not None:
             ax.axhline(level, color=PALETTE["refuse"], linestyle="--", linewidth=1.2, zorder=3)
-            _label(ax, max(positions), level, f" applied floor = {value:,.0f}", fontsize=6.5,
-                   ha="right", va="bottom", color=PALETTE["refuse"])
+            _label(ax, max(positions), level, f" applied {cut_word} = {float(cut):,.0f}",
+                   fontsize=6.5, ha="right", va="bottom", color=PALETTE["refuse"])
 
     ax.set_xticks(tick_at)
     ax.set_xticklabels(ticks, fontsize=7, rotation=32, ha="right")
@@ -1079,7 +1116,8 @@ def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name):
 
 
 def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: str = "both",
-                        cap=None, fig_id: str = "F7", dpi: int = DEFAULT_DPI):
+                        cap=None, fig_id: str = "F7", cut_word: str = "floor",
+                        dpi: int = DEFAULT_DPI):
     """F7 - what did the cut change?
 
     `distributions` maps a sample to `{"before": [...], "after": [...]}` of the metric's values.
@@ -1129,7 +1167,8 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: st
         ax = fig.add_subplot(len(panels), 1, i + 1)
         use_cap = cap if (which == "linear" and cap is not None) else None
         _positions, above = _violin_row(ax, distributions, names, log=(which == "log"), cut=cut,
-                                        cap=use_cap, metric_name=metric_name)
+                                        cap=use_cap, metric_name=metric_name,
+                                        cut_word=cut_word)
         if use_cap is not None:
             share = (100.0 * above / total) if total else 0.0
             _panel_note(ax, f"y capped at {float(use_cap):,.0f} - {share:.2f}% of plotted nuclei "
@@ -1137,9 +1176,12 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: st
 
     axis_words = {"log": "a log axis", "linear": "a linear axis",
                   "both": "log and linear axes"}[scale]
+    where = ("each library's own segment - the threshold is PER LIBRARY and there is no cohort "
+             "value" if isinstance(cut, dict) else
+             f"the applied {cut_word} crosses every library")
     _finish(fig, f"{fig_id} - {metric_name} per library, before and after the cut, on {axis_words}",
-            "grey is every called cell, black is what was retained; the median is drawn and "
-            "printed, and the applied floor crosses every library")
+            f"grey is every called cell, black is what was retained; the median is drawn and "
+            f"printed, and {where}")
     return fig
 
 
@@ -1464,4 +1506,9 @@ FIGURE_FUNCTIONS = {
     # make "the density figure" ambiguous in a report whose whole point is that a reader can name
     # what they looked at.
     "F13": fig_f6_quality_density,
+    # The other two applied axes, same function as F7 for the same reason F12 shares it: the
+    # three criteria step 7 applies should be read in one form, so a difference between the
+    # panels is the filter and not the chart.
+    "F14": fig_f7_before_after,
+    "F15": fig_f7_before_after,
 }

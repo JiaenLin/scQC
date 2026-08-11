@@ -1,12 +1,12 @@
 # The QC report — SPECIFICATION
 
-> **This document specifies a report that is not built.** No code in this repository writes an
-> HTML file, a `report.json` or a figure, and nothing compares an artifact's timestamp against its
-> inputs. Everything below — the five sections, the nine figures F1–F9, the provenance block and
-> the freshness refusal — is the contract the report writer must satisfy when it is written. Read
-> it as a design, not as a description of output you can generate today. The Status table in
-> [README.md](../README.md) is the inventory of what does and does not exist; the one piece of
-> this document that *is* implemented is recoverable removal, in `modules/07_apply/apply.py`.
+> **This document specified a report that was not built. It is built now, and this note is kept
+> because the header outlived the fact by several releases.** `report/build.py` writes the HTML
+> and the JSON, `report/figures.py` draws all fifteen figures and `report/collect.py` assembles
+> their data from a finished run's tables. What is still NOT fed is the freshness check: nothing
+> supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be
+> current — see [KNOWN_ISSUES.md](../KNOWN_ISSUES.md). The Status table in
+> [README.md](../README.md) remains the inventory.
 
 What the pipeline is to hand a human: one self-contained HTML file, no external requests, openable
 from a filesystem five years from now.
@@ -144,7 +144,7 @@ Named, each with what would close it and who it is blocked on. A run with no ope
 
 ## Figures
 
-Thirteen, each answering a single question a reader would otherwise have to ask. Nine follow the
+Fifteen, each answering a single question a reader would otherwise have to ask. Nine follow the
 steps; F10/F11, F7/F12 and F6/F13 are pairs — the same treatment applied twice, because a
 comparison is what carries the meaning.
 
@@ -183,10 +183,22 @@ a distribution nobody drew.
 | F11 | 7 apply | did the removed nuclei leave as a population, or scattered? | **the same embeddings**, removed nuclei coloured |
 | F12 | 5 quality | the same count distributions, on the scale people work in | F7's data on a linear axis, with the share above the cap stated |
 | F13 | 5 quality | where is the GENE cut and why there? - step 5 derives two floors and applies both | F6's form on the gene axis, with the gene floor drawn |
+| F14 | 5 quality | what did the GENE floor change? | F7's form on the gene axis |
+| F15 | 5 quality | what did the MITOCHONDRIAL ceiling change, library by library? | F7's form on the mitochondrial axis, over the barcodes above the light floor, with each library's OWN ceiling drawn as a segment |
 
 **F2 and F6 are the two that matter most.** F2 is the only figure that can show a technical
 removal has become an apparent biological difference. F6 is the only one that shows a derived
 threshold sitting where the data actually separates — or not.
+
+**A per-library threshold is never drawn as one line.** F15's ceiling is ten different rules,
+and a single line across the panel would assert a cohort constant that was never applied -
+with nothing on the page to say it is not one. Each library carries its own segment, and the
+panel states that the value is per library and gives its range.
+
+**The spine lists every applied criterion, so every applied criterion needs a figure.** The
+report's decision spine names the count floor, the gene floor and the mitochondrial ceiling.
+Two of those three rows read "no figure is produced for this axis" until F14 and F15 existed:
+a report showing a third of the filter while looking complete.
 
 **F13 exists because step 5 applies TWO floors.** `cut` is one cohort constant per figure and the
 two floors are in different units, so a single density figure can carry only one of them — and the

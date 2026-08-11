@@ -120,6 +120,8 @@ All CSV, all readable with the standard library alone.
 | `<sample>.barcode_rank.csv` | **rank point** | the raw matrix's barcode-rank curve, downsampled log-uniformly: `rank`, `total_counts`, `n_barcodes`. Figure F1. Absent for a library rebuilt from FASTQ, which has no supplied matrix to measure |
 | `<sample>.valley_density.csv` | grid point × metric | the KDE the valley was read off: `grid`, `grid_log10`, `density`, `is_valley`, `is_mode`. Figures F6 and F13 |
 | `<sample>.embedding.csv` | **barcode** | the 2-D coordinates of every barcode the denoiser called, with `clustered` and `cluster` joined on: `x`, `y`. Figures F10 and F11 |
+| `<sample>.light_floor.csv` | library | that library's export: how many barcodes cleared the floor, how many sat below it, how many were not selected |
+| `<sample>.doublet_sweep.csv` | setting | the called rate at each swept `dbr.sd` for that library. `--dbr-sd-sweep` only |
 | `mito_ceiling_per_sample.csv` | library | quartiles, `derived`, `ceiling`, `clamped`, and **the population it was derived over** |
 | `<sample>.percell.csv` | **barcode** | every barcode the library held: the four measured values, the doublet score and class, and which of the five criteria fired. Apply mode only |
 | `ambient_lr_diagnostics.csv` | library | `fraction_removed`, `convergence_indicator`, `measured` |
@@ -142,7 +144,9 @@ nothing.
 | `removal_ledger.csv` | **removed** barcode | every criterion that fired on it, not just the first |
 | `ambient_summary.csv` | library | fraction removed, genes fully removed |
 | `ambient_supplied.json` | — | provenance of any denoised object supplied rather than produced here |
-| `doublet_sweep.csv` | (library, setting) | the called rate at each swept `dbr.sd`. Figure F5. Written **only** when `--dbr-sd-sweep` was given; it applies nothing and changes no deliverable |
+| `doublet_sweep.csv` | (library, setting) | the called rate at each swept `dbr.sd`, assembled from the per-library tables. Figure F5. Written **only** when `--dbr-sd-sweep` was given; it applies nothing and changes no deliverable |
+| `doublet_health.csv` | library | the rates the step-4 gate judged: `n_scored`, `n_called_doublet`, `rate_over_scored`. A gate whose evidence is not on disk cannot be re-checked |
+| `light_floor.csv` | library | what the light floor left out: `n_exported`, `n_below_floor`, `n_not_selected`. The two reasons a barcode was never scored are kept apart — only the first is explained by a threshold |
 
 > **The embedding is over the CELL-CALLED population, not the clustered one.** Step 6 clusters
 > the cells that reach the deliverable — otherwise its flags describe empty droplets — and embeds

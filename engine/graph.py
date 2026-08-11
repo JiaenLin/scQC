@@ -230,9 +230,22 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         ))
         dbl_keys.append(k)
 
+    # --- step 3, REPORTED here because it is APPLIED in step 4.
+    #
+    # The light floor is a declared parameter consumed by step 4's export, so there was no
+    # task carrying the key `03_light_floor` and every report said "no record of this step at
+    # all". This does not apply the floor and cannot change it; it reads what the export
+    # recorded and publishes the per-library consequence, which existed nowhere on disk.
+    tasks.append(Task(
+        key="03_light_floor", step="03_light_floor", fn=steps._light_floor,
+        needs=tuple(dbl_keys), params={"samples": list(by_sample)},
+        outputs=(str(pipeline.results / "tables" / "light_floor.csv"),),
+    ))
+
     tasks.append(Task(
         key="04_doublet_health", step="04_doublets", fn=steps._doublet_health,
         needs=tuple(dbl_keys), params={"design": design, "samples": list(by_sample)},
+        outputs=(str(pipeline.results / "tables" / "doublet_health.csv"),),
     ))
 
     # --- step 4b: the dbr.sd sweep, DECLARED and off by default.
@@ -259,6 +272,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                         "settings": list(sweep_settings),
                         "dbr": _num(by_sample[s].get("dbr"), tools.get("dbr")),
                         "seed": tools.get("seed", 0)},
+                outputs=(str(pipeline.results / "tables" / f"{s}.doublet_sweep.csv"),),
                 cpus=4, memory_gb=32, walltime_h=12,
             ))
             sweep_keys.append(k)
@@ -267,6 +281,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             needs=tuple(sweep_keys),
             params={"samples": list(by_sample),
                     "dbr_sd_applied": tools.get("dbr_sd")},
+            outputs=(str(pipeline.results / "tables" / "doublet_sweep.csv"),),
         ))
 
     # --- step 5: thresholds, derived per library and applied as one cohort constant.

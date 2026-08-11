@@ -103,6 +103,13 @@ CAPTIONS = {
           "another. A criterion whose removals are all shared changed nothing by itself.",
     "F12": "The same count distributions as F7 on a linear axis - the scale a reader works in - "
            "capped so the bulk is legible.",
+    "F14": "F7's form on the GENE axis: genes per nucleus before and after the filter, with the "
+           "cohort gene floor across every library. Step 7 applies this floor as well as the "
+           "count floor, and a report showing only one of them shows part of the filter.",
+    "F15": "Mitochondrial % per nucleus before and after the filter, over the barcodes above the "
+           "light floor - the population the ceiling was derived over, because a percentage of a "
+           "30-UMI droplet is not a measurement. The ceiling is PER LIBRARY, so each library "
+           "carries its own segment and there is no cohort line to read across.",
 }
 
 
@@ -400,27 +407,53 @@ def _f4(percell: dict, floors: dict) -> dict:
     return {"coverage": coverage}
 
 
-def _f7(percell: dict, cut, *, scale: str, fig_id: str) -> dict:
-    """What the cut changed: every library's counts before it and what survived it."""
+def _f7(percell: dict, cut, *, scale: str, fig_id: str, column: str = "total_counts",
+        metric_label: str = "UMI per nucleus", cut_word: str = "floor",
+        only_at_or_above=None) -> dict:
+    """What one applied criterion changed: each library's values before it, and what survived.
+
+    ONE BUILDER FOR EVERY APPLIED AXIS, and the reason is the report's own spine: step 7 applies a
+    count floor, a gene floor and a mitochondrial ceiling, and the spine lists all three. Drawing
+    only the first left two rows of that table reading "no figure is produced for this axis" - the
+    report showing a third of the filter while looking complete.
+
+    `only_at_or_above` restricts the BEFORE population to barcodes at or above that `total_counts`.
+    It exists for the mitochondrial axis and must not be used on the count axes. A percentage needs
+    a denominator big enough to mean something - a 30-UMI droplet with 10 mitochondrial counts
+    reads 33% - so the ceiling is DERIVED over the barcodes above the light floor, and a figure
+    that drew it against every droplet would show the threshold sitting in a cloud it was never
+    computed from. The count axes need the opposite: their whole point is that the debris mode is
+    visible and the cut falls between it and the nuclei.
+    """
     distributions = {}
+    n_excluded = 0
     for s, rows in percell.items():
         before, after = [], []
         for r in rows:
-            umi = _num(r.get("total_counts"))
-            if umi is None:
+            v = _num(r.get(column))
+            if v is None:
                 continue
-            before.append(umi)
+            if only_at_or_above is not None:
+                depth = _num(r.get("total_counts"))
+                if depth is None or depth < float(only_at_or_above):
+                    n_excluded += 1
+                    continue
+            before.append(v)
             if _flag(r.get("keep")):
-                after.append(umi)
+                after.append(v)
         distributions[s] = {"before": before, "after": after}
-    data = {"distributions": distributions, "metric_label": "UMI per nucleus",
-            "scale": scale, "fig_id": fig_id}
+    data = {"distributions": distributions, "metric_label": metric_label,
+            "scale": scale, "fig_id": fig_id, "cut_word": cut_word}
     if cut is not None:
         data["cut"] = cut
-    if scale == "linear":
+    if scale == "linear" and only_at_or_above is None:
         # The linear panel is unreadable at full range - a handful of very deep nuclei set the
         # axis and the bulk collapses into the first pixel. The figure states that it is capped;
         # an uncapped-looking axis that had been capped would be the problem.
+        #
+        # NOT for a percentage: it is already bounded at 100, so there is no long tail to clip and
+        # a cap would hide the high-mitochondrial population the ceiling exists to remove - the
+        # one part of that figure a reader has come to look at.
         pooled = sorted(v for d in distributions.values() for v in d["before"])
         if pooled:
             data["cap"] = pooled[min(len(pooled) - 1, int(0.99 * len(pooled)))]
@@ -500,15 +533,33 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
         sheet = [r for r in csv.DictReader(
             [ln for ln in text.splitlines() if not ln.startswith("#")], delimiter=delim)]
 
-    thresholds, floors, umi_cut = [], {}, None
+    thresholds, floors = [], {}
+    umi_cut = gene_cut = light_floor = None
+    mito_cuts: dict = {}
     tp = tables / "thresholds_per_sample.csv"
     if tp.exists():
         # Row 1 of this table is a SCOPE row ("per library" / "cohort constant"), not a sample.
         thresholds = [r for r in _rows(tp) if str(r.get("sample", "")).strip() != "scope"]
         floors = {r["sample"]: _num(r.get("light_floor_umi")) for r in thresholds}
-        cuts = {_num(r.get("umi_floor_proposed")) for r in thresholds}
-        cuts.discard(None)
-        umi_cut = cuts.pop() if len(cuts) == 1 else None
+
+        def _cohort(key):
+            """The one value a cohort-constant column holds, or None if it holds several.
+
+            None rather than the first or the mean: a column that was supposed to be one
+            constant and is not is a finding, and a figure drawing one of its values as though
+            it were the constant would state a rule the run did not apply."""
+            seen = {_num(r.get(key)) for r in thresholds}
+            seen.discard(None)
+            return seen.pop() if len(seen) == 1 else None
+
+        umi_cut = _cohort("umi_floor_proposed")
+        gene_cut = _cohort("gene_floor_proposed")
+        light_floor = _cohort("light_floor_umi")
+        # PER LIBRARY by design - kept as a mapping and never collapsed. See `_violin_row`.
+        for r in thresholds:
+            v = _num(r.get("mito_ceiling_pct"))
+            if v is not None:
+                mito_cuts[r["sample"]] = v
 
     samples = [r["sample"] for r in thresholds] or \
               sorted(p.name.split(".percell.csv")[0] for p in tables.glob("*.percell.csv"))
@@ -561,6 +612,18 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
              lambda: _f4(percell, floors))
         _try("F7", src, lambda: _f7(percell, umi_cut, scale="log", fig_id="F7"))
         _try("F12", src, lambda: _f7(percell, umi_cut, scale="linear", fig_id="F12"))
+        # THE OTHER TWO APPLIED AXES. Same builder, same form, different column - so a reader
+        # comparing the three is comparing the filter and not three chart styles.
+        _try("F14", src + " + tables/thresholds_per_sample.csv",
+             lambda: _f7(percell, gene_cut, scale="log", fig_id="F14", column="n_genes",
+                         metric_label="genes detected per nucleus"))
+        # PER LIBRARY, and passed as a mapping so the figure draws ten segments rather than
+        # asserting a cohort constant that was never applied. Restricted to the barcodes above
+        # the light floor, which is the population the ceiling was DERIVED over.
+        _try("F15", src + " + tables/thresholds_per_sample.csv",
+             lambda: _f7(percell, mito_cuts or None, scale="linear", fig_id="F15",
+                         column="pct_counts_mt", metric_label="mitochondrial % per nucleus",
+                         cut_word="ceiling", only_at_or_above=light_floor))
         # F10 and F11 are the SAME coordinates under two colourings, and that is the point of
         # storing an embedding rather than recomputing one: a reader comparing them is looking at
         # the flags, never at the projection.

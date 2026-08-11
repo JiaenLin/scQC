@@ -492,13 +492,35 @@ class Pipeline:
             # payload without them and wrote a figure-less document over the top - the identical
             # failure this comment already described, reproduced one key lower.
             **self._figures_block(),
-            "provenance": self.prov.snapshot(
+            "provenance": {**self.prov.snapshot(
                 self.project / "decisions.yml"
                 if (self.project / "decisions.yml").exists() else None),
+                **self._input_check_block()},
             "open_items": ([f"{k} did not run: {first_line(self.results_by_key[k].message)}"
                             for k in sorted(stat) if stat[k] == "blocked"][:20]
                            or ["none recorded"]),
         }
+
+    def _input_check_block(self) -> dict:
+        """`{"input_check": [...]}` from step 0, or `{}` so the report reports the absence.
+
+        Merged into the provenance snapshot rather than added to it by `Provenance`, because
+        `Provenance` describes the ENVIRONMENT - versions, commit, reference, clock - and knows
+        nothing about tasks. What each input matrix was verified to be is a result of this run,
+        and it comes from the step that verified it.
+
+        An EMPTY dict when no library recorded a verdict, never `[]`: the report distinguishes
+        `input_check: null` from `input_check: []`, and only the first is honest about a run that
+        never checked.
+        """
+        rows = []
+        for key, r in sorted(self.results_by_key.items()):
+            if not key.startswith("00_ingest"):
+                continue
+            check = (getattr(r, "metrics", None) or {}).get("input_check")
+            if isinstance(check, dict) and check.get("name"):
+                rows.append(check)
+        return {"input_check": rows} if rows else {}
 
     def _deliverable_block(self, stopped, stopped_after) -> dict:
         """What this run produced: the counts from step 7, or why there are none.
