@@ -63,6 +63,16 @@ what went in and what was examined; the cluster check; every threshold per libra
 decided and by whom; what this run could not establish; the findings; provenance; open items; and
 the report's own defects.
 
+**What each criterion removed carries F9 and a table, and the table is not a caption for the
+figure.** F9 draws the cohort, and the cohort is the wrong unit for the question the section is
+asked: a criterion taking 2% of one library and 42% of another sums to an unremarkable cohort bar,
+and that is a technical gradient sitting exactly where the biology is measured. So the table is one
+row per library — `fired` and `alone` per criterion, the cohort as a marked last row — with the
+widest per-criterion ratio across libraries stated beneath it, because that ratio is the finding
+and nobody should have to scan sixty cells for it. `fired` and `alone` are both shown: printing
+only the first makes every criterion look load-bearing, only the second makes a criterion that
+agrees with its neighbours look inert.
+
 **A section is never omitted because it is empty.** An absent block reads exactly like a block
 nobody needed, so each states what it could not establish instead.
 

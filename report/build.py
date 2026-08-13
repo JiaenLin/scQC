@@ -1207,6 +1207,76 @@ def build_open_items(payload, defects: list) -> dict:
     return {"stated": True, "items": out}
 
 
+def build_removal_breakdown(payload, defects: list) -> dict:
+    """How many observations each criterion removed, per library. The numbers behind F9.
+
+    F9 draws the cohort, and the cohort is the wrong unit for the only question this section is
+    asked: did a criterion fall evenly across the libraries? A criterion taking 2% of one and 42%
+    of another has put a technical gradient exactly where the biology is measured, and a single
+    bar cannot show it - nor can a bar be read off to a number, which is what a methods section
+    needs.
+
+    `fired` and `sole` are both carried. The totals overlap and sum to more than the removal, so
+    the first says how much a criterion touched and only the second says whether it did any work
+    of its own. A criterion with a large total and no sole removals changed nothing.
+
+    An absent block is a notice, not a defect: a measure-only run has no removal to break down,
+    and a report that called that a defect would train its reader to ignore the section.
+    """
+    block = _get(payload, "removal_breakdown")
+    if block is MISSING or _unknown(block):
+        _defect(defects, "what each criterion removed",
+                "no per-library removal breakdown was supplied, so how much each criterion "
+                "removed from each library cannot be read off this report. Expected when the run "
+                "measured and did not apply.", severity="notice")
+        return {"stated": False, "criteria": [], "samples": [], "rows": [],
+                "source": NOT_STATED}
+
+    criteria = [str(c) for c in _as_list(_get(block, "criteria")) if _stated(c)]
+    samples = [str(s) for s in _as_list(_get(block, "samples")) if _stated(s)]
+    rows = []
+    for r in _as_list(_get(block, "rows")):
+        crit, samp = _get(r, "criterion"), _get(r, "sample")
+        if not _stated(crit) or not _stated(samp):
+            _defect(defects, "what each criterion removed",
+                    "a breakdown row names no criterion or no library, so its counts belong to "
+                    "nothing.")
+            continue
+        cells = {k: (NOT_STATED if (_get(r, k) is MISSING or _unknown(_get(r, k)))
+                     else _get(r, k))
+                 for k in ("n_in", "n_fired", "n_sole", "n_removed_any",
+                           "pct_of_library", "pct_sole_of_library")}
+        rows.append({"criterion": str(crit), "sample": str(samp), **cells})
+
+    if not rows:
+        _defect(defects, "what each criterion removed",
+                "the breakdown has no rows. An empty table and an absent one read the same on "
+                "the page and are not the same claim.")
+    source = _get(block, "source")
+    if not _stated(source):
+        _defect(defects, "what each criterion removed",
+                "the breakdown names no file. Every number in this report must be traceable to "
+                "something a reader can open.")
+
+    # The widest ratio any single criterion shows across the libraries, computed here rather than
+    # left for a reader to scan sixty cells for. It is the number this table exists to surface.
+    worst, worst_crit = None, None
+    for c in criteria:
+        vals = [r["pct_of_library"] for r in rows
+                if r["criterion"] == c and r["sample"] != "ALL"
+                and isinstance(r["pct_of_library"], (int, float))]
+        vals = [v for v in vals if v > 0]
+        if len(vals) < 2:
+            continue
+        ratio = max(vals) / min(vals)
+        if worst is None or ratio > worst:
+            worst, worst_crit = ratio, c
+    return {"stated": True, "criteria": criteria, "samples": samples, "rows": rows,
+            "source": _text(source),
+            "widest_ratio": None if worst is None else round(worst, 2),
+            "widest_ratio_criterion": worst_crit}
+
+
 def build_per_sample(payload, defects: list) -> dict:
     """Every threshold this run derived, one row per library.
 
@@ -1306,6 +1376,7 @@ def assemble(payload, *, now=None) -> dict:
         "parameters": parameters,
         "steps": steps,
         "per_sample": build_per_sample(payload, defects),
+        "removal_breakdown": build_removal_breakdown(payload, defects),
         "provenance": provenance,
         "open_items": open_items,
         "figures": {},
@@ -1812,6 +1883,75 @@ def _cut(value: str, label: str, how: str) -> str:
             f"<p class='how'>{_e(label)}<br>{_e(how)}</p></div>")
 
 
+def _removal_breakdown_table(block) -> str:
+    """The numbers behind F9: one row per library, one column pair per criterion.
+
+    Laid out library-by-row rather than criterion-by-row because the comparison a reader makes is
+    ACROSS libraries within one criterion, and that comparison has to be a column to be made by
+    eye. The cohort total is the last row, marked, so it cannot be mistaken for an eleventh
+    library.
+
+    Each criterion gets two figures: how many it fired on, and how many it removed on its own.
+    Printing only the first makes every criterion look load-bearing; only the second makes a
+    criterion that agrees with its neighbours look inert.
+
+    Returns "" when there is nothing to show. A measure-only run has no removal to break down and
+    a table of zeroes would say every criterion removed nothing, which is a claim about a removal
+    that did not happen.
+    """
+    if not block or not block.get("stated"):
+        return ""
+    criteria = block.get("criteria") or []
+    rows = block.get("rows") or []
+    if not criteria or not rows:
+        return ""
+    by = {(r.get("sample"), r.get("criterion")): r for r in rows}
+    samples = list(block.get("samples") or [])
+    order = samples + (["ALL"] if any(s == "ALL" for s, _ in by) else [])
+
+    head = ("<tr><th rowspan='2'>library</th><th rowspan='2'>in</th>"
+            "<th rowspan='2'>removed</th>"
+            + "".join(f"<th colspan='2'>{_e(c)}</th>" for c in criteria) + "</tr>"
+            + "<tr>" + "".join("<th>fired</th><th>alone</th>" for _ in criteria) + "</tr>")
+
+    trs = []
+    for s in order:
+        first = next((by[(s, c)] for c in criteria if (s, c) in by), None)
+        if first is None:
+            continue
+        cls = " class='flag'" if s == "ALL" else ""
+        tds = [f"<td{cls}><b>{_e(s)}</b></td>" if s == "ALL" else f"<td>{_e(s)}</td>",
+               f"<td{cls}>{_fmt(first.get('n_in'))}</td>",
+               f"<td{cls}>{_fmt(first.get('n_removed_any'))}</td>"]
+        for c in criteria:
+            r = by.get((s, c)) or {}
+            pct = r.get("pct_of_library")
+            pct_txt = (f" <span class='lbl'>{float(pct):.1f}%</span>"
+                       if isinstance(pct, (int, float)) else "")
+            tds.append(f"<td{cls}>{_fmt(r.get('n_fired'))}{pct_txt}</td>")
+            tds.append(f"<td{cls}>{_fmt(r.get('n_sole'))}</td>")
+        trs.append("<tr>" + "".join(tds) + "</tr>")
+
+    ratio = block.get("widest_ratio")
+    note = ("one criterion's removal rate varies "
+            f"<b>{ratio:.2f}×</b> across the libraries "
+            f"(<span class='mono'>{_e(str(block.get('widest_ratio_criterion') or ''))}</span>) — "
+            "a filter that falls harder on one arm of the design puts a technical gradient where "
+            "the biology is measured"
+            if isinstance(ratio, (int, float)) else
+            "no criterion fired on two or more libraries, so no rate could be compared across "
+            "them")
+    return ("<div class='head' style='margin-top:22px'><h3>The same, counted</h3>"
+            "<p class='sub'><b>fired</b> is every observation the criterion removed and the "
+            "columns overlap, so they sum to more than the removal. <b>alone</b> is the ones no "
+            "other criterion would have removed — a criterion with a large total and none of "
+            "these changed nothing.</p></div>"
+            f"<div class='scroll'><table><thead>{head}</thead><tbody>{''.join(trs)}"
+            "</tbody></table></div>"
+            f"<p class='sub' style='margin-top:9px'>{note}. Source: "
+            f"<span class='mono'>{_e(str(block.get('source', '')))}</span></p>")
+
+
 def _column(per_sample, key):
     """One column of the per-library table, as a list of values.
 
@@ -1987,7 +2127,8 @@ def render_html(doc: dict, figure_uris: dict) -> str:
         "<section><div class='head'><h2>What each criterion removed</h2>"
         "<p class='sub'>Solid is what only this criterion removed; a criterion that removes "
         "nothing uniquely is doing no work of its own.</p></div>"
-        f"{_fig_panel(figs.get('F9'), uri('F9'))}</section>")
+        f"{_fig_panel(figs.get('F9'), uri('F9'))}"
+        f"{_removal_breakdown_table(doc.get('removal_breakdown') or {})}</section>")
 
     # ---------------------------------------------------------------- inputs and clusters
     parts.append(

@@ -1228,10 +1228,15 @@ def _quality_measure(task, pipeline, log):
                   pipeline.scratch / f"{s}_qc",
                   {"sample": s, "metrics": list(VALLEY_METRICS),
                    "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
-                   # The mitochondrial quartiles are taken above this floor and the VALLEYS are
-                   # not. One pass, two populations, deliberately - see _op_valley for the
-                   # measurement behind it.
-                   "mito_floor_umi": p["light_floor"]},
+                   # The mitochondrial quartiles are taken above this floor, below the
+                   # derivation ceiling, and the VALLEYS take neither. One pass, two populations,
+                   # deliberately - see _op_valley for the measurement behind both restrictions.
+                   # `mito_derivation_max` is passed only when this run declares one; absent, the
+                   # adapter's own default applies and records itself in the ceiling table, so
+                   # there is no route by which the applied value goes unrecorded.
+                   "mito_floor_umi": p["light_floor"],
+                   **({"mito_derivation_max": p["mito_derivation_max"]}
+                      if p.get("mito_derivation_max") is not None else {})},
                   log, p["python_exe"])
     m = res.get("metrics", {}) or {}
     got, bim = m.get("valleys") or {}, m.get("bimodal") or {}
@@ -1363,13 +1368,20 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
         # `derived` is the APPLIED fence (MAD route); `tukey` is the independent cross-check and is
         # never applied. Both are written, with the skew ratio that explains any gap between them,
         # so a reader can see whether the two routes agreed instead of being told that they did.
+        # `pop_derivation_max_pct` and the two counts beside it complete the population record the
+        # previous three columns began. The ceiling is derived over cells above `pop_floor_umi`
+        # AND below `pop_derivation_max_pct`; `pop_max_above_floor` is the true observed maximum
+        # taken BEFORE that cut, so the one number that shows a library is full of ambient is not
+        # the number the derivation population erased.
         w.writerow(["sample", "n", "median", "q1", "q3", "iqr", "mad", "smad", "skew_iqr_over_smad",
                     "derived", "tukey_crosscheck", "tukey_over_derived", "ceiling", "clamped",
                     "mad_k", "iqr_mult", "assay", "bound_lo", "bound_hi",
-                    "pop_floor_umi", "pop_n_all_called"])
+                    "pop_floor_umi", "pop_n_all_called", "pop_derivation_max_pct",
+                    "pop_n_above_floor", "pop_n_excluded_high_mito", "pop_max_above_floor"])
         for s in samples:
             m = ceil[s]
             pp = (mito_pop or {}).get(s) or {}
+            mx = pp.get("max_above_floor")
             w.writerow([s, m.n, f"{m.median:.6f}", f"{m.q1:.6f}", f"{m.q3:.6f}",
                         f"{m.iqr:.6f}", f"{m.mad:.6f}", f"{m.smad:.6f}",
                         "" if m.skew_ratio is None else f"{m.skew_ratio:.6f}",
@@ -1377,7 +1389,10 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
                         "" if m.cross_check is None else f"{m.cross_check:.6f}",
                         f"{m.ceiling:.6f}", m.clamped,
                         d.get("k", ""), d["mult"], assay, lo, hi,
-                        pp.get("floor_umi", ""), pp.get("n_all_with_a_value", "")])
+                        pp.get("floor_umi", ""), pp.get("n_all_with_a_value", ""),
+                        pp.get("derivation_max_pct", ""), pp.get("n_above_floor", ""),
+                        pp.get("n_excluded_high_mito", ""),
+                        "" if mx is None else f"{float(mx):.6f}"])
 
     out = dict(out)
     out["outputs"] = list(out.get("outputs", [])) + [str(p)]
@@ -1740,6 +1755,71 @@ def _apply_measure(task, pipeline, log):
                    log, p["python_exe"])
 
 
+#: Columns of `removal_by_criterion.csv`, in order. Long format - one row per library per
+#: criterion, plus one `ALL` row per criterion for the cohort - because a wide table gains a
+#: column every time a criterion is added and every reader of it has to be changed.
+_BREAKDOWN_COLUMNS = ("sample", "criterion", "n_in", "n_fired", "n_sole", "n_removed_any",
+                      "pct_of_library", "pct_sole_of_library")
+
+#: The literal a cohort row carries in its `sample` column. A row whose sample is blank reads as
+#: a library whose name was lost, which is a different claim from a total over all of them.
+BREAKDOWN_ALL = "ALL"
+
+
+def _removal_breakdown(percell, criteria, masks, removed_mask) -> list:
+    """Per library and per criterion: how many it fired on, and how many it removed ALONE.
+
+    # rule-one: no-removal - this counts an already-decided removal and returns rows.
+
+    `n_fired` counts every observation the criterion fired on, so the criteria overlap and their
+    counts sum to more than `n_removed_any`. `n_sole` counts the ones NO other criterion would
+    have removed, and that is the number that says whether a threshold did any work: a criterion
+    with a large total and a sole count of zero removed nothing the others were not already
+    removing, and changing it would change nothing at all.
+
+    Both are needed and neither substitutes for the other. Reporting only the total makes every
+    criterion look load-bearing; reporting only the sole count makes a criterion that agrees with
+    its neighbours look inert when it may be the reason they agree.
+
+    Built from `masks` rather than by re-reading the ledger. The ledger is written from these same
+    booleans, so re-deriving the counts from the file would be a second route to one number with
+    no cross-check attached - it can only agree, or disagree with nothing to say which is right.
+    """
+    per: dict = {}
+    for i, row in enumerate(percell):
+        s = row.get("sample") or BREAKDOWN_ALL
+        d = per.setdefault(s, {"n_in": 0, "n_removed": 0,
+                               "fired": {c: 0 for c in criteria},
+                               "sole": {c: 0 for c in criteria}})
+        d["n_in"] += 1
+        if removed_mask[i]:
+            d["n_removed"] += 1
+        hit = [c for c in criteria if masks[c][i]]
+        for c in hit:
+            d["fired"][c] += 1
+        if len(hit) == 1:
+            d["sole"][hit[0]] += 1
+
+    total = {"n_in": sum(d["n_in"] for d in per.values()),
+             "n_removed": sum(d["n_removed"] for d in per.values()),
+             "fired": {c: sum(d["fired"][c] for d in per.values()) for c in criteria},
+             "sole": {c: sum(d["sole"][c] for d in per.values()) for c in criteria}}
+
+    def pct(n, d):
+        return round(100.0 * n / d, 4) if d else ""
+
+    rows = []
+    for s in list(per) + [BREAKDOWN_ALL]:
+        d = total if s == BREAKDOWN_ALL else per[s]
+        for c in criteria:
+            rows.append({"sample": s, "criterion": c, "n_in": d["n_in"],
+                         "n_fired": d["fired"][c], "n_sole": d["sole"][c],
+                         "n_removed_any": d["n_removed"],
+                         "pct_of_library": pct(d["fired"][c], d["n_in"]),
+                         "pct_sole_of_library": pct(d["sole"][c], d["n_in"])})
+    return rows
+
+
 def _apply(task, pipeline, log):
     import csv as _csv
 
@@ -1826,6 +1906,19 @@ def _apply(task, pipeline, log):
     ledger = _tables(pipeline) / "removal_ledger.csv"
     ap.write_removal_record(record, ledger)
 
+    # --- and the same removal counted, PER LIBRARY AND PER CRITERION. F9 draws this for the
+    # cohort; the cohort is not where the question lives. A criterion that removes 2% of one
+    # library and 42% of another has put a technical gradient exactly where the biology is
+    # measured, and a single bar cannot show it. Built from `masks` - the same booleans the
+    # ledger and the gate were built from - so the table and the removal cannot disagree.
+    breakdown = _removal_breakdown(percell, criteria, masks, removed_mask)
+    bpath = _tables(pipeline) / "removal_by_criterion.csv"
+    with open(bpath, "w", newline="", encoding="utf-8") as fh:
+        w = _csv.DictWriter(fh, fieldnames=list(_BREAKDOWN_COLUMNS))
+        w.writeheader()
+        for r in breakdown:
+            w.writerow(r)
+
     # --- the removal is checked and recorded. The arithmetic and the ledger are verified the
     # same way either route; only the approval is conditional.
     try:
@@ -1897,12 +1990,14 @@ def _apply(task, pipeline, log):
     written = res.get("metrics") or {}
     print(f"    per-library objects: {len(written.get('per_sample_objects') or [])}"
           f"   obs carries: {', '.join(written.get('obs_columns') or [])}")
-    return {"outputs": [str(p) for p in res.get("outputs", [])] + [str(ledger)],
+    return {"outputs": ([str(p) for p in res.get("outputs", [])]
+                        + [str(ledger), str(bpath)]),
             "metrics": {"n_in": n_in, "n_delivered": delivered, "n_removed": n_removed,
                         "action": action, "ceilings": ceiling_basis,
                         "authorised_by": authorised_by,
                         "per_sample_objects": written.get("per_sample_objects") or [],
                         "obs_columns": written.get("obs_columns") or [],
+                        "removal_breakdown": str(bpath),
                         **{f"n_{c}": sum(1 for x in masks[c] if x) for c in criteria}},
             "versions": res.get("versions", {})}
 

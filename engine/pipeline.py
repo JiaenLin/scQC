@@ -501,6 +501,11 @@ class Pipeline:
             # from every report while the code that produced it ran correctly every time. One
             # payload builder, both callers.
             "per_sample": self._per_sample_block(),
+            # HOW MANY EACH CRITERION REMOVED, PER LIBRARY. F9 draws the cohort; the cohort is not
+            # where the question lives. A criterion taking 2% of one library and 42% of another is
+            # a technical gradient sitting exactly where the biology is measured, and one bar
+            # cannot show it. Read from the file step 7 wrote, never recomputed here.
+            "removal_breakdown": self._removal_breakdown_block(),
             # Figures, for the same reason and the same way. Assembled at the report task, they
             # were assembled correctly, printed as assembled, and then finish() rebuilt the
             # payload without them and wrote a figure-less document over the top - the identical
@@ -721,6 +726,55 @@ class Pipeline:
         except Exception:                                             # noqa: BLE001
             return None
         return block
+
+    def _removal_breakdown_block(self) -> dict | None:
+        """Per library and per criterion, how many observations left. None if step 7 wrote none.
+
+        Read from `tables/removal_by_criterion.csv` rather than recomputed, for the reason the
+        per-library threshold table gives: a report that derives its own numbers can disagree with
+        the run it describes, and nothing on the page would say which was right.
+
+        None rather than an empty block. A run that measured and did not apply has no breakdown to
+        show, and a table of zeroes would say every criterion removed nothing - which is a claim
+        about a removal that never happened.
+        """
+        import csv as _csv
+
+        path = self.results / "tables" / "removal_by_criterion.csv"
+        if not path.exists():
+            return None
+        try:
+            with path.open(encoding="utf-8", newline="") as fh:
+                rows = [r for r in _csv.DictReader(fh) if r.get("criterion")]
+        except OSError:
+            return None
+        if not rows:
+            return None
+
+        def num(v):
+            try:
+                return int(str(v).strip())
+            except (TypeError, ValueError):
+                try:
+                    return float(str(v).strip())
+                except (TypeError, ValueError):
+                    return None
+
+        criteria, samples = [], []
+        for r in rows:
+            if r["criterion"] not in criteria:
+                criteria.append(r["criterion"])
+            s = r.get("sample") or ""
+            if s and s != "ALL" and s not in samples:
+                samples.append(s)
+        return {"source": str(path), "criteria": criteria, "samples": samples,
+                "rows": [{"sample": r.get("sample"), "criterion": r["criterion"],
+                          "n_in": num(r.get("n_in")), "n_fired": num(r.get("n_fired")),
+                          "n_sole": num(r.get("n_sole")),
+                          "n_removed_any": num(r.get("n_removed_any")),
+                          "pct_of_library": num(r.get("pct_of_library")),
+                          "pct_sole_of_library": num(r.get("pct_sole_of_library"))}
+                         for r in rows]}
 
     def _step_records(self) -> list:
         """One record per canonical step, aggregating every task that belongs to it.

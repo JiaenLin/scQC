@@ -142,6 +142,7 @@ nothing.
 |---|---|---|
 | `cluster_profile.csv` | (sample, cluster) | the profile and the A/B/C/D/FLAG/WATCH verdicts. Not joinable to barcodes — use the `cluster` column on the object |
 | `removal_ledger.csv` | **removed** barcode | every criterion that fired on it, not just the first |
+| `removal_by_criterion.csv` | (library, criterion) | `n_fired` — every observation the criterion removed, and `n_sole` — the ones no other criterion would have removed. The counts overlap, so `n_fired` sums to more than `n_removed_any`; `n_sole` is the number that says whether a threshold did work of its own. A `sample` of `ALL` is the cohort total, not an eleventh library. Rendered as a table in the report beside figure F9 |
 | `ambient_summary.csv` | library | fraction removed, genes fully removed |
 | `ambient_supplied.json` | — | provenance of any denoised object supplied rather than produced here |
 | `doublet_sweep.csv` | (library, setting) | the called rate at each swept `dbr.sd`, assembled from the per-library tables. Figure F5. Written **only** when `--dbr-sd-sweep` was given; it applies nothing and changes no deliverable |
