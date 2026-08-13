@@ -546,6 +546,7 @@ class Pipeline:
         ("dbr_sd_sweep", "dbr.sd sweep", "--dbr-sd-sweep"),
         ("light_floor", "light floor (UMI)", "--light-floor"),
         ("resolution", "clustering resolution", "--resolution"),
+        ("extra_resolutions", "additional resolutions profiled beside it", "--extra-resolutions"),
         ("seed", "seed", "--seed"),
         ("device", "device", "--cpu"),
     )

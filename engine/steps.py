@@ -1489,6 +1489,11 @@ def _cluster(task, pipeline, log):
                   pipeline.scratch / f"{p['sample']}_clusters",
                   {"sample": p["sample"],
                    "resolution": p["resolution"], "seed": p["seed"],
+                   # Profiled beside the applied resolution, into sibling files. Forwarded
+                   # explicitly rather than by passing `p` through: the op's parameters are a
+                   # declared contract, and a task parameter that never reaches it is a feature
+                   # that silently does nothing while every test of the wiring still passes.
+                   "extra_resolutions": p.get("extra_resolutions"),
                    # Needed to measure this object at all: it is the denoised one, so nothing
                    # has computed total_counts or pct_counts_mt on it, and cluster() refuses to
                    # normalise over an object whose depth was never measured.
@@ -1628,7 +1633,52 @@ def _cluster_flags(task, pipeline, log):
                "thresholds": str(thr)}
     metrics.update({f"{k}_fired": v for k, v in fired.items()})
     metrics.update({f"{k}_not_evaluated": v for k, v in unknown.items()})
-    return {"outputs": [str(out)], "metrics": metrics, "versions": {}}
+
+    # THE EXTRA RESOLUTIONS, FLAGGED THE SAME WAY, INTO SIBLING TABLES.
+    #
+    # `cluster_profile.csv` above is untouched and remains the only table step 7 and every
+    # downstream stage read. These carry the SAME columns and the SAME rule, and differ from it
+    # in the resolution and in nothing else - which is the whole point of having them: a flag
+    # that appears at one resolution and not another is a statement about the clustering, and one
+    # that appears at all of them is a statement about the cells.
+    #
+    # Thresholds are proposed WITHIN each resolution, exactly as the default's are proposed
+    # within its own rows. Carrying the default's thresholds across would compare a resolution
+    # against a cut-point derived from a different number of clusters.
+    extras_written, extras_failed = [], {}
+    by_res: dict = {}
+    for s in task.params["samples"]:
+        r = pipeline.results_by_key.get(f"06_cluster/{s}")
+        for o in (getattr(r, "outputs", None) or []):
+            name = str(o)
+            if ".cluster_profile.res" in name and name.endswith(".csv"):
+                by_res.setdefault(name.rsplit(".cluster_profile.res", 1)[1][:-4], []).append(o)
+    for res_txt, files in sorted(by_res.items()):
+        try:
+            erows: list = []
+            for f in files:
+                erows.extend(cf.read_profile_csv(f))
+            ethr = cf.propose(erows)
+            eflag = cf.apply_flags(erows, ethr)
+            eout = _tables(pipeline) / f"cluster_profile.res{res_txt}.csv"
+            with open(eout, "w", encoding="utf-8", newline="") as fh:
+                w = _csv.DictWriter(fh, fieldnames=sorted({k for r in eflag.rows for k in r}))
+                w.writeheader()
+                w.writerows(eflag.rows)
+            efired = eflag.counts()
+            print(f"    resolution {res_txt}: {len(eflag.rows)} clusters, "
+                  f"FLAG {efired['FLAG']}, WATCH {efired['WATCH']}  -> {eout.name}")
+            extras_written.append(str(eout))
+            metrics[f"res{res_txt}_clusters"] = len(eflag.rows)
+            metrics.update({f"res{res_txt}_{k}_fired": v for k, v in efired.items()})
+        except Exception as e:                              # noqa: BLE001 - named, not hidden
+            # An extra resolution is a diagnostic. It must not be able to cost the run its
+            # default flags, and it must not fail silently either.
+            extras_failed[res_txt] = f"{type(e).__name__}: {e}"
+            print(f"    resolution {res_txt}: FAILED - {type(e).__name__}: {e}")
+    if extras_failed:
+        metrics["extra_resolutions_failed"] = extras_failed
+    return {"outputs": [str(out)] + extras_written, "metrics": metrics, "versions": {}}
 
 
 # --------------------------------------------------------------------------------------------

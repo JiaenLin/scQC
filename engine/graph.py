@@ -330,7 +330,11 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             # transitivity is one a later reordering can remove without anything noticing.
             needs=("05_quality", f"04_doublets/{s}"),
             params={"sample": s, "python_exe": python_exe,
-                    "resolution": tools.get("resolution", 1.0), "seed": tools.get("seed", 0),
+                    "resolution": tools.get("resolution", 2.0), "seed": tools.get("seed", 0),
+                    # Profiled beside the default, into sibling files. The op does them LAST and
+                    # never touches the default's outputs, so a failure among the extras cannot
+                    # cost the deliverable its cluster flags.
+                    "extra_resolutions": tools.get("extra_resolutions"),
                     "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
                     "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
                     "doublet_csv": str(pipeline.results / "tables" / f"{s}_doublets.csv")},

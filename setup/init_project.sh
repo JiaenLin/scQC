@@ -141,7 +141,9 @@ doublets:
   dbr_sd:             # uncertainty on that rate
 
 cluster_check:
-  resolution: 1.0
+  # Recorded here for the reader; it is SET by --resolution, which defaults to 2.0.
+  # --extra-resolutions profiles further ones into sibling tables nothing downstream reads.
+  resolution: 2.0
   a_umi_fraction: 0.5     # cluster median UMI below this fraction of the sample median
   b_mito_pct: 15.0        # cluster median mitochondrial percentage above this
   c_uninformative_pct: 50.0

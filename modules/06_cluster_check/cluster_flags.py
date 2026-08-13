@@ -47,12 +47,16 @@ summary of two thresholds and a reader cannot see from it which one a cluster fa
 
 C, FLAG AND WATCH ARE MISSING WHERE MARKERS WERE NOT COMPUTED - NEVER FALSE
 
-Markers are computed at the default resolution only; they are the expensive part. Everywhere
-else C is UNKNOWN, and an unknown must never be written as False. `NaN >= 50` is False and
-nothing objects, so a missing marker table quietly turns FLAG into the full rule at the default
-resolution and into "D alone" at every other one; the flag counts then differ across a sweep
-because of what was CALCULATED, not because of anything in the DATA. A gap must not read as a
-cliff.
+Wherever markers were not computed C is UNKNOWN, and an unknown must never be written as False.
+`NaN >= 50` is False and nothing objects, so a missing marker table quietly turns FLAG into the
+full rule where markers exist and into "D alone" everywhere else; the flag counts then differ
+across a sweep because of what was CALCULATED, not because of anything in the DATA. A gap must
+not read as a cliff.
+
+Markers are the expensive part, so whether they exist at a given resolution is the caller's
+decision, not this module's. The shipped pipeline computes them at EVERY resolution it profiles -
+the default and each `--extra-resolutions` one - precisely so that flags from two resolutions are
+comparable; `markers=False` remains supported and reports C, FLAG and WATCH as unknown.
 
 The same holds inside the conjunction, which is why the logic below is three-valued: `A and C`
 with A unknown is UNKNOWN, not False, and `not A` with A unknown is not "A did not fire". A

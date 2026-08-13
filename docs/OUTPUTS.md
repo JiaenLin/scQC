@@ -140,7 +140,8 @@ nothing.
 
 | file | one row per | notes |
 |---|---|---|
-| `cluster_profile.csv` | (sample, cluster) | the profile and the A/B/C/D/FLAG/WATCH verdicts. Not joinable to barcodes — use the `cluster` column on the object |
+| `cluster_profile.csv` | (sample, cluster) | the profile and the A/B/C/D/FLAG/WATCH verdicts at the **applied** resolution (default 2.0). This is the one step 7 reads and the only one whose verdicts reach the object. Not joinable to barcodes — use the `cluster` column on the object |
+| `cluster_profile.res<r>.csv` | (sample, cluster) | the same columns and the same rule at each `--extra-resolutions` value. **Nothing downstream reads these.** They exist so a flag can be read across resolutions: one that fires at every resolution is a statement about the cells, one that fires at a single resolution is a statement about the clustering |
 | `removal_ledger.csv` | **removed** barcode | every criterion that fired on it, not just the first |
 | `removal_by_criterion.csv` | (library, criterion) | `n_fired` — every observation the criterion removed, and `n_sole` — the ones no other criterion would have removed. The counts overlap, so `n_fired` sums to more than `n_removed_any`; `n_sole` is the number that says whether a threshold did work of its own. A `sample` of `ALL` is the cohort total, not an eleventh library. Rendered as a table in the report beside figure F9 |
 | `ambient_summary.csv` | library | fraction removed, genes fully removed |

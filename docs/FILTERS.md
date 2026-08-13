@@ -389,9 +389,27 @@ recorded source says which values came from where.
 Thresholds measured on one cohort **do not transfer**. They are chosen against that cohort's own
 distributions, and the module proposes rather than remembers.
 
+### Which resolution, and why more than one
+
+The default is **2.0**. At 1.0 a droplet library resolves to major lineages only, and criterion D
+cannot fire — a doublet pocket is small and dissolves into the lineage cluster around it. Measured
+on the calibration cohort: D fired on nothing at 1.0 or 1.5, and on two clusters at 2.0, both above
+72% doublet.
+
+`--extra-resolutions` (default `1.0,3.0`) profiles and flags further resolutions into **sibling
+tables** named `cluster_profile.res<r>.csv`. They change no deliverable and nothing downstream
+reads them. Their purpose is comparison: a cluster flagged at one resolution and not another is a
+statement about the clustering, while one flagged at every resolution is a statement about the
+cells. Each resolution's thresholds are proposed within its own rows — a cut-point derived from a
+different number of clusters is not the same cut-point.
+
+An extra resolution that fails, most often because a cluster is too small for `rank_genes_groups`
+and a finer resolution reaches that sooner, is recorded as a named failure and does not stop the
+run. The default's outputs are written first and are never at risk from a diagnostic.
+
 ### Three-valued, deliberately
 
-Markers are computed at the default resolution only, so elsewhere C is **unknown** — and an
+Where markers were not computed C is **unknown** — and an
 unknown must never be written as `False`. `NaN >= 50` is `False` and nothing objects, which would
 quietly turn `FLAG` into the full rule at one resolution and "D alone" at every other, under one
 name. The flag counts would then differ across a sweep because of what was *calculated*, not

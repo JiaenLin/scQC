@@ -480,6 +480,14 @@ def cmd_run(a) -> int:
         # sweep a setting with no name, and `resolve_dbr_sd` would refuse it three steps later.
         "dbr_sd_sweep": ([t.strip() for t in str(a.dbr_sd_sweep).split(",") if t.strip()]
                          if a.dbr_sd_sweep else None),
+        # Same treatment, same reason: a malformed list is a usage error before any file is
+        # opened. The default resolution is dropped if it appears here, so `--resolution 2
+        # --extra-resolutions 1,2,3` profiles 2 once rather than twice under two names.
+        "extra_resolutions": (sorted({r for r in
+                                      (float(t.strip()) for t in
+                                       str(a.extra_resolutions).split(",") if t.strip())
+                                      if r != float(a.resolution)})
+                              if a.extra_resolutions else None),
     }.items() if v is not None}
     # AFTER `tools`, because the run's output directory is named from the parameters it was given.
     pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
@@ -645,7 +653,21 @@ def build_parser() -> argparse.ArgumentParser:
                          "'default,dbr,1'. 'default' omits the argument, 'dbr' sets dbr.sd = dbr, "
                          "anything else is a number. Costs one extra scDblFinder run per library "
                          "per setting and applies nothing.")
-    r2.add_argument("--resolution", type=float, default=1.0)
+    # 2.0, not 1.0. At 1.0 a droplet-based library of this size resolves to major lineages only,
+    # and criterion D - a cluster's doublet frequency - cannot fire, because a doublet pocket is
+    # small and dissolves into the lineage cluster around it. Measured on the calibration cohort:
+    # D fired on nothing at 1.0 or 1.5 and on two clusters at 2.0, both above 72% doublet.
+    r2.add_argument("--resolution", type=float, default=2.0,
+                    help="the clustering resolution step 6 flags on, and the one every downstream "
+                         "artifact carries (default 2.0)")
+    # Profiled and flagged ALONGSIDE the default, into sibling files. They change no deliverable
+    # and nothing downstream reads them; they exist so the flags at one resolution can be read
+    # against the flags at another, which is the only way to tell a contamination POCKET (isolates
+    # as resolution rises) from a contamination GRADIENT (never isolates, at any resolution).
+    r2.add_argument("--extra-resolutions", dest="extra_resolutions", default="1.0,3.0",
+                    help="comma-separated additional resolutions to profile and flag beside the "
+                         "default, into sibling files nothing downstream reads "
+                         "(default '1.0,3.0'; pass '' for none)")
     r2.add_argument("--seed", type=int, default=0)
     r2.add_argument("--force", action="store_true", help="re-run every task, ignoring the manifest")
     # Independent tasks run concurrently. 1 is the old serial behaviour, which is what you want

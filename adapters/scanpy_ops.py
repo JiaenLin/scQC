@@ -2764,6 +2764,64 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
         outputs.append(emb_path)
         emb_record["n_also_clustered"] = sum(1 for b in emb_barcodes if b in clustered_at)
 
+    # --- THE EXTRA RESOLUTIONS, PROFILED LAST AND INTO SIBLING FILES.
+    #
+    # LAST, because everything the deliverable depends on is already on disk by this point. An
+    # extra resolution is a diagnostic; it must not be able to cost a run its cluster flags, so a
+    # failure here is CAUGHT, named and counted rather than raised.
+    #
+    # `cluster()` is NOT called again - it normalises adata.X in place, and a second call would
+    # normalise an already-normalised matrix (and be refused for it). Only leiden is re-run,
+    # against the neighbour graph already built, which is resolution-independent. That also makes
+    # the extras honest: they differ from the default in resolution and in nothing else.
+    #
+    # The file name carries the resolution and therefore does NOT end in `.cluster_profile.csv`,
+    # which is what step 6's flag task selects on. Nothing downstream can pick one up by accident.
+    extra_failed, extra_done = {}, []
+    extras = params.get("extra_resolutions")
+    if not _unknown(extras):
+        import scanpy as sc
+
+        primary_uns = dict(adata.uns["scqc_cluster"])
+        for r in sorted({float(x) for x in extras}):
+            if r == float(params["resolution"]):
+                continue                      # the default is not also an extra
+            ekey = f"leiden_res{r:g}"
+            try:
+                sc.tl.leiden(adata, resolution=r, random_state=int(params["seed"]),
+                             key_added=ekey)
+                # cluster_profile reads uns["scqc_cluster"] for the clustering's identity and
+                # drops those columns when the key does not match. Swapped per resolution and
+                # restored below, so the primary record is exactly what it was.
+                adata.uns["scqc_cluster"] = {
+                    **primary_uns, "key": ekey, "resolution": r,
+                    "n_clusters": int(adata.obs[ekey].astype(str).nunique())}
+                erows = cluster_profile(adata, ekey, uninformative,
+                                        sample=params.get("sample"),
+                                        sample_key=params.get("sample_key"),
+                                        doublet_key=params.get("doublet_key"),
+                                        doublet_positive=params.get("doublet_positive"),
+                                        markers=bool(params.get("markers", True)),
+                                        marker_topn=int(params.get("marker_topn", MARKER_TOPN)),
+                                        marker_method=str(params.get("marker_method",
+                                                                     "wilcoxon")))
+                ep = write_profile_csv(erows, f"{out_prefix}.cluster_profile.res{r:g}.csv")
+                el = Path(f"{out_prefix}.cluster_labels.res{r:g}.csv")
+                with el.open("w", newline="", encoding="utf-8") as fh:
+                    w = csv.writer(fh)
+                    w.writerow(["barcode", "sample", "cluster"])
+                    for b, c in zip(adata.obs_names, adata.obs[ekey]):
+                        w.writerow([str(b), params.get("sample") or "",
+                                    "" if _unknown(c) else str(c)])
+                outputs.extend([ep, el])
+                extra_done.append({"resolution": r, "n_clusters": len(erows)})
+            except Exception as e:                          # noqa: BLE001 - named, not hidden
+                # The commonest cause is a cluster too small for rank_genes_groups, which a finer
+                # resolution reaches sooner. Recorded as a failure of THAT resolution; the run
+                # and the default's flags are unaffected.
+                extra_failed[f"{r:g}"] = f"{type(e).__name__}: {e}"
+        adata.uns["scqc_cluster"] = primary_uns
+
     if params.get("write_h5ad"):
         h5 = Path(str(out_prefix) + ".clustered.h5ad")
         adata.write_h5ad(str(h5))
@@ -2778,7 +2836,12 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
                "n_profile_rows": len(rows),
                # Present and null when no embedding was asked for, so the report can tell "not
                # requested" from "requested and it produced nothing".
-               "embedding": emb_record}
+               "embedding": emb_record,
+               # Both, always. "which extras were profiled" cannot be read off the successes
+               # alone: a resolution that was asked for and failed must not look like one that
+               # was never asked for.
+               "extra_resolutions": (extra_done if not _unknown(extras) else None),
+               "extra_resolutions_failed": (extra_failed or None)}
     return outputs, metrics
 
 
