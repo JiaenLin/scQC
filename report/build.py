@@ -2090,13 +2090,19 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     gene_cut = _one_value(_column(per_sample, "gene_floor_proposed"))
     mito = _numbers(_column(per_sample, "mito_ceiling_pct"))
     mito_txt = f"{min(mito):.2f}–{max(mito):.2f}%" if mito else "not recorded"
+    # The mitochondrial rule's CLASS is taken from the parameter table, which reads it off the
+    # run, rather than written here as fixed text. It was fixed text - "DERIVED · per library" -
+    # and a bound-dominated or declared-k ceiling would have been labelled derived on the one
+    # line of the report a reader looks at to see how the threshold was arrived at.
+    mito_class = next((str(r.get("class")) for r in ((doc.get("parameters") or {}).get("rows") or [])
+                       if str(r.get("name", "")).startswith("mitochondrial")), None)
     rows = [
         ("Counts per nucleus", "F7", f"≥ {_fmt(umi_cut)}", "UMI floor",
          "DERIVED · cohort constant"),
         ("Genes detected", "F14", f"≥ {_fmt(gene_cut)}", "gene floor",
          "DERIVED · cohort constant"),
         ("Mitochondrial %", "F15", f"≤ {mito_txt}", "mito ceiling",
-         "DERIVED · per library"),
+         f"{mito_class} · per library" if mito_class else "class not recorded"),
         ("Where the doublets sat", "F10", "scDblFinder", "doublet call", "DECLARED · per library"),
         ("What survived, same embedding", "F11", "", "", ""),
     ]

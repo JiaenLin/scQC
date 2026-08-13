@@ -385,12 +385,17 @@ MITO_MAD_K = {"snrna": 3, "scrna": None}
 # WHAT IT COSTS, measured, and recorded because it is not visible from the number: threshold
 # evenness and removal evenness trade off monotonically, across every rule tested.
 #
-#     rule                       ceiling spread   removal differential (interaction arm)
-#     cohort constant 12.65%          1.00x                 2.77x
-#     MAD k=4, bound 10-25            2.05x                 1.75x   <- applied
-#     MAD k=5, bound 10-25            2.46x                 1.60x
-#     Tukey,   bound 10-25            2.50x                 1.37x
-#     Tukey,   unbounded              4.23x                 1.09x
+#     rule                          ceiling spread   removal differential (interaction arm)
+#     cohort constant 12.65%             1.00x                 2.77x
+#     MAD k=3, bound 5-10                2.00x                 1.58x   <- APPLIED (snrna)
+#     MAD k=4, bound 10-25               2.05x                 1.75x   retired 2026-08-13
+#     MAD k=5, bound 10-25               2.46x                 1.60x
+#     Tukey,   bound 10-25               2.50x                 1.37x
+#     Tukey,   unbounded                 4.23x                 1.09x
+#
+# The applied row is measured on the same cohort with the mt<50 derivation cut in place, so it is
+# not exactly comparable with the rows below it; the retired row is what this pipeline shipped
+# until 2026-08-13 and is kept so the change has a before to be read against.
 #
 # Every step toward a more uniform THRESHOLD costs a less uniform EFFECT. The reason is that the
 # quantity being fenced genuinely varies: Q3 spreads 3.91x and IQR 4.75x across those libraries,
@@ -399,6 +404,10 @@ MITO_MAD_K = {"snrna": 3, "scrna": None}
 # and a reader needs both.
 MAD_SCALE = 1.4826
 IQR_MULT = 1.5
+# A DECLARED k this far from the cohort's Tukey-implied k is reported. Not a refusal: a declared k
+# exists precisely so the tail cannot set the fence, so some gap is the point. A large one still
+# says the declaration does not describe this cohort, and that is worth a reader's attention.
+K_DECLARED_GAP_REVIEW = 2.0
 # Sanity limits on the DERIVED k. Not a tuning knob: a cohort whose Tukey-implied k falls outside
 # these has a tail shape this calibration does not describe, and the run says so rather than
 # quietly using the edge value. k below 2 fences inside the bulk of the distribution; k above 10
@@ -604,63 +613,68 @@ def derive_mito_ceiling_from_quartiles(stats, assay="snrna", bounds=None, mult=I
         raise ThresholdRefusal(f"mitochondrial bounds must satisfy 0 <= lo < hi <= 100; got "
                                f"{lo}-{hi}.")
 
-    # THE DERIVED k IS ALWAYS COMPUTED, EVEN WHERE IT IS NOT APPLIED. It is the only thing that
-    # can say a declared k does not fit this cohort's tail, and computing it only when it is going
-    # to be used would remove that check exactly where the number is not the data's own.
-    sel = None
-    try:
-        sel = select_mad_k({s: st for s, st in stats.items()
-                            if all(key in st for key in ("median", "q1", "q3", "mad"))},
-                           mult=mult)
-    except ThresholdRefusal:
-        # Every library flat. Fatal when k must be derived, and merely unavailable when it is
-        # declared - so the refusal is re-raised below rather than here.
-        sel = None
-
-    # k comes from three places, in order: the caller, the assay, then the data.
+    # WHERE k COMES FROM: the caller, then the assay, then the data - decided BEFORE anything is
+    # computed from it, so a k that is going to be refused is refused before notes are written
+    # about it.
     #
     # A caller-supplied k is for reproducing an earlier run. The ASSAY default is the standing
     # policy - snRNA declares 3 because the quantity is contamination rather than biology; see
     # MITO_MAD_K. Only when neither states one is it derived from this cohort's Tukey fences.
     assay_k = MITO_MAD_K.get(assay)
-    if k is not None:
-        k_source = "declared_caller"
-        k_notes = [f"MAD k = {k} DECLARED by the caller, not derived from this cohort's Tukey "
-                   f"fences. Reproducing an earlier run is the reason to do this; choosing a "
-                   f"number because the result looked better is not."]
-    elif assay_k is not None:
-        k, k_source = assay_k, "declared_assay"
-        k_notes = [f"MAD k = {k} DECLARED for assay {assay!r}, not derived from this cohort. On "
-                   f"this assay pct_counts_mt measures cytoplasmic carry-over rather than the "
-                   f"cell, and deriving k from the tail would widen the fence for exactly the "
-                   f"cohorts whose preps were dirtiest"]
-    else:
-        if sel is None:
-            raise ThresholdRefusal(
-                "no library has a positive MAD, so the Tukey-implied k is undefined everywhere "
-                "and there is nothing to calibrate against. A cohort in which more than half of "
-                "every library shares one mitochondrial value is not one this fence describes.")
-        k, k_notes, k_source = sel["k"], sel["notes"], "derived"
+    k_source = ("declared_caller" if k is not None
+                else "declared_assay" if assay_k is not None
+                else "derived")
+    declared_k = k if k is not None else assay_k
+    if declared_k is not None and not (declared_k > 0):
+        raise ThresholdRefusal(f"MAD multiplier k must be positive; got {declared_k}. A fence at "
+                               f"or below the median is not an upper fence.")
 
-    # What the data WOULD have chosen, reported beside a declared k so the two can be compared.
-    # Silence here would be the declaration marking its own homework.
-    if k_source != "derived" and sel is not None:
-        gap = sel["median_k"] / k if k else None
-        k_notes.append(
-            f"for comparison, the Tukey-implied k on this cohort is {sel['median_k']:.2f} "
-            f"(per library {min(sel['per_library'].values()):.2f}-"
-            f"{max(sel['per_library'].values()):.2f})"
-            + (f" - {gap:.2f}x the applied {k}" if gap else ""))
-        if gap is not None and (gap > 2.0 or gap < 0.5):
+    # THE DERIVED k IS ALWAYS COMPUTED, EVEN WHERE IT IS NOT APPLIED. It is the only thing that
+    # can say a declared k does not fit this cohort's tail, and computing it only when it is going
+    # to be used would remove the check exactly where the number is not the data's own.
+    #
+    # `select_mad_k` refuses a cohort in which every library is flat. That is FATAL when k must
+    # come from it and merely UNAVAILABLE when k is declared, so the refusal is caught only in the
+    # second case. It is never re-worded here: a second copy of that message is a second thing to
+    # keep in step with the first.
+    gradable = {s: st for s, st in stats.items()
+                if all(key in st for key in ("median", "q1", "q3", "mad"))}
+    if declared_k is None:
+        sel = select_mad_k(gradable, mult=mult)      # propagates; k has nowhere else to come from
+        k, k_notes = sel["k"], sel["notes"]
+    else:
+        try:
+            sel = select_mad_k(gradable, mult=mult)
+        except ThresholdRefusal:
+            sel = None
+        k = declared_k
+        k_notes = ([f"MAD k = {k} DECLARED by the caller, not derived from this cohort's Tukey "
+                    f"fences. Reproducing an earlier run is the reason to do this; choosing a "
+                    f"number because the result looked better is not."]
+                   if k_source == "declared_caller" else
+                   [f"MAD k = {k} DECLARED for assay {assay!r}, not derived from this cohort. On "
+                    f"this assay pct_counts_mt measures cytoplasmic carry-over rather than the "
+                    f"cell, and deriving k from the tail would widen the fence for exactly the "
+                    f"cohorts whose preps were dirtiest"])
+        # What the data WOULD have chosen, reported beside the declaration so the two can be
+        # compared. Silence here would be the declaration marking its own homework.
+        if sel is not None:
+            gap = sel["median_k"] / k
             k_notes.append(
-                f"REVIEW - the declared k = {k} and this cohort's Tukey-implied "
-                f"{sel['median_k']:.2f} differ by {gap:.2f}x. The declaration does not describe "
-                f"the shape of this cohort's tail. That may be the point - a declared k exists to "
-                f"stop the tail setting the fence - but a gap this wide should be looked at "
-                f"rather than accepted because the number was declared")
-    if not (k > 0):
-        raise ThresholdRefusal(f"MAD multiplier k must be positive; got {k}. A fence at or below "
-                               f"the median is not an upper fence.")
+                f"for comparison, the Tukey-implied k on this cohort is {sel['median_k']:.2f} "
+                f"(per library {min(sel['per_library'].values()):.2f}-"
+                f"{max(sel['per_library'].values()):.2f}) - {gap:.2f}x the applied {k}")
+            if gap > K_DECLARED_GAP_REVIEW or gap < 1 / K_DECLARED_GAP_REVIEW:
+                k_notes.append(
+                    f"REVIEW - the declared k = {k} and this cohort's Tukey-implied "
+                    f"{sel['median_k']:.2f} differ by {gap:.2f}x. The declaration does not "
+                    f"describe the shape of this cohort's tail. That may be the point - a "
+                    f"declared k exists to stop the tail setting the fence - but a gap this wide "
+                    f"should be looked at rather than accepted because the number was declared")
+        else:
+            k_notes.append(
+                "the Tukey-implied k could NOT be computed on this cohort - every library's MAD "
+                "is zero - so the declared k has no cross-check here. That is not agreement")
 
     out = {}
     for s, st in stats.items():

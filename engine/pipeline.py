@@ -604,17 +604,49 @@ class Pipeline:
                              "decided_by": block.get("approved_by") or "",
                              "decided_on": block.get("approved_on") or ""})
                 continue
+            klass = "DERIVED"
             if derived_key:
                 value = cohort.get(derived_key)
                 basis = (f"step 5: the density valley measured per library, proposed as one "
                          f"cohort constant and bounded")
             else:
+                # READ FROM THE RUN, NOT WRITTEN HERE. This was fixed text saying k was derived
+                # from each library's Tukey fence, which stopped being true for snRNA when the
+                # assay policy split on 2026-08-13 - the report would have described a filter the
+                # run did not apply, in the one section whose whole job is to say who set what.
                 value = applied.get("ceilings") or "per library"
-                basis = ("step 5: median + k*1.4826*MAD over the barcodes above the light floor, "
-                         "with k derived from each library's Tukey fence and the whole bounded")
+                k_src = cohort.get("mito_k_source")
+                k_val = cohort.get("mito_k")
+                prov = cohort.get("mito_provenance")
+                how = {"derived": "derived from each library's Tukey fence",
+                       "declared_assay": f"DECLARED for assay {cohort.get('mito_assay') or '?'}",
+                       "declared_caller": "DECLARED by the caller"}.get(
+                           k_src, "of unrecorded provenance")
+                cut = cohort.get("mito_derivation_max_pct")
+                pop = ("over the barcodes above the light floor"
+                       + (f" and below {cut:g}% mitochondrial" if cut is not None else ""))
+                basis = (f"step 5: median + k*1.4826*MAD {pop}, with k"
+                         + (f" = {k_val}" if k_val is not None else "")
+                         + f" {how}, and the whole bounded to "
+                         + (f"{cohort.get('mito_bound_lo')}-{cohort.get('mito_bound_hi')}%"
+                            if cohort.get("mito_bound_hi") is not None else "the assay default"))
+                # A bound that decided the ceiling in most libraries IS the threshold, and the
+                # class must say so rather than describing a declaration as a measurement.
+                #
+                # A DECLARED k does NOT change the class, and inventing a fifth class for it was
+                # the first attempt: `PARAM_CLASSES` in report/build.py is a closed vocabulary of
+                # four, and a row outside it is dropped by the validator - the parameter would
+                # have vanished from the table rather than being mislabelled in it. The class is
+                # still DERIVED because the applied number is computed per library from that
+                # library's own distribution; that k and the bound are declared is what `basis`
+                # is for, and it says so.
+                if prov == "bound_dominated":
+                    klass = "DECLARED"
+                    basis += ("; the bound decided the ceiling in most libraries, so this is "
+                              "BOUND-DOMINATED and is reported as declared, not derived")
             if value is None:
                 continue
-            rows.append({"name": label, "value": value, "class": "DERIVED", "basis": basis})
+            rows.append({"name": label, "value": value, "class": klass, "basis": basis})
 
         return rows or None
 

@@ -41,7 +41,7 @@ fixture that has no arms.
 | ambient learning rate | 5e-5 | one cohort-wide decision | DERIVED per cohort |
 | UMI floor | 350 | **274–473** per library | DERIVED per dataset |
 | gene floor | 250 | bimodal in every library | DERIVED per dataset |
-| mito ceiling | **per library, 6.12–25.00%** | **4× spread in Q3** | **DERIVED per library**; bound DECLARED |
+| mito ceiling | **per library, 5.00–10.00%** | **4× spread in Q3** | **DERIVED per library**; bound and, on snRNA, `k` both DECLARED |
 | doublet `dbr.sd` | 0.06 | default was prior-driven | DERIVED per dataset |
 | cluster A / B / C | 0.5× / 15% / 50% | proposed against distributions | **ADJUDICATED** |
 | cell-call REVIEW / REFUSE | 5% / 10% | one library at 5.0% | DECLARED |
@@ -69,9 +69,11 @@ cluster-level medians and stops.
 
 Two things this row should teach a reader of another cohort:
 
-- **The 6.12–25.00% range is not transferable.** It is what ten libraries of one cohort produced.
-  The **procedure** ships; the numbers do not.
-- **The bound is the only DECLARED part**, and it must be re-declared in the analyst's own words.
+- **No ceiling range here is transferable.** Each is what ten libraries of one cohort produced
+  under one rule. The **procedure** ships; the numbers do not.
+- **The bound is DECLARED and must be re-declared** in the analyst's own words — and on snRNA so is
+  `k`. See the 2026-08-13 note below: what stays adjudicated differs by assay, because on nuclei a
+  mitochondria-high population is not a cell type question at all.
 
 ### Revised 2026-08-11 — Tukey calibrates, MAD applies, and `k` is derived
 
@@ -93,23 +95,36 @@ still have that variation be the design. The UMI valley is the control and behav
 within-group 1.33× against between-group 1.52× — which is why *it* collapses safely to one cohort
 constant and the mitochondrial fence does not.
 
-**The design now applied.** Tukey is retained as the *calibration instrument* and never applied:
+**Tukey is retained as the *calibration instrument* and never applied:**
 
 ```
 k_i = (Q3_i + 1.5*IQR_i - median_i) / (1.4826 * MAD_i)      per library
-k   = round(median(k_i))                                     ONE cohort constant, DERIVED
+k   = round(median(k_i))                                     scRNA: ONE cohort constant, DERIVED
+                                                             snRNA: computed and REPORTED, not used
 raw = median + k * 1.4826 * MAD                              applied
 ```
 
-On this cohort `k_i` ran **3.44 to 6.56** (1.90×) for a median of **4.26**, giving **k = 4**. The
-per-library k is a perfect monotone function of skew (`IQR / 1.4826·MAD`, which is 1.349 for a
-normal distribution and ran 1.59–2.82 here) — which is also why no single k reproduces Tukey, and
-why the cohort value is rounded to an integer rather than carried to a decimal it cannot support.
+On this cohort `k_i` ran **3.44 to 6.56** (1.90×) for a median of **4.26**. The per-library k is a
+perfect monotone function of skew (`IQR / 1.4826·MAD`, which is 1.349 for a normal distribution and
+ran 1.59–2.82 here) — which is also why no single k reproduces Tukey, and why a derived cohort
+value is rounded to an integer rather than carried to a decimal it cannot support.
 
-Applied at bound 10–25%, this cohort gives ceilings **10.00–20.51% (2.05×)**, with the bound
-binding in 4 of 10 libraries — all lower, none upper — so the result classifies as `derived`
-rather than `bound_dominated`. Tukey then flags **the most skewed library** as the one place
-the two independent routes disagree by more than 1.5×.
+> **What this cohort calibrated is no longer what snRNA applies.** On **2026-08-13** the two assays
+> were separated: `snrna` moved to a **5–10% bound at a DECLARED k = 3**, `scrna` kept 10–30% with k
+> derived. A nucleus contains no mitochondria, so `pct_counts_mt` on that assay measures
+> cytoplasmic carry-over rather than the cell — deriving k from the tail would widen the fence for
+> exactly the cohorts whose preparations were dirtiest. See `docs/FILTERS.md`. **Everything below
+> describes the retired rule and is kept because it is the evidence the change was made against.**
+
+**Under the retired rule** — k = 4, bound 10–25% — this cohort gave ceilings **10.00–20.51%
+(2.05×)**, the bound binding in 4 of 10 libraries, all lower, so the result classified as `derived`
+rather than `bound_dominated`. Tukey flagged **the most skewed library** as the one place the two
+independent routes disagreed by more than 1.5×.
+
+**Under the applied rule** — k = 3, bound 5–10%, with the `mt < 50%` derivation cut also in place —
+the same ten libraries give ceilings **5.00–10.00% (2.00×)**, the bound binding in **5 of 10**
+(4 upper, 1 lower), still classified `derived` by one library. The Tukey-implied k is **4.15**,
+1.38× the applied 3, inside the 2× review line. Delivered nuclei fall **115,991 → 109,140 (−5.9%)**.
 
 ### The trade this makes, measured, because it is not visible from the number
 
@@ -119,10 +134,14 @@ tested on this cohort:
 | rule | ceiling spread | removal differential (interaction arm) |
 |---|---|---|
 | cohort constant 12.65% | 1.00× | 2.77× |
-| **MAD k=4, bound 10–25 — applied** | **2.05×** | **1.75×** |
+| **MAD k=3, bound 5–10 — applied (snRNA)** | **2.00×** | **1.58×** |
+| MAD k=4, bound 10–25 — *retired 2026-08-13* | 2.05× | 1.75× |
 | MAD k=5, bound 10–25 | 2.46× | 1.60× |
 | Tukey, bound 10–25 | 2.50× | 1.37× |
 | Tukey, unbounded | 4.23× | 1.09× |
+
+The applied row carries the `mt < 50%` derivation cut and the rows below it do not, so it is not
+exactly comparable with them; it is shown in the same table because the trade is the point.
 
 Every step toward a more uniform *threshold* costs a less uniform *effect*. The reason is that the
 quantity being fenced genuinely varies — Q3 spreads 3.91× and IQR 4.75× across these libraries —

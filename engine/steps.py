@@ -1397,10 +1397,23 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
     out = dict(out)
     out["outputs"] = list(out.get("outputs", [])) + [str(p)]
     out["metrics"] = dict(out.get("metrics", {}))
+    # k, WHERE IT CAME FROM, AND WHETHER THE BOUND DECIDED IT - carried into the metrics because
+    # the report's parameter table reads them. It used to state "DERIVED, k derived from each
+    # library's Tukey fence" as fixed text, which stopped being true for snRNA on 2026-08-13 and
+    # would have had the report describing a filter the run did not apply.
     out["metrics"].update({
         "mito_ceiling_lo": min(m.ceiling for m in ceil.values()),
         "mito_ceiling_hi": max(m.ceiling for m in ceil.values()),
-        "mito_bound_binds": sum(1 for m in ceil.values() if m.clamped)})
+        "mito_bound_binds": sum(1 for m in ceil.values() if m.clamped),
+        "mito_k": d.get("k"),
+        "mito_k_source": d.get("k_source"),
+        "mito_provenance": d.get("provenance"),
+        "mito_assay": assay,
+        "mito_bound_lo": lo,
+        "mito_bound_hi": hi,
+        "mito_derivation_max_pct": next(
+            (pp.get("derivation_max_pct") for pp in (mito_pop or {}).values()
+             if pp and pp.get("derivation_max_pct") is not None), None)})
     return out
 
 
@@ -1785,6 +1798,16 @@ def _removal_breakdown(percell, criteria, masks, removed_mask) -> list:
     booleans, so re-deriving the counts from the file would be a second route to one number with
     no cross-check attached - it can only agree, or disagree with nothing to say which is right.
     """
+    named = {str(r.get("sample") or "") for r in percell}
+    if BREAKDOWN_ALL in named:
+        # A library actually called ALL would have its own row silently merged into the cohort
+        # total, and the total would then be double-counted into itself. Refused rather than
+        # renamed: renaming a library in one table and not the others is worse than stopping.
+        raise Refusal(
+            f"07_apply: a library is named {BREAKDOWN_ALL!r}, which is the label the per-criterion "
+            f"breakdown uses for the cohort total. Its row and the total cannot be told apart. "
+            f"Rename the library in the samplesheet.")
+
     per: dict = {}
     for i, row in enumerate(percell):
         s = row.get("sample") or BREAKDOWN_ALL
