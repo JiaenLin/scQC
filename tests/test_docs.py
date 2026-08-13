@@ -73,6 +73,8 @@ CHECKS = [
     ("MAD k sanity limits", const(Q, "MAD_K_BOUNDS") == "(2, 10)",
      "`MAD_K_BOUNDS = (2, 10)`" in doc),
     ("MAD scale factor", const(Q, "MAD_SCALE") == "1.4826", "1.4826" in doc),
+    ("mito derivation max", const(S, "MITO_DERIVATION_MAX") == "50.0",
+     "`MITO_DERIVATION_MAX = 50.0`" in doc),
     ("light floor default", const(L, "DEFAULT_FLOOR") == "200", "defaulting to **200**" in doc),
     ("doublet silence", const(D, "ZERO_RATE") == "0.005", "< 0.5%" in doc),
     ("doublet rate imposed", const(D, "SPREAD_IMPOSED") == "1.05", "1.05×" in doc),

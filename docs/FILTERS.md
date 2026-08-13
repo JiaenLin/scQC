@@ -219,22 +219,43 @@ neither check objecting.
 
 ### Which population the quartiles are taken over
 
-**Derived over:** called cells **at or above the light floor**. Both restrictions matter:
+**Derived over:** called cells **at or above the light floor** and **below
+`MITO_DERIVATION_MAX = 50.0`%** mitochondrial. All three restrictions matter:
 
 - *Called cells*, because a barcode with no counts has no meaningful percentage — `0/0`.
 - *At or above the light floor*, because a percentage needs a denominator large enough to mean
   something. A 30-UMI droplet with 10 mitochondrial counts reads 33%, and a fence built on Q3 is
   set by exactly those barcodes. At ~100 counts the binomial standard error on a fraction near 18%
   is close to four percentage points — noise, sitting precisely in the tail that determines Q3.
+- *Below 50% mitochondrial*, because the fence estimates where the healthy population **ends**, and
+  a droplet that is more than half mitochondrial by count is not a cell with high mitochondrial
+  content. On a nuclear preparation it cannot be: the mitochondrial genome is not in the nucleus.
+  Those droplets are a different distribution, and letting them set the MAD widens the fence that
+  decides which real cells survive. On the calibration cohort's 2,462 such droplets: median
+  88–122 genes against a population median of 339–734, median 248–351 UMI, and **not one of them
+  survived the full filter** — they could reach the deliverable through no route except this one.
 
 Deriving it over every called barcode instead produces ceilings materially higher, and looser on
 exactly the cells the ceiling is supposed to police.
 
-**Note the asymmetry with the count floors**, which take *no* floor. The two quantities need
-opposite treatment: a mode boundary needs both modes present, a percentage needs a denominator.
+**Note the asymmetry with the count floors**, which take *neither* restriction. This is the rule
+that decides whether any further pre-filter belongs here:
+
+> A derivation population may exclude what is **definitionally not the thing being estimated**. It
+> must never exclude what **defines the boundary being estimated**.
+
+A percentage needs a denominator and a population that could contain the quantity; a mode boundary
+needs both modes present, so the valleys must keep the debris these two restrictions delete. Most
+further candidates — a complexity percentile, dropping called doublets — are the second kind
+wearing the clothes of the first, and a percentile is never the right form regardless: it removes a
+fixed fraction whether or not anything is wrong with it.
+
 Both are computed in the same pass over the same object, and the population each was taken over is
-recorded beside it — `pop_floor_umi` and `pop_n_all_called` in the ceiling table. A threshold whose
+recorded beside it — `pop_floor_umi`, `pop_n_all_called`, `pop_derivation_max_pct`,
+`pop_n_above_floor` and `pop_n_excluded_high_mito` in the ceiling table. A threshold whose
 derivation population is unrecorded cannot be compared with anyone else's.
+`pop_max_above_floor` carries the true observed maximum from **before** the 50% cut, so the one
+number that shows a library is full of ambient is not the number the derivation population erased.
 
 **Applied to:** every barcode, in step 7, per library.
 

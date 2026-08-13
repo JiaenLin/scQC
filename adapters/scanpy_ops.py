@@ -149,6 +149,15 @@ VALLEY_METRIC_COLUMNS = {
     "genes": "n_genes_by_counts",
 }
 
+#: DECLARED. The mitochondrial percentage above which a droplet is excluded from the population
+#: the mitochondrial CEILING is derived over. It is not a filter and removes nothing: it says
+#: which droplets are eligible to describe where the healthy population ends. A droplet more than
+#: half mitochondrial by count is ambient RNA rather than a cell with high mitochondrial content,
+#: and letting it set the MAD widens the fence that decides which real cells survive. Override
+#: per run with the `mito_derivation_max` parameter. The reasoning, and the measurement behind
+#: the value, are in `_op_valley` beside the code that applies it.
+MITO_DERIVATION_MAX = 50.0
+
 #: A library that is present but was not used has a version; one that is not installed does not.
 #: Kept distinct from `engine.provenance.NOT_INVOKED` ("not invoked") because they are different
 #: facts and a reader has to be able to tell them apart.
@@ -2317,6 +2326,34 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     #
     # This ran without the floor until 2026-08-10 and produced ceilings for a population the
     # ceiling is never applied to: every barcode it added is removed by the count floor first.
+    #
+    # THE SECOND RESTRICTION: `MITO_DERIVATION_MAX`, ADDED 2026-08-13.
+    #
+    # The floor is a statement about the DENOMINATOR. This one is a statement about what is being
+    # measured, and it is the same argument the floor makes, from the other end of the axis:
+    #
+    #   the fence estimates WHERE THE HEALTHY POPULATION ENDS. A droplet that is more than half
+    #   mitochondrial by count is not a cell whose mitochondrial content is high; on a nuclear
+    #   preparation it is ambient RNA, because the mitochondrial genome is not in the nucleus and
+    #   a nucleus therefore cannot be mostly mitochondrial. Those droplets are not the tail of the
+    #   distribution being described - they are a different distribution, and letting them set the
+    #   MAD widens the fence that decides which real cells survive.
+    #
+    # Measured on the calibration cohort, over its 2,462 such droplets: median 88-122 genes
+    # against a population median of 339-734, median 248-351 UMI, and NOT ONE of them survived the
+    # full filter. They could not influence the deliverable through any route except this one.
+    #
+    # THE ASYMMETRY WITH THE VALLEYS IS THE SAME ASYMMETRY, AND IT IS WHY THIS IS NOT GENERAL.
+    # A derivation population may exclude what is definitionally not the thing being estimated. It
+    # must never exclude what DEFINES the boundary being estimated - which is exactly why the count
+    # valleys take no pre-filter at all: they are a boundary between two modes and need the debris
+    # mode this would delete. Before adding a third restriction here, ask which of those two a
+    # candidate is; most are the second wearing the clothes of the first.
+    #
+    # It is DECLARED, not derived. No statistic in the data says where a cell stops being a cell,
+    # and a value chosen by sweeping until the fences looked right would be a threshold pretending
+    # to be a population definition. 50% is the line at which the mitochondrial fraction exceeds
+    # everything else in the droplet combined.
     mito_floor = params.get("mito_floor_umi")
     if "mito_floor_umi" not in params or _unknown(mito_floor):
         raise TaskFailure(
@@ -2327,44 +2364,29 @@ def _op_valley(adata, params, out_prefix) -> tuple:
             "to. Pass the light floor. It does NOT apply to the valleys, which need the debris "
             "mode this would delete.")
     mito_floor = float(mito_floor)
-    mito = None
+    mito_max = params.get("mito_derivation_max", MITO_DERIVATION_MAX)
+    if _unknown(mito_max):
+        mito_max = MITO_DERIVATION_MAX
+    mito_max = float(mito_max)
+    if not 0.0 < mito_max <= 100.0:
+        raise TaskFailure(
+            f"mito_derivation_max is {mito_max:g}; it must lie in (0, 100]. It is the line above "
+            f"which a droplet is not a cell at all, not a quality threshold, so a value outside "
+            f"the range a percentage can take is a mistake rather than a strict setting.")
+    mito, mito_pop = (None, {"floor_umi": mito_floor, "derivation_max_pct": mito_max,
+                             "n_above_floor": None, "n_excluded_high_mito": None,
+                             "max_above_floor": None, "n_at_or_above": None,
+                             "n_all_with_a_value": None})
     if "pct_counts_mt" in adata.obs.columns:
         if "total_counts" not in adata.obs.columns:
             raise TaskFailure(
                 "obs['total_counts'] is absent, so the mitochondrial quartiles cannot be "
                 "restricted to the barcodes above the floor, and taking them over everything is "
                 "the defect this parameter exists to prevent.")
-        _mt = _float_array(adata.obs["pct_counts_mt"])
-        _tc = _float_array(adata.obs["total_counts"])
-        _v = sorted(float(m) for m, c in zip(_mt, _tc)
-                    if m == m and c == c and c >= mito_floor)
-        if len(_v) >= 4:
-            def _q(p):
-                h = (len(_v) - 1) * p
-                lo_i = int(h)
-                hi_i = min(lo_i + 1, len(_v) - 1)
-                return _v[lo_i] + (h - lo_i) * (_v[hi_i] - _v[lo_i])
-            # MAD travels with the quartiles because both are needed and the matrix is open
-            # exactly once. The ceiling is derived from median + k*1.4826*MAD; Tukey's
-            # Q3 + 1.5*IQR is carried alongside as an independent second derivation, and the
-            # two disagreeing is a finding rather than something for one of them to absorb.
-            # Computing it here rather than in the decision layer keeps the per-nucleus array
-            # on this side of the task boundary - nothing that scales with cell count crosses.
-            _med = _q(0.5)
-            _dev = sorted(abs(x - _med) for x in _v)
-            _h = (len(_dev) - 1) * 0.5
-            _lo_i = int(_h)
-            _hi_i = min(_lo_i + 1, len(_dev) - 1)
-            mito = {"n": len(_v), "median": _med, "q1": _q(0.25), "q3": _q(0.75),
-                    "mad": _dev[_lo_i] + (_h - _lo_i) * (_dev[_hi_i] - _dev[_lo_i]),
-                    "max": _v[-1]}
-    # Recorded whether or not quartiles were placed, so a reader can never see a ceiling without
-    # seeing the population it was taken over.
-    mito_pop = {"floor_umi": mito_floor,
-                "n_at_or_above": (mito or {}).get("n"),
-                "n_all_with_a_value": int(sum(1 for x in _float_array(adata.obs["pct_counts_mt"])
-                                              if x == x))
-                if "pct_counts_mt" in adata.obs.columns else None}
+        mito, mito_pop = mito_quartiles(
+            _float_array(adata.obs["pct_counts_mt"]),
+            _float_array(adata.obs["total_counts"]),
+            floor_umi=mito_floor, derivation_max=mito_max)
 
     # THE DENOISER'S CELL CALL, read from THIS object rather than from a file beside it.
     #
@@ -2407,6 +2429,66 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                "mito_population": mito_pop}
     metrics["n_called_by_denoiser"] = len(called)
     return [valleys, density, jpath, cells_path], metrics
+
+
+def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIVATION_MAX):
+    """`(quartiles, population)` for the mitochondrial ceiling. Selects; removes nothing.
+
+    # rule-one: no-removal - this reads two per-barcode arrays and returns summary statistics.
+
+    Lifted out of `_op_valley` so that the population the ceiling is derived over can be tested
+    without an AnnData and a KDE. It is the whole of the derivation-population definition, in one
+    place: a barcode contributes when it has both values, sits at or above `floor_umi`, and lies
+    strictly below `derivation_max`. The reasoning for each restriction, and the measurements
+    behind them, are in `_op_valley` beside the call.
+
+    `quartiles` is None when fewer than four barcodes qualify - too few to place a quartile, which
+    step 5 refuses on rather than defaulting. `population` is returned either way, so a reader can
+    never see a ceiling without seeing what it was taken over, and can never see its absence
+    without seeing why.
+
+    Both are returned from ONE pass so they cannot disagree. Computing the population record
+    separately is how `n_at_or_above` comes to describe a different set from the one the quartiles
+    were placed on, and nothing downstream could detect it.
+    """
+    above = [float(m) for m, c in zip(pct_mt, total_counts)
+             if m == m and c == c and float(c) >= floor_umi]
+    v = sorted(m for m in above if m < derivation_max)
+    # The true observed maximum, taken BEFORE the derivation cut. Keeping it is what makes the cut
+    # safe: a run reporting only the derivation population's own maximum would say the worst
+    # droplet in the library was 49.9% however bad it really was, and the one number that shows a
+    # library is full of ambient would be the number the restriction erased. Never derived from.
+    max_above = max(above) if above else None
+    pop = {"floor_umi": float(floor_umi),
+           "derivation_max_pct": float(derivation_max),
+           "n_above_floor": len(above),
+           "n_excluded_high_mito": len(above) - len(v),
+           "max_above_floor": max_above,
+           "n_at_or_above": len(v) if len(v) >= 4 else None,
+           "n_all_with_a_value": int(sum(1 for x in pct_mt if x == x))}
+    if len(v) < 4:
+        return None, pop
+
+    def q(p):
+        h = (len(v) - 1) * p
+        lo_i = int(h)
+        hi_i = min(lo_i + 1, len(v) - 1)
+        return v[lo_i] + (h - lo_i) * (v[hi_i] - v[lo_i])
+
+    # MAD travels with the quartiles because both are needed and the matrix is open exactly once.
+    # The ceiling is derived from median + k*1.4826*MAD; Tukey's Q3 + 1.5*IQR is carried alongside
+    # as an independent second derivation, and the two disagreeing is a finding rather than
+    # something for one of them to absorb. Computing it here rather than in the decision layer
+    # keeps the per-nucleus array on this side of the task boundary - nothing that scales with
+    # cell count crosses.
+    med = q(0.5)
+    dev = sorted(abs(x - med) for x in v)
+    h = (len(dev) - 1) * 0.5
+    lo_i = int(h)
+    hi_i = min(lo_i + 1, len(dev) - 1)
+    return ({"n": len(v), "median": med, "q1": q(0.25), "q3": q(0.75),
+             "mad": dev[lo_i] + (h - lo_i) * (dev[hi_i] - dev[lo_i]),
+             "max": v[-1], "max_above_floor": max_above}, pop)
 
 
 #: The declared population's threshold criteria, as (declared key, obs column, comparison).

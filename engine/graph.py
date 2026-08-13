@@ -302,7 +302,12 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     # The floor the MITOCHONDRIAL quartiles are taken above. The count valleys in
                     # the same pass do not use it and must not: they need the debris mode this
                     # would delete.
-                    "light_floor": tools.get("light_floor", 200)},
+                    "light_floor": tools.get("light_floor", 200),
+                    # The ceiling on the same population, for the same reason from the other end:
+                    # a droplet more than this percent mitochondrial is ambient, not a cell whose
+                    # mitochondrial content is high, and it must not set the MAD. None means the
+                    # adapter's declared default, which records itself either way.
+                    "mito_derivation_max": tools.get("mito_derivation_max")},
             cpus=4, memory_gb=32, walltime_h=2,
         ))
 
