@@ -75,14 +75,21 @@ check("every ceiling lies inside the bound",
 check("clamped is labelled, not silent",
       all(m.clamped in ("", "lower", "upper") for m in cs.values()))
 
-# A CLEAN cohort gets the declared floor, and that is the correct answer, not a failure. `tight`
-# is a low-mitochondrial cohort - what a good nuclei prep looks like - so every fence lands below
-# the 10% snRNA floor and the ceiling becomes one number. The pipeline must SAY that rather than
-# present a flat constant as if each library had derived it.
+# A CLEAN cohort gets the declared floor, and that is the correct answer, not a failure. The
+# pipeline must SAY that rather than present a flat constant as if each library had derived it.
+#
+# The fixture is built RELATIVE TO THE FLOOR rather than pinned to a distribution that happened
+# to sit below it. It was pinned, and when the snRNA floor moved from 10% to 5% on 2026-08-13 the
+# cohort stopped being clean by the new standard and the test failed for a reason that had
+# nothing to do with what it was checking.
+_FLOOR = quality.MITO_BOUNDS["snrna"][0]
+spotless = {f"lib{i}": [0.05 * (1 + i) * (1 + j % 7) for j in range(400)] for i in range(6)}
+sd = quality.derive_mito_ceiling(spotless, assay="snrna")
 check("a clean cohort lands on the floor, and is not called derived",
-      d["provenance"] == "bound_dominated", f"got {d['provenance']!r}")
+      sd["provenance"] == "bound_dominated", f"got {sd['provenance']!r}")
 check("...and the flat ceiling is the floor itself",
-      {round(m.ceiling, 6) for m in cs.values()} == {float(d["bounds"][0])})
+      {round(m.ceiling, 6) for m in sd["ceilings"].values()} == {float(_FLOOR)},
+      f"got {sorted({round(m.ceiling, 6) for m in sd['ceilings'].values()})}, floor {_FLOOR}")
 
 # Per-library variation is a property of the ESTIMATOR, so it is tested where the bound is not
 # deciding: with a wide declared bound the same cohort must produce ten different fences.
@@ -106,18 +113,49 @@ check("the cross-check is Tukey and is a different number",
       abs(m0.tukey - (m0.q3 + quality.IQR_MULT * m0.iqr)) < 1e-9
       and m0.tukey != m0.derived)
 check("skew ratio is reported (1.349 would be normal)", m0.skew_ratio > 0)
-# k is DERIVED from the Tukey fence, not a module constant. That is the whole point: Tukey
-# calibrates how far out the fence sits, MAD applies it, and neither is a number someone typed.
-check("k is derived from the cohort, not declared", free.get("k_source") == "derived")
+# WHERE k COMES FROM, PER ASSAY. Changed 2026-08-13: snRNA DECLARES k, scRNA still derives it.
+#
+# The reason is that the two assays are not measuring the same quantity. On whole cells a high
+# mitochondrial fraction is a statement about the cell, so asking the cohort's own tail how far
+# out the fence belongs is the right question. On nuclei it is cytoplasmic carry-over, and
+# deriving k from the tail widens the fence for exactly the cohorts whose preparations were
+# dirtiest - a feedback loop that rewards contamination. See quality.MITO_MAD_K.
+check("snrna declares k rather than deriving it",
+      free.get("k_source") == "declared_assay" and free["k"] == quality.MITO_MAD_K["snrna"],
+      f"k_source={free.get('k_source')!r} k={free['k']}")
+check("scrna still derives k from the cohort",
+      quality.derive_mito_ceiling(tight, assay="scrna", bounds=(0.5, 60.0),
+                                  declared_by="probe")["k_source"] == "derived")
+# The declaration must not silence the calibration. A declared k that does not fit this cohort's
+# tail is the one thing the Tukey route can still say, and computing it only when it is going to
+# be applied would remove the check exactly where the number is not the data's own.
+check("...and the derived k is reported ANYWAY where it is not applied",
+      free["k_selection"] is not None and free["k_selection"]["median_k"] > 0
+      and any("Tukey-implied" in n for n in free["notes"]),
+      f"k_selection={'present' if free['k_selection'] else 'ABSENT'}")
 check("...and the selection is reported, not just its result",
       free["k_selection"]["per_library"] and free["k_selection"]["median_k"] > 0)
-check("...an explicitly passed k is recorded as declared instead",
+check("...an explicitly passed k outranks the assay and is recorded as the caller's",
       quality.derive_mito_ceiling(tight, bounds=(0.5, 60.0), declared_by="probe",
-                                  k=7)["k_source"] == "declared")
+                                  k=7)["k_source"] == "declared_caller")
 check("a cohort whose libraries share a shape derives a tight implied k",
       free["k_selection"]["spread"] < 2.0, f"spread {free['k_selection']['spread']}")
+
+# THE ASSAY POLICY ITSELF, not only its symptoms. These two lines are the change of 2026-08-13
+# and a reader of this suite should be able to see what was decided without reading the module.
+check("snrna is bounded 5-10%, scrna 10-30%",
+      quality.MITO_BOUNDS["snrna"] == (5.0, 10.0)
+      and quality.MITO_BOUNDS["scrna"] == (10.0, 30.0),
+      f"snrna={quality.MITO_BOUNDS['snrna']} scrna={quality.MITO_BOUNDS['scrna']}")
 check("scrna gets a wider bound than snrna",
       quality.MITO_BOUNDS["scrna"][1] > quality.MITO_BOUNDS["snrna"][1])
+check("the nuclear ceiling is strictly tighter at BOTH ends",
+      quality.MITO_BOUNDS["snrna"][0] < quality.MITO_BOUNDS["scrna"][0]
+      and quality.MITO_BOUNDS["snrna"][1] < quality.MITO_BOUNDS["scrna"][1],
+      "a nucleus carries no mitochondria; a whole cell does")
+check("snrna declares k=3 and scrna leaves it to be derived",
+      quality.MITO_MAD_K["snrna"] == 3 and quality.MITO_MAD_K["scrna"] is None,
+      f"{quality.MITO_MAD_K}")
 
 refuses("unknown assay with no explicit bounds refuses",
         lambda: quality.derive_mito_ceiling(tight, assay="spatial"), ("unknown assay",))
@@ -233,6 +271,18 @@ note = quality.mito_ceiling_note()
 check("no longer claims the ceiling is underivable", "NOT DERIVABLE" not in note)
 check("still records what remains adjudicated", "adjudicat" in note.lower())
 check("names the bound as declared", "declared" in note.lower())
+# The note differs by assay because the assays differ. One note covering both would have to be
+# vague about the only thing that matters, and vague is how a whole-cell policy came to be
+# applied to nuclei in the first place.
+sc_note = quality.mito_ceiling_note("scrna")
+check("the note is assay-specific", note != sc_note)
+check("...and each states its own bound",
+      "5.0-10.0%" in note and "10.0-30.0%" in sc_note,
+      f"snrna note quotes {'5.0-10.0%' in note}, scrna note quotes {'10.0-30.0%' in sc_note}")
+check("the nuclear note says k is declared, the whole-cell note says derived",
+      "DECLARED k = 3" in note and "k is itself DERIVED" in sc_note)
+check("the nuclear note says mitochondrial signal here is contamination",
+      "contamination" in note.lower() and "no conclusion" in note.lower())
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

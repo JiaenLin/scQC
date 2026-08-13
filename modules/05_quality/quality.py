@@ -206,22 +206,42 @@ def derive(valleys, metric, light_floor=None) -> Proposal:
     p.provenance = "declared_informed" if shoulders else "derived"
     return p
 
-def mito_ceiling_note() -> str:
-    """What the mitochondrial ceiling is, and what remains a judgement after it is derived."""
-    return (
-        "mitochondrial ceiling: DERIVED PER LIBRARY, bounded by a DECLARED statement. The "
-        "distribution is unimodal, so there is no valley and the count-floor route does not "
+def mito_ceiling_note(assay: str = "snrna") -> str:
+    """What the mitochondrial ceiling is, and what remains a judgement after it is derived.
+
+    Takes the assay because the answer genuinely differs between them - the two assays are not
+    measuring the same quantity, and one note covering both would have to be vague about the only
+    thing that matters. See MITO_BOUNDS.
+    """
+    lo, hi = MITO_BOUNDS.get(assay, MITO_BOUNDS["snrna"])
+    k = MITO_MAD_K.get(assay)
+    common = (
+        "The distribution is unimodal, so there is no valley and the count-floor route does not "
         "apply - but 'no valley' does not mean 'no derivation'. The applied fence is "
-        "median + k*1.4826*MAD of each library's own distribution, where k is itself DERIVED: it "
-        "is the cohort median of the multiple at which Tukey's Q3 + 1.5*IQR sits, rounded to an "
-        "integer. Tukey calibrates how far out the fence belongs and is then retained per library "
-        "as an INDEPENDENT CROSS-CHECK; it is never applied, "
-        "because two robust routes to one number either agree - which is evidence - or disagree, "
-        "which is a finding. The BOUND on the fence is declared by the analyst, because it is a "
-        "statement about what a nucleus can be and not a property of this cohort. What stays "
-        "ADJUDICATED is whether a mitochondria-high POPULATION is damage or a mitochondria-rich "
-        "cell type - that needs an identity, so the pipeline emits cluster-level medians and "
-        "stops.")
+        "median + k*1.4826*MAD of each library's own distribution. Tukey's Q3 + 1.5*IQR is "
+        "retained per library as an INDEPENDENT CROSS-CHECK and is never applied, because two "
+        "robust routes to one number either agree - which is evidence - or disagree, which is a "
+        f"finding. The BOUND ({lo}-{hi}%) is DECLARED, because it is a statement about what a "
+        "cell can be and not a property of this cohort.")
+    if k is None:
+        return (
+            f"mitochondrial ceiling ({assay}): DERIVED PER LIBRARY, bounded by a DECLARED "
+            f"statement. " + common + " k is itself DERIVED: the cohort median of the multiple "
+            "at which the Tukey fence sits, rounded to an integer, so Tukey calibrates how far "
+            "out the fence belongs. What stays ADJUDICATED is whether a mitochondria-high "
+            "POPULATION is damage or a mitochondria-rich cell type - that needs an identity, so "
+            "the pipeline emits cluster-level medians and stops.")
+    return (
+        f"mitochondrial ceiling ({assay}): DERIVED PER LIBRARY within a DECLARED bound, at a "
+        f"DECLARED k = {k}. " + common + " k is declared rather than derived on this assay "
+        "because pct_counts_mt here is not a property of the nucleus: a nucleus contains no "
+        "mitochondria, so what is measured is cytoplasmic carry-over and ambient RNA. Deriving k "
+        "from the tail would widen the fence for exactly the cohorts whose preparations were "
+        "dirtiest. The Tukey-implied k is still computed and reported beside the applied one, so "
+        "a cohort the declaration does not fit says so. What does NOT stay adjudicated here, and "
+        "did on the whole-cell assay, is whether a mitochondria-high population is biology: on "
+        "single-nucleus data it is contamination, and no conclusion about mitochondrial "
+        "transcription can be drawn from this assay at all.")
 
 
 # --- the mitochondrial ceiling ------------------------------------------------------------------
@@ -262,22 +282,69 @@ def mito_ceiling_note() -> str:
 # never masquerades as a derived one.
 
 # Assay defaults. NOT thresholds - the outer limits within which a derived fence is allowed to
-# land. Whole cells retain cytoplasm and legitimately carry more mitochondrial signal than nuclei.
+# land. THE TWO ASSAYS GET DIFFERENT NUMBERS BECAUSE THEY ARE MEASURING DIFFERENT THINGS, and
+# until 2026-08-13 they did not: snRNA carried 10-25%, which is a whole-cell policy applied to
+# nuclei.
 #
-# The snRNA lower bound was 5.0 until 2026-08-11. It was raised to 10.0 on a biological argument
-# rather than a statistical one: on the calibration cohort, 5.0 let a library's ceiling fall to
-# 6.12%, and the nuclei that cut removed were indistinguishable from the ones it kept - median
-# depth 0.88-0.96x that of retained nuclei in three of the four affected libraries, i.e. ordinary
-# cells, not debris. In heart especially, cardiomyocytes are the most mitochondria-rich cell type
-# in the body, so a 6% ceiling preferentially removes the cell type the study is about.
+# WHAT pct_counts_mt MEANS IN EACH ASSAY. This is the whole of the difference.
 #
-# The floor is also what a bound is FOR. Those libraries had low fences because their preps were
-# tight, not because their nuclei were biologically cleaner: across that cohort the fence varied
-# MORE between two mice of the same group (3.87x) than between the design groups (2.59x), so the
-# spread is a technical property. A declared floor is the right instrument against that - "however
-# tight this prep looks, an 8% cardiac nucleus is not an outlier" - and it is exactly the statement
-# about what a nucleus can be that the bound exists to carry.
-MITO_BOUNDS = {"snrna": (10.0, 25.0), "scrna": (10.0, 30.0)}
+#   scRNA. A whole cell contains its mitochondria, so a high mitochondrial fraction is a
+#   STATEMENT ABOUT THE CELL: classically a dying one, whose plasma membrane has leaked cytosolic
+#   mRNA while the mitochondrially-encoded transcripts stayed behind. The quantity is real
+#   biology, the threshold is a judgement about viability, and the fence must stay wide enough
+#   not to delete mitochondria-rich cell types. 10-30% stands.
+#
+#   snRNA. A nucleus does not contain mitochondria, and the mitochondrial genome is transcribed
+#   inside the mitochondrial matrix - so an isolated nucleus should carry ESSENTIALLY NONE. What
+#   pct_counts_mt measures here is not the nucleus at all: it is cytoplasmic carry-over, ambient
+#   RNA in the suspension, and perinuclear mitochondria that survived isolation. It is a
+#   CONTAMINATION MEASURE wearing a biological name.
+#
+# The consequence, stated by the PI on 2026-08-13 and the reason for this change: no conclusion
+# about mitochondrial transcription can be drawn from a single-nucleus dataset, so there is no
+# mitochondrial biology here for a wide fence to protect. What a wide fence protects is the
+# contamination. 5-10%.
+#
+# THIS REVERSES A CHANGE MADE ON 2026-08-11, AND THE EARLIER REASONING IS RECORDED RATHER THAN
+# DELETED, because it was not wrong about its own evidence. The snRNA lower bound was 5.0 until
+# then and was raised to 10.0 on this argument: at 5.0 a library's ceiling fell to 6.12%, the
+# nuclei that cut removed had a median depth 0.88-0.96x that of retained nuclei in three of the
+# four affected libraries - ordinary cells, not debris - and in heart, cardiomyocytes are the most
+# mitochondria-rich cell type in the body, so a 6% ceiling preferentially removes the cell type
+# the study is about.
+#
+# Every measurement in that paragraph still holds. What changed is what it MEANS. Those nuclei
+# are ordinary nuclei carrying an unusual amount of something that is not nuclear, and in heart
+# they are disproportionately cardiomyocyte because cardiomyocytes are the dominant, most fragile,
+# most mitochondria-dense source of the ambient pool. The 2026-08-11 reading was that the fence
+# was cutting cardiomyocyte BIOLOGY; the reading now is that it is cutting cardiomyocyte
+# CONTAMINATION. Both readings fit the same numbers, and the assay decides between them.
+#
+# WHAT THIS COSTS, and it is not hidden: a 5-10% bound binds far more often than 10-25% did, so
+# the ceiling will frequently be reported as BOUND-DOMINATED rather than derived - which is the
+# honest classification and is exactly what `BOUND_BINDS_REVIEW` exists to say out loud. A
+# narrower bound is a stronger declaration, and a stronger declaration should show up as one.
+MITO_BOUNDS = {"snrna": (5.0, 10.0), "scrna": (10.0, 30.0)}
+
+# The MAD multiplier, PER ASSAY. `None` means derive it from the Tukey fence, which is what
+# `select_mad_k` does and what this pipeline did for both assays until 2026-08-13.
+#
+# snRNA declares k = 3 and scRNA keeps the derivation, for the same reason the bounds differ.
+# Deriving k from Tukey asks "how far out does this cohort's own tail sit?", and that question is
+# worth asking of a quantity whose tail is biology. It is the wrong question for a contamination
+# measure: a cohort with dirtier preps has a longer tail, so the derivation ADAPTS THE FENCE TO
+# THE CONTAMINATION and a badly-prepared cohort earns itself a wider licence. Declaring k removes
+# that feedback.
+#
+# k = 3, not 4, because the fence no longer has mitochondrial biology to protect on this assay -
+# see MITO_BOUNDS above. It is a DECLARED number and is reported as one; it must never be tuned
+# until a result looks right, which is the failure mode a declared parameter is most exposed to.
+#
+# The derived k is computed and reported ANYWAY on both assays, even where it is not applied. A
+# cohort whose Tukey-implied k is far from the declared one is telling you its tail has a shape
+# the declaration does not describe, and suppressing that comparison because the answer is not
+# used would throw away the only signal that the declaration does not fit.
+MITO_MAD_K = {"snrna": 3, "scrna": None}
 
 # THE APPLIED FENCE IS MAD-BASED; TUKEY IS RETAINED AS AN INDEPENDENT SECOND DERIVATION.
 #
@@ -537,20 +604,60 @@ def derive_mito_ceiling_from_quartiles(stats, assay="snrna", bounds=None, mult=I
         raise ThresholdRefusal(f"mitochondrial bounds must satisfy 0 <= lo < hi <= 100; got "
                                f"{lo}-{hi}.")
 
-    # k is DERIVED from the Tukey fence unless the caller states one. A caller-supplied k is
-    # allowed - a re-run reproducing an earlier cohort needs it - but it is recorded as declared,
-    # because a number that came from an argument did not come from the data.
-    if k is None:
+    # THE DERIVED k IS ALWAYS COMPUTED, EVEN WHERE IT IS NOT APPLIED. It is the only thing that
+    # can say a declared k does not fit this cohort's tail, and computing it only when it is going
+    # to be used would remove that check exactly where the number is not the data's own.
+    sel = None
+    try:
         sel = select_mad_k({s: st for s, st in stats.items()
                             if all(key in st for key in ("median", "q1", "q3", "mad"))},
                            mult=mult)
-        k, k_notes, k_source = sel["k"], sel["notes"], "derived"
-    else:
+    except ThresholdRefusal:
+        # Every library flat. Fatal when k must be derived, and merely unavailable when it is
+        # declared - so the refusal is re-raised below rather than here.
         sel = None
+
+    # k comes from three places, in order: the caller, the assay, then the data.
+    #
+    # A caller-supplied k is for reproducing an earlier run. The ASSAY default is the standing
+    # policy - snRNA declares 3 because the quantity is contamination rather than biology; see
+    # MITO_MAD_K. Only when neither states one is it derived from this cohort's Tukey fences.
+    assay_k = MITO_MAD_K.get(assay)
+    if k is not None:
+        k_source = "declared_caller"
         k_notes = [f"MAD k = {k} DECLARED by the caller, not derived from this cohort's Tukey "
                    f"fences. Reproducing an earlier run is the reason to do this; choosing a "
                    f"number because the result looked better is not."]
-        k_source = "declared"
+    elif assay_k is not None:
+        k, k_source = assay_k, "declared_assay"
+        k_notes = [f"MAD k = {k} DECLARED for assay {assay!r}, not derived from this cohort. On "
+                   f"this assay pct_counts_mt measures cytoplasmic carry-over rather than the "
+                   f"cell, and deriving k from the tail would widen the fence for exactly the "
+                   f"cohorts whose preps were dirtiest"]
+    else:
+        if sel is None:
+            raise ThresholdRefusal(
+                "no library has a positive MAD, so the Tukey-implied k is undefined everywhere "
+                "and there is nothing to calibrate against. A cohort in which more than half of "
+                "every library shares one mitochondrial value is not one this fence describes.")
+        k, k_notes, k_source = sel["k"], sel["notes"], "derived"
+
+    # What the data WOULD have chosen, reported beside a declared k so the two can be compared.
+    # Silence here would be the declaration marking its own homework.
+    if k_source != "derived" and sel is not None:
+        gap = sel["median_k"] / k if k else None
+        k_notes.append(
+            f"for comparison, the Tukey-implied k on this cohort is {sel['median_k']:.2f} "
+            f"(per library {min(sel['per_library'].values()):.2f}-"
+            f"{max(sel['per_library'].values()):.2f})"
+            + (f" - {gap:.2f}x the applied {k}" if gap else ""))
+        if gap is not None and (gap > 2.0 or gap < 0.5):
+            k_notes.append(
+                f"REVIEW - the declared k = {k} and this cohort's Tukey-implied "
+                f"{sel['median_k']:.2f} differ by {gap:.2f}x. The declaration does not describe "
+                f"the shape of this cohort's tail. That may be the point - a declared k exists to "
+                f"stop the tail setting the fence - but a gap this wide should be looked at "
+                f"rather than accepted because the number was declared")
     if not (k > 0):
         raise ThresholdRefusal(f"MAD multiplier k must be positive; got {k}. A fence at or below "
                                f"the median is not an upper fence.")

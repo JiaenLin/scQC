@@ -151,7 +151,9 @@ Per library, over the population defined below:
 IQR   = Q3 - Q1
 tukey = Q3 + 1.5 x IQR                       # the calibration instrument, never applied
 k_i   = (tukey - median) / (1.4826 x MAD)
-k     = round(median(k_i))                   # ONE cohort constant, DERIVED
+k     = round(median(k_i))                   # scRNA: ONE cohort constant, DERIVED
+                                             # snRNA: NOT APPLIED - k = 3 is declared. Still
+                                             #        computed, and reported for comparison
 
 # 2. apply
 raw     = median + k x 1.4826 x MAD          # the applied fence
@@ -164,39 +166,69 @@ what gets applied, because it is anchored at the median and compresses the extre
 library's ceiling runs away from the cohort. Tukey is then retained per library as an
 **independent cross-check** and is never applied.
 
-`k` is **derived, not declared** — a property of the cohort's tail shape rather than a number
-someone chose. It is rounded to an integer because the per-library `k_i` typically span far more
-than a decimal's worth: on the calibration cohort they ran **3.44 to 6.56** (1.90×) for a median
-of 4.26, applied as **k = 4**. `MAD_K_BOUNDS = (2, 10)` are sanity limits; a cohort landing outside
-them is reported, not silently clamped to the edge. A library with `MAD = 0` is excluded from the
+### The two assays are not measuring the same quantity
+
+This decides every number below, and until 2026-08-13 it was not reflected in any of them: snRNA
+carried a whole-cell policy.
+
+| | `scrna` | `snrna` |
+|---|---|---|
+| what `pct_counts_mt` is | a property of **the cell** | a property of **the preparation** |
+| why | a whole cell contains its mitochondria; a high fraction is classically a dying cell that leaked cytosolic mRNA while the mitochondrially-encoded transcripts stayed | a nucleus contains **no mitochondria**, and the mitochondrial genome is transcribed in the mitochondrial matrix — so an isolated nucleus should carry essentially none. What is measured is cytoplasmic carry-over, ambient RNA and perinuclear mitochondria that survived isolation |
+| bounds | **10 – 30%** | **5 – 10%** |
+| `k` | **derived** from the cohort's Tukey fences | **declared, `MITO_MAD_K["snrna"] = 3`** |
+
+**Why `k` is declared on nuclei.** Deriving `k` from Tukey asks *how far out does this cohort's own
+tail sit?* — a good question about a quantity whose tail is biology, and the wrong question about a
+contamination measure. A cohort with dirtier preparations has a longer tail, so the derivation
+would adapt the fence to the contamination and a badly-prepared cohort would earn itself a wider
+licence. Declaring `k` removes that feedback. **The derived `k` is computed and reported anyway**,
+even where it is not applied: a cohort whose Tukey-implied `k` is far from the declared one is
+saying its tail has a shape the declaration does not describe, and a gap beyond 2× raises a REVIEW.
+
+**A consequence, stated because it is not a flaw to be hidden:** a 5–10% bound binds far more often
+than 10–25% did, so the ceiling will frequently be reported as `bound_dominated` rather than
+`derived`. That is the honest classification of a stronger declaration, and it is what
+`BOUND_BINDS_REVIEW` exists to say out loud.
+
+`k` is rounded to an integer where it is derived, because the per-library `k_i` typically span far
+more than a decimal's worth: on the calibration cohort they ran **3.44 to 6.56** (1.90×) for a
+median of 4.26. `MAD_K_BOUNDS = (2, 10)` are sanity limits; a cohort landing outside them is
+reported, not silently clamped to the edge. A library with `MAD = 0` is excluded from the
 calibration, because its implied k is undefined and a library that cannot contribute must not be
 able to change the answer by being counted as a default.
 
-Quartiles and the MAD are linearly interpolated. The bounds are a **declared statement about what
-a nucleus can be**, not a measurement:
+Quartiles and the MAD are linearly interpolated. An unknown assay with no explicit bounds is
+refused — guessing a bound for an unknown assay is guessing what a cell can be. Non-default bounds
+require `declared_by`: the analyst's own words for why they are what they are, because the bound is
+the one part of this the data cannot supply.
 
-| Assay | Bounds |
-|---|---|
-| `snrna` | 10 – 25% |
-| `scrna` | 10 – 30% |
-
-An unknown assay with no explicit bounds is refused — guessing a bound for an unknown assay is
-guessing what a cell can be. Non-default bounds require `declared_by`: the analyst's own words for
-why they are what they are, because the bound is the one part of this the data cannot supply.
-
-> **The snRNA lower bound was 5% until 2026-08-11.** It was raised because 5% permitted an applied
-> ceiling to vary **4.08×** across ten libraries of one cohort (6.12% to 25.00%) — one filter doing
-> very different things to samples of one experiment. A library whose fence lands at 6% is being
-> cut close to its own third quartile, and nothing establishes that a nuclei prep separating at 6%
-> differs biologically from one separating at 25% by that factor. At 10–25% the same cohort spreads
-> 2.50×.
+> **The snRNA bound has moved twice, and the second move reversed the first.** Both are recorded,
+> because the earlier reasoning was not wrong about its own evidence.
 >
-> **The trade this makes**, measured, because it is not obvious: raising the floor acts only on
-> libraries with a low fence, so where those correlate with a design arm it makes the *applied
-> threshold* more even while making the *removal rate* less even. On that cohort, mitochondrial
-> removal by diet moved 1.10× → 1.30×, and within the arm carrying the interaction 0.91× → 0.73×
-> — both far below the 3× refusal line — while 1,228 more nuclei of 117,021 were retained.
-> Threshold-evenness and removal-evenness are different properties that pull against each other.
+> It was 5–25% until 2026-08-11, when the floor was raised to 10%: at 5% a cohort's applied ceiling
+> varied **4.08×** (6.12% to 25.00%), and the nuclei a 6% cut removed had a median depth 0.88–0.96×
+> that of retained nuclei in three of the four affected libraries — ordinary cells, not debris. In
+> heart, cardiomyocytes are the most mitochondria-rich cell type in the body, so a 6% ceiling
+> preferentially removes the cell type such a study is about.
+>
+> On **2026-08-13** it became 5–10% on the argument at the head of this section. Every measurement
+> in the paragraph above still holds; what changed is what it *means*. Those nuclei are ordinary
+> nuclei carrying an unusual amount of something that is **not nuclear**, and in heart they are
+> disproportionately cardiomyocyte because cardiomyocytes are the dominant, most fragile and most
+> mitochondria-dense source of the ambient pool. The 2026-08-11 reading was that the fence cut
+> cardiomyocyte *biology*; the reading now is that it cuts cardiomyocyte *contamination*. Both fit
+> the same numbers, and the assay decides between them: **no conclusion about mitochondrial
+> transcription can be drawn from single-nucleus data**, so there is no mitochondrial biology on
+> this assay for a wide fence to protect.
+>
+> **What a narrow bound costs, measured on that cohort:** raising the floor acted only on libraries
+> with a low fence, so where those correlate with a design arm it made the *applied threshold* more
+> even while making the *removal rate* less even — mitochondrial removal by diet moved 1.10× →
+> 1.30×, and within the arm carrying the interaction 0.91× → 0.73×. Threshold-evenness and
+> removal-evenness are different properties and they pull against each other. Lowering the ceiling
+> pushes on both: watch `removal_by_criterion.csv`, which reports what `fail_mito_ceiling` took
+> from each library.
 
 **When the bound binds, the per-library derivation was not used.** Each library's `clamped` field
 records `upper`, `lower` or blank, and the two directions are counted and named **separately**,

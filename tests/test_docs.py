@@ -63,13 +63,15 @@ CHECKS = [
     ("valley spread review", const(Q, "SPREAD_REVIEW") == "2.0", "**2.0×**" in doc),
     ("Tukey multiplier", const(Q, "IQR_MULT") == "1.5", "1.5 x IQR" in doc),
     ("mitochondrial bounds",
-     const(Q, "MITO_BOUNDS") == '{"snrna": (10.0, 25.0), "scrna": (10.0, 30.0)}',
-     "10 – 25%" in doc and "10 – 30%" in doc),
-    # k is DERIVED per cohort, so there is no k constant to check - what must stay true is that
-    # the document says so, and that the sanity limits on the derived value match the code.
-    ("MAD k is derived, not a constant",
-     "MAD_K =" not in src(Q) and "def select_mad_k" in src(Q),
-     "**derived, not declared**" in doc),
+     const(Q, "MITO_BOUNDS") == '{"snrna": (5.0, 10.0), "scrna": (10.0, 30.0)}',
+     "**5 – 10%**" in doc and "**10 – 30%**" in doc),
+    # k is DERIVED per cohort on whole cells and DECLARED on nuclei, so what must stay true is
+    # that the document says which is which, and that the sanity limits on the derived value
+    # match the code. A single global k constant would be neither and is still refused.
+    ("MAD k is per assay, derived or declared",
+     const(Q, "MITO_MAD_K") == '{"snrna": 3, "scrna": None}'
+     and "def select_mad_k" in src(Q),
+     '`MITO_MAD_K["snrna"] = 3`' in doc and "**derived** from the cohort" in doc),
     ("MAD k sanity limits", const(Q, "MAD_K_BOUNDS") == "(2, 10)",
      "`MAD_K_BOUNDS = (2, 10)`" in doc),
     ("MAD scale factor", const(Q, "MAD_SCALE") == "1.4826", "1.4826" in doc),
