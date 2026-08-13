@@ -1550,7 +1550,7 @@ class ScDblFinderDetector:
       min_umi_floor               200, "to avoid errors" - the only one of the four common tools
                                   to put a number on it
       imports_rate_prior          yes, and its default is the 10x loading formula, which on a
-                                  Singleron cohort tracked library size at r = 0.872
+                                  non-10x cohort tracked library size at r = 0.872
 
     `score()` applies no floor of its own. The protocol forbids subsetting the input, so a
     scoring set that still contains empty droplets is refused rather than quietly trimmed:

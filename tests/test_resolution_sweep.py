@@ -62,16 +62,16 @@ check("all-extras-equal-applied leaves an empty list, not None",
 print("\n3 - a sibling table can never be mistaken for the applied one")
 APPLIED_SUFFIX = ".cluster_profile.csv"          # what engine/steps.py selects on
 for res in ("1", "1.5", "3", "0.25"):
-    sib = f"/work/Aging1_clusters.cluster_profile.res{res}.csv"
+    sib = f"/work/ctrl_01_clusters.cluster_profile.res{res}.csv"
     check(f"res{res} sibling is not selected as the applied profile",
           not sib.endswith(APPLIED_SUFFIX), sib.rsplit("/", 1)[-1])
 check("the applied profile IS selected",
-      "/work/Aging1_clusters.cluster_profile.csv".endswith(APPLIED_SUFFIX))
+      "/work/ctrl_01_clusters.cluster_profile.csv".endswith(APPLIED_SUFFIX))
 
 
 print("\n4 - the resolution token round-trips out of the sibling's name")
 for res in ("1", "1.5", "3", "0.25"):
-    name = f"/work/Aging1_clusters.cluster_profile.res{res}.csv"
+    name = f"/work/ctrl_01_clusters.cluster_profile.res{res}.csv"
     got = name.rsplit(".cluster_profile.res", 1)[1][:-4]     # engine/steps.py's own expression
     check(f"res{res} recovered from the file name", got == res, f"got {got!r}")
 

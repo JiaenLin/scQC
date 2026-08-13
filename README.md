@@ -4,13 +4,13 @@
 threshold from applying it.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.2.0-blue.svg)](#status)
+[![Status](https://img.shields.io/badge/status-0.3.0-blue.svg)](#status)
 
 Most QC pipelines take thresholds as arguments. scQC treats them as findings: it measures what it
 can from your data, refuses to guess what it cannot, and records who set every threshold it
 applies — the data, or a person in their own words — so the two can never be confused later.
 
-> **Read [Status](#status) before you plan a run.** At `0.2.0` scQC runs a cohort end to end —
+> **Read [Status](#status) before you plan a run.** At `0.3.0` scQC runs a cohort end to end —
 > `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
 > process. It writes a report and, in apply mode, one filtered object per library plus a merged
@@ -152,7 +152,7 @@ upgrading the pipeline cannot disturb an existing result.
 | 3 | light floor | technical floor for doublet scoring — *not* a quality filter | — |
 | 4 | doublets | score per sample, before quality filtering; flag only | — |
 | 5 | quality | derive count floors and the per-library mitochondrial ceiling | — |
-| 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet | — |
+| 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet — at resolution **2.0**, with each `--extra-resolutions` value profiled into a sibling table beside it | — |
 | 7 | **apply** | measure every criterion, write the ledger, then write the filtered objects | **yes — only here** |
 
 Apply mode writes one filtered object per library, and a cohort object that is the **merge of
@@ -288,7 +288,7 @@ it has caught came from calling a function with a hostile input and looking at w
 
 ## Status
 
-**0.2.0.** Being precise about this, because a QC tool that overstates itself does damage
+**0.3.0.** Being precise about this, because a QC tool that overstates itself does damage
 quietly — and one that understates itself is wrong in the same way, just harder to notice. Every
 row below was checked against the tree rather than remembered.
 

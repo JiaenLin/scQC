@@ -137,8 +137,8 @@ def check_detector(det, dbr=None, light_floor=None) -> list:
     if det.imports_rate_prior and dbr is None:
         raise DoubletRefusal(
             f"{det.name} imports a rate prior and no dbr was DECLARED. There is no default: "
-            f"scDblFinder's is the 10x loading formula, which tracked library size at r = 0.872 "
-            f"on a Singleron cohort and imported a 19.65% vs 14.98% condition differential.")
+            f"scDblFinder's is the 10x loading formula, which on a non-10x cohort tracked library "
+            f"size at r = 0.872 and imported a 19.65% vs 14.98% condition differential.")
     if det.min_umi_floor is not None:
         if light_floor is None:
             raise DoubletRefusal(f"{det.name} requires a floor of {det.min_umi_floor} UMI and "

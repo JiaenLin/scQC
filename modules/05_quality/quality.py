@@ -309,16 +309,16 @@ def mito_ceiling_note(assay: str = "snrna") -> str:
 # DELETED, because it was not wrong about its own evidence. The snRNA lower bound was 5.0 until
 # then and was raised to 10.0 on this argument: at 5.0 a library's ceiling fell to 6.12%, the
 # nuclei that cut removed had a median depth 0.88-0.96x that of retained nuclei in three of the
-# four affected libraries - ordinary cells, not debris - and in heart, cardiomyocytes are the most
-# mitochondria-rich cell type in the body, so a 6% ceiling preferentially removes the cell type
-# the study is about.
+# four affected libraries - ordinary cells, not debris - and where a tissue's dominant cell type is
+# also its most mitochondria-rich, a 6% ceiling preferentially removes the cell type the study is
+# about.
 #
 # Every measurement in that paragraph still holds. What changed is what it MEANS. Those nuclei
-# are ordinary nuclei carrying an unusual amount of something that is not nuclear, and in heart
-# they are disproportionately cardiomyocyte because cardiomyocytes are the dominant, most fragile,
-# most mitochondria-dense source of the ambient pool. The 2026-08-11 reading was that the fence
-# was cutting cardiomyocyte BIOLOGY; the reading now is that it is cutting cardiomyocyte
-# CONTAMINATION. Both readings fit the same numbers, and the assay decides between them.
+# are ordinary nuclei carrying an unusual amount of something that is not nuclear, and they belong
+# disproportionately to whichever cell type is the dominant, most fragile and most
+# mitochondria-dense source of the ambient pool. The 2026-08-11 reading was that the fence was
+# cutting that population's BIOLOGY; the reading now is that it is cutting its CONTAMINATION.
+# Both readings fit the same numbers, and the assay decides between them.
 #
 # WHAT THIS COSTS, and it is not hidden: a 5-10% bound binds far more often than 10-25% did, so
 # the ceiling will frequently be reported as BOUND-DOMINATED rather than derived - which is the

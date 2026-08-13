@@ -208,16 +208,16 @@ the one part of this the data cannot supply.
 >
 > It was 5–25% until 2026-08-11, when the floor was raised to 10%: at 5% a cohort's applied ceiling
 > varied **4.08×** (6.12% to 25.00%), and the nuclei a 6% cut removed had a median depth 0.88–0.96×
-> that of retained nuclei in three of the four affected libraries — ordinary cells, not debris. In
-> heart, cardiomyocytes are the most mitochondria-rich cell type in the body, so a 6% ceiling
+> that of retained nuclei in three of the four affected libraries — ordinary cells, not debris.
+> Where the dominant cell type of a tissue is also its most mitochondria-rich, a 6% ceiling
 > preferentially removes the cell type such a study is about.
 >
 > On **2026-08-13** it became 5–10% on the argument at the head of this section. Every measurement
 > in the paragraph above still holds; what changed is what it *means*. Those nuclei are ordinary
-> nuclei carrying an unusual amount of something that is **not nuclear**, and in heart they are
-> disproportionately cardiomyocyte because cardiomyocytes are the dominant, most fragile and most
-> mitochondria-dense source of the ambient pool. The 2026-08-11 reading was that the fence cut
-> cardiomyocyte *biology*; the reading now is that it cuts cardiomyocyte *contamination*. Both fit
+> nuclei carrying an unusual amount of something that is **not nuclear**, and they belong
+> disproportionately to whichever cell type is the dominant, most fragile and most
+> mitochondria-dense source of the ambient pool. The 2026-08-11 reading was that the fence cut that
+> population's *biology*; the reading now is that it cuts its *contamination*. Both fit
 > the same numbers, and the assay decides between them: **no conclusion about mitochondrial
 > transcription can be drawn from single-nucleus data**, so there is no mitochondrial biology on
 > this assay for a wide fence to protect.

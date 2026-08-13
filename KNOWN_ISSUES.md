@@ -99,18 +99,27 @@ library is a different cohort.
 it re-exercises every concurrency hazard in the pipeline. These two were found together because
 one caused the other to be reached.
 
-## 2. The run key does not cover the code — OPEN
+## 2. The run key did not cover the code — FIXED in `d573c20`
 
-`engine/runkey.py` hashes mode, the samplesheet's content and the DECLARED parameters. It does not
-hash the pipeline version. Two runs of different scQC versions over the same inputs therefore
-produce the SAME key unless a declared parameter also changed. On the calibration cohort two
-genuinely different deliverables differed in key only because an interpreter path — itself a
-declared parameter — had changed; that was luck, not design.
+`engine/runkey.py` hashed mode, the samplesheet's content and the DECLARED parameters, and not the
+pipeline version. Two runs of different scQC versions over the same inputs therefore produced the
+SAME key unless a declared parameter also changed. On the calibration cohort two genuinely
+different deliverables differed in key only because an interpreter path — itself a declared
+parameter — had changed; that was luck, not design.
 
-The header is honest that "a digest is not a guarantee of reproducibility" and that the key
-answers *was this asked for in the same way*. That remains true, and it is still too easy to end
-up with one identity over two results. Recording the commit inside `INPUTS.json`, or mixing it
-into the digest, would close it.
+**Why it mattered more than it looked.** A DERIVED threshold is a function of the inputs *and* of
+the code that derives it, so changing a derivation produces a different answer under an identical
+key. Re-running would have resolved to the previous run's directory, found every task complete,
+SKIPPED all of them, and republished the old numbers under the new code — exiting zero, with a
+report that opens and reads like a correct one.
+
+The commit is now part of the description and `results/INDEX.tsv` carries a `code` column, so a
+code change writes BESIDE the old run exactly as a parameter change does. The cost is accepted and
+real: any commit invalidates resume for every project, including one that changed only a docstring.
+
+**Residual.** Two runs from the same commit with UNCOMMITTED edits still share a key. `dirty` is
+recorded, but a modified tree has no identity to hash cheaply. Commit before a run whose output
+anyone will rely on.
 
 ## 3. Environments are not relocatable — OPEN, bit once
 

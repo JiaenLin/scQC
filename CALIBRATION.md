@@ -84,9 +84,10 @@ is applied, and the reasoning for the change is worth more than the change itsel
 right-skewed tail, and on this cohort it gave the most even *removal* of anything tested (1.09×
 across the interaction arm, unbounded). The objection is biological. Tukey adapts without limit to
 a wide tail, and on one library it adapted to **25.88%**. A ceiling that high is a statement about
-that prep, not about what a nucleus can be. In heart in particular, where cardiomyocytes are the
-most mitochondria-rich cell type in the body, letting the ceiling track a library's own tail that
-far means the filter's severity is set by prep quality.
+that prep, not about what a nucleus can be. Where a tissue's dominant cell type is also an
+unusually mitochondria-rich and fragile one — common in solid tissue — letting the ceiling track a
+library's own tail that far means the filter's severity is set by prep quality, and set loosest
+exactly where the population at risk is largest.
 
 **Why the spread is prep, not biology.** The decisive measurement is available because the design
 has replicates: the fence varied **more between two mice of the same group (3.87×) than between
@@ -181,9 +182,38 @@ into `decisions.yml` with your own words, then run `--mode apply`.
 The two modes exist so that the act of looking at the data and the act of cutting it are separated
 in time and recorded separately. That separation is the whole design.
 
-**That is the design and not yet the software.** At `0.0.1-dev` there is no `--mode` driver and no
-report writer, and nothing runs the steps in sequence. What exists is one `scqc` subcommand per
-gate, judging tables you produce yourself — `scqc quality --valleys … --metric umi` will propose
-the count floor above, or refuse to. Until the driver exists, calibrating on your own data means
-running those steps in order by hand. The Status table in [README.md](README.md) says exactly what
-is missing.
+Both modes are built and run end to end, locally or on a scheduler. The per-step subcommands remain
+for judging tables you produced elsewhere — `scqc quality --valleys … --metric umi` will propose the
+count floor above, or refuse to. The Status table in [README.md](README.md) says what is and is not
+implemented, line by line.
+
+*(This paragraph said "at `0.0.1-dev` there is no `--mode` driver and no report writer" until
+0.3.0. Both had existed since 0.2.0. A document describing software that has moved on is the same
+defect this pipeline exists to catch, arriving in prose.)*
+
+## The clustering resolution — measured, 2026-08-13
+
+The applied resolution is **2.0**, and the reason is criterion D. A doublet pocket is small; at a
+coarse resolution it dissolves into the lineage cluster around it and its doublet frequency is
+diluted to the library average. Swept over five resolutions on the calibration cohort:
+
+| resolution | 1.0 | 1.5 | **2.0** | 2.5 | 3.0 |
+|---|---|---|---|---|---|
+| clusters, all libraries | 126 | 156 | **188** | 233 | 279 |
+| clusters D flagged | 0 | 0 | **2** | 2 | 2 |
+
+The two D clusters at 2.0 are 74.5% and 72.3% doublet, deep, and mitochondria-poor — the
+heterotypic signature, invisible one step coarser. Nothing else in the check changed with
+resolution in a way that argued for a different default.
+
+**What the sweep did NOT support**, recorded because it was proposed and tested:
+
+- **A stopping rule on marker strength.** "Split until a cluster has no gene above AUC 0.6", used
+  by two published cardiac workflows, fails in only 1 of 10 libraries anywhere below resolution
+  3.0 on this cohort. It does not constrain, and it is not adopted.
+- **Higher resolution as a way to flag less.** It flags *more*: the share of the deliverable in a
+  flagged cluster rose from 3.50% at 1.0 to 5.57% at 3.0. Resolution redistributes flagging into
+  smaller units; it does not shrink it.
+
+At 2.0 the smallest cluster in this cohort is exactly 3 cells, and `cluster_profile()` refuses
+below 3. It passes narrowly, and a different seed could put a library under that line.
