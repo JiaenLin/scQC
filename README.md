@@ -15,9 +15,9 @@ applies — the data, or a person in their own words — so the two can never be
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
 > process. It writes a report and, in apply mode, one filtered object per library plus a merged
 > cohort object, with a ledger naming every barcode removed and why.
-> It draws all thirteen of the report's figures. What still feeds nothing is the freshness
-> check, so every report says `NOT CHECKED` rather than claiming to be current. The per-step
-> subcommands remain, for judging tables you produced elsewhere.
+> It draws all fifteen of the report's figures, and it now supplies its own newest-input time, so
+> the report states whether it is fresh instead of declining to say. The per-step subcommands
+> remain, for judging tables you produced elsewhere.
 >
 > **[KNOWN_ISSUES.md](KNOWN_ISSUES.md) lists what is measured, reproduced and not yet fixed.**
 > Read it before quoting a number: it is where a defect lives between being found and being
@@ -155,6 +155,59 @@ upgrading the pipeline cannot disturb an existing result.
 | 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet — at resolution **2.0**, with each `--extra-resolutions` value profiled into a sibling table beside it | — |
 | 7 | **apply** | measure every criterion, write the ledger, then write the filtered objects | **yes — only here** |
 
+### Why each step is there
+
+None of these is a stage in a conventional pipeline that happens to be numbered. Each exists
+because something specific goes wrong without it, and each was placed where it is by a constraint
+rather than by preference.
+
+- **0 · ingest** — a delivered matrix is very often the aligner's `outs/filtered`: genuine integer
+  counts that have *already* been through cell calling, and nothing about the file says so — not
+  its name, not its shape, not a header field. That matters immediately, because an ambient model
+  learns its background profile **from the empty droplets**. Hand it a cell-called matrix and
+  "ambient correction is not possible with these files" becomes available as a conclusion, and it
+  reads on the page exactly like a real finding.
+- **1 · ambient** — a nucleus holds roughly an order of magnitude less RNA than the cell it came
+  from, and the ambient pool in a nuclear prep *is* the cytoplasm of the cells lysed to make it.
+  A pipeline that leaves that in place for snRNA-seq is not applying a lighter touch; it is
+  analysing a mixture and calling it a cell. The audit exists because the headline fraction cannot
+  see failure: ten good libraries spanned 15.5–23.7% while the one genuinely degenerate fit sat at
+  8.3% — inside a plausible range, and *low* rather than high.
+- **2 · cell call** — the error here is not symmetric. A nucleus wrongly called empty never reaches
+  the steps that would have judged it; a droplet wrongly called a cell still has to pass the count
+  floors, the ceiling, the doublet call and the cluster check. Permissive is the safe direction,
+  and the gate enforces exactly that asymmetry. Its third check exists because a loss can be small
+  and still be structured: all 617 cells lost in the calibration cohort fell on **one** level of
+  the design factor, which no per-sample percentage would have shown.
+- **3 · light floor** — doublet detectors build their null by summing pairs of observed
+  transcriptomes. If the pool contains near-empty droplets, the artificial doublets are
+  debris+cell or debris+debris, which are not doublets, and the null is calibrated on the wrong
+  thing. It is emphatically not a quality filter: a barcode below it is recorded **UNSCORED**,
+  which is unknown, not a singlet.
+- **4 · doublets** — a consensus of detectors was measured and rejected: scds returned 6.00% in
+  all ten libraries (it is a fixed quantile), DoubletDetection ranged 1.82–20.90%. *A vote does
+  not protect against a bad detector; it averages one in.* The protection is a diagnostic instead.
+  `dbr` has no default because scDblFinder's own default is the 10x loading formula, which applied
+  to a Singleron run tracked library size at r = 0.872 and would have imported a 19.65% vs 14.98%
+  condition differential onto the study's primary readout.
+- **5 · quality** — the clearest case in the pipeline of a procedure transferring where a number
+  cannot. The count floors are *measured* as the density valley between the debris and cell modes,
+  and bimodality is tested rather than assumed, because a density minimum exists in any smooth
+  curve. On snRNA the mitochondrial `k` is **declared**, not derived, and the reason is biology: a
+  nucleus contains no mitochondria, so `pct_counts_mt` there measures cytoplasmic carry-over —
+  deriving `k` from the cohort's own tail would let a badly-prepared cohort earn itself a wider
+  licence.
+- **6 · cluster check** — this is the **only** point at which the doublet-fraction criterion is
+  computable. After step 7 every cluster is 0% doublet by construction and that flag becomes a
+  tautology which passes for the wrong reason. The flags are a conjunction rather than a
+  disjunction because a mitochondrial-marker cluster at normal coverage is the signature of a
+  mitochondria-rich cell type, not of damage; that change took 22 flagged clusters to 8.
+- **7 · apply** — confining every removal to one step is what lets a reviewer establish, quickly,
+  that no other step can silently cost them cells. The internal ordering is load-bearing too: an
+  object filtered before its ledger was checked would have performed the removal before anything
+  verified it, so the ledger is written **before** the object — a crash between the two leaves a
+  record of a removal that did not happen, rather than a removal with no record.
+
 Apply mode writes one filtered object per library, and a cohort object that is the **merge of
 those files read back from disk**. Every retained nucleus carries `sample`, `cluster`,
 `cluster_FLAG`, `cluster_WATCH` and the continuous values behind them, so nothing downstream has
@@ -210,9 +263,11 @@ implemented is the same class of defect this pipeline exists to catch.
 - **Reports carry the commit and the tool versions**, obtained by asking each tool rather than read
   from a lockfile — *built*. The report also audits itself: anything the run should have recorded
   and did not is counted as a defect on its own front page.
-- **A report older than its inputs is refused rather than warned about** — *specified, not fed*.
-  `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a
-  newest-input time, so every report says `NOT CHECKED` rather than claiming to be current.
+- **A report older than its inputs is refused rather than warned about** — *built*.
+  `engine/pipeline.py` supplies the newest-input time over the files the run actually read, and
+  `freshness()` compares it against the generated time, recording `stale` as True, False **or
+  None** — never False by default, because None is NOT CHECKED and NOT CHECKED is not a pass.
+  `refuse_if_stale()` acts on it, and a run that could not check says so with its reason.
   [docs/REPORT_DESIGN.md](docs/REPORT_DESIGN.md) is the specification.
 
 See **[docs/PRINCIPLES.md](docs/PRINCIPLES.md)** for the four rules and why each exists.
@@ -294,16 +349,16 @@ row below was checked against the tree rather than remembered.
 
 | | |
 |---|---|
-| ✅ **Built and tested** | The decision layer: each step's policy, contract, threshold derivation and gate, importable as Python, plus the `scqc` CLI over it. `scqc selftest` reports **18 passed, 0 failed, 1 skipped** — the skip needs a cohort (`COHORT_DIR`) and is not evidence either way. **Run it with an interpreter that has the scientific stack**: `bin/scqc` is `#!/usr/bin/env python3`, so under a bare system python the suites needing numpy/anndata SKIP rather than run, and a skip counted as a pass is the defect this project exists to catch. |
+| ✅ **Built and tested** | The decision layer: each step's policy, contract, threshold derivation and gate, importable as Python, plus the `scqc` CLI over it. **27 suites** — 26 `tests/test_*.py` plus the adversarial one. **Run `scqc selftest` yourself and read the counts off your own run**; this table does not quote a number, because a test count copied into prose is a number that goes stale between releases while still looking authoritative. **Use an interpreter that has the scientific stack**: `bin/scqc` is `#!/usr/bin/env python3`, so under a bare system python the suites needing numpy/anndata SKIP rather than run, and a skip counted as a pass is the defect this project exists to catch. |
 | ✅ **Built** | The `scqc` command, as **per-step subcommands** over tables you supply: `validate`, `verify`, `gate-cells`, `doublet-health`, `quality`, `cluster-preflight`, `selftest`. Exit code 2 on a refusal, `--json` for structured output. |
 | ✅ **Built** | Recoverable removal. Step 7 pairs each removed observation with the criteria that fired on it, refuses if that record and the mask disagree, and writes it as a CSV any reader can open. |
 | ✅ **Built, and run end to end** | The two-mode driver. `scqc run --project … --mode evidence\|apply` builds the task graph and runs it, locally or on PBS with one job per task. A ten-library cohort completes as 47 tasks with nothing reused. In `evidence` mode the apply task is **not placed in the graph at all**, so there is no code path from it to a removal. |
 | ✅ **Built** | The execution layer. Steps invoke the aligner, the denoiser, the doublet caller and the analysis stack out of process, each under its own interpreter, and read count matrices through the adapters. Versions are obtained by asking the tool, never read from a lockfile. |
 | ✅ **Built** | The report. Every run writes `qc_report.html` and `report.json`, including a per-library table of every threshold the run derived with each column marked per-library or cohort constant. The report **audits itself**: anything the payload should have carried and did not is a defect counted on its own front page. |
 | ✅ **Built** | Decisions are read. `decisions.yml` is parsed and validated, and `--mode apply` refuses on a missing or incomplete one, naming every problem at once rather than one per run. |
-| ✅ **Built** | The figures — all thirteen. `report/collect.py` assembles each from a NAMED table a reader can open, and `tests/test_figure_collection.py` renders every one of them from a fixture, because a builder that returns a dict can still be unrenderable. A figure that genuinely cannot be drawn is shown as a named absence saying what would produce it — not as a gap. |
+| ✅ **Built** | The figures — all fifteen ids, `F1`–`F15`, drawn by ten functions. Four ids deliberately share a function with another: applying the same treatment twice reads as a comparison, so the gene axis and the two other applied axes get their own ids rather than being folded into one. `report/collect.py` assembles each from a NAMED table a reader can open, and `tests/test_figure_collection.py` renders every one of them from a fixture, because a builder that returns a dict can still be unrenderable. A figure that genuinely cannot be drawn is shown as a named absence saying what would produce it — not as a gap. |
 | ⚠️ **Known defect** | Step 6's cluster flags were computed on the wrong population until `02a422d`; cohorts processed before it must be re-run before their flags are read. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). |
-| ⚠️ **Not fed — freshness** | `freshness()` and `refuse_if_stale()` exist in `report/build.py`, and no step supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be current. Of everything on this list it is the one whose absence is hardest to notice, because a stale artifact opens and reads exactly like a current one. |
+| ✅ **Built** | Freshness. `engine/pipeline.py::_newest_input_block()` supplies the newest-input time over the files the run read — listing an absent file rather than skipping it, so a time computed over a missing input cannot silently read as fresh — and `report/build.py` records `generated`, `newest_input`, `checked`, `stale`, a reason and a margin in `provenance.freshness`. `stale` is three-valued and never False by default. This was the last row on this table to move from *specified* to *built*, and it was the one whose absence would have been hardest to notice: a stale artifact opens and reads exactly like a current one. |
 | ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, verifies the ledger against the mask, audits the result, and only then writes the filtered cohort object. Measure, record, write — in that order, so nothing is materialised before what left has been written down. Where `decisions.yml` supplies an approval, it is additionally matched against the action the current thresholds derive. |
 | ✅ **Built** | Content-addressed outputs. Each run writes under `results/<digest>/`, named from the samplesheet's content, the declared parameters and the mode. A run that would produce something different lands somewhere different, so nothing is overwritten by one that disagrees with it. |
 | ⚠️ **Not measured** | Run-to-run tolerance for the stochastic steps. Recorded as `UNMEASURED`; the pipeline will not assert a tolerance it has not measured. |
