@@ -4,13 +4,13 @@
 threshold from applying it.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.3.0-blue.svg)](#status)
+[![Status](https://img.shields.io/badge/status-0.3.1-blue.svg)](#status)
 
 Most QC pipelines take thresholds as arguments. scQC treats them as findings: it measures what it
 can from your data, refuses to guess what it cannot, and records who set every threshold it
 applies — the data, or a person in their own words — so the two can never be confused later.
 
-> **Read [Status](#status) before you plan a run.** At `0.3.0` scQC runs a cohort end to end —
+> **Read [Status](#status) before you plan a run.** At `0.3.1` scQC runs a cohort end to end —
 > `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
 > process. It writes a report and, in apply mode, one filtered object per library plus a merged
@@ -99,6 +99,8 @@ scqc doublet-health --rates rates.csv             # is the rate a measurement or
 scqc quality --valleys valleys.csv --metric umi   # propose a count floor, or refuse to
 scqc cluster-preflight --profile clusters.csv --kept 120000   # what step 6 found, before removal
 scqc selftest                                     # run the bundled suites
+scqc stamp results/*/objects/*.h5ad               # declare what the flag means, on objects
+                                                  # written before 0.3.1
 ```
 
 **Exit code 2 is a refusal**, 0 is pass or review, 1 is an error, so a gate can stop a shell
@@ -213,6 +215,14 @@ those files read back from disk**. Every retained nucleus carries `sample`, `clu
 `cluster_FLAG`, `cluster_WATCH` and the continuous values behind them, so nothing downstream has
 to re-cluster to recover what step 6 found — and a re-clustering of the filtered object would not
 give the same answer anyway, since criterion D is a tautology once the doublets are gone.
+
+**Every object also carries `uns["scqc"]`: a declaration of what the flag MEANS**, how many
+nuclei carry it, and a digest of the exact set. Without one, a downstream tool has two bad
+options — ignore the flag and annotate nuclei this pipeline flagged as technical, or guess from
+the column name, which is that tool deciding what is technical on scQC's behalf. The declaration
+is the third option: scQC states its decision, the consumer decides what to do about it, and the
+digest lets the consumer prove the column is still the one scQC wrote. `scqc stamp <objects>`
+adds it to anything written before `0.3.1` without a re-run.
 
 The per-library objects are primary and the cohort object is derived from them: each library is
 filtered on its own mitochondrial ceiling and cluster-checked on its own clustering.
@@ -343,7 +353,7 @@ it has caught came from calling a function with a hostile input and looking at w
 
 ## Status
 
-**0.3.0.** Being precise about this, because a QC tool that overstates itself does damage
+**0.3.1.** Being precise about this, because a QC tool that overstates itself does damage
 quietly — and one that understates itself is wrong in the same way, just harder to notice. Every
 row below was checked against the tree rather than remembered.
 
@@ -360,6 +370,7 @@ row below was checked against the tree rather than remembered.
 | ⚠️ **Known defect** | Step 6's cluster flags were computed on the wrong population until `02a422d`; cohorts processed before it must be re-run before their flags are read. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). |
 | ✅ **Built** | Freshness. `engine/pipeline.py::_newest_input_block()` supplies the newest-input time over the files the run read — listing an absent file rather than skipping it, so a time computed over a missing input cannot silently read as fresh — and `report/build.py` records `generated`, `newest_input`, `checked`, `stale`, a reason and a margin in `provenance.freshness`. `stale` is three-valued and never False by default. This was the last row on this table to move from *specified* to *built*, and it was the one whose absence would have been hardest to notice: a stale artifact opens and reads exactly like a current one. |
 | ✅ **Built** | Step 7, the only step that removes. It measures every criterion per barcode, writes the removal ledger, verifies the ledger against the mask, audits the result, and only then writes the filtered cohort object. Measure, record, write — in that order, so nothing is materialised before what left has been written down. Where `decisions.yml` supplies an approval, it is additionally matched against the action the current thresholds derive. |
+| ✅ **Built** | The delivered object declares its own flag. `uns["scqc"]` records the flag column, what it MEANS, how many carry it, how many were examined, and a digest of the exact mask - so a downstream tool can act on it knowing whose decision it is rather than guessing from a column name. The digest is a cross-tool contract with scAnno, held by a known-answer vector asserted in both suites. `scqc stamp` backfills objects written earlier. |
 | ✅ **Built** | Content-addressed outputs. Each run writes under `results/<digest>/`, named from the samplesheet's content, the declared parameters and the mode. A run that would produce something different lands somewhere different, so nothing is overwritten by one that disagrees with it. |
 | ⚠️ **Not measured** | Run-to-run tolerance for the stochastic steps. Recorded as `UNMEASURED`; the pipeline will not assert a tolerance it has not measured. |
 | ⚠️ **n = 1 cohort** | One tissue, one species, one platform. Every threshold is an existence proof, not a range. See [CALIBRATION.md](CALIBRATION.md). |

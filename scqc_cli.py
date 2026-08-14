@@ -327,6 +327,67 @@ def cmd_cluster_preflight(a) -> int:
     return code_for(emit(findings, a.json))
 
 
+def cmd_stamp(a) -> int:
+    """Add `uns["scqc"]` to objects written before this pipeline declared what its flag means.
+
+    The declaration exists so a downstream tool can act on `cluster_FLAG` knowing whose decision
+    it is. Objects written earlier carry the flag and not the declaration, and re-running a
+    cohort to add one would be hours of compute to write a dictionary. This adds it in place.
+
+    What it will NOT do is invent the run identity. `--run-key` and `--commit` are yours to
+    supply and default to empty; a stamped object that names a run it did not come from is worse
+    than one that names none, because the wrong provenance is the kind a reader trusts.
+
+    The digest is computed HERE, from the column as it stands in the file. So a stamp added
+    afterwards describes the object in hand rather than the object scQC once wrote - and if the
+    flag has been altered since, the stamp records the altered column and says nothing false.
+    """
+    from pathlib import Path as _P
+
+    try:
+        import anndata as ad
+    except ImportError:
+        print("scqc stamp: needs anndata.  Use the core environment's interpreter.",
+              file=sys.stderr)
+        return 1
+    sys.path.insert(0, str(_P(__file__).resolve().parent))
+    from adapters import declaration as decl
+
+    version = ""
+    try:
+        version = (_P(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+
+    rc = 0
+    for raw in a.objects:
+        p = _P(raw)
+        if not p.exists():
+            print(f"  MISSING  {p}", file=sys.stderr)
+            rc = 1
+            continue
+        A = ad.read_h5ad(p)
+        existing = A.uns.get(decl.KEY)
+        if existing and not a.force:
+            ok, why = decl.verify(A)
+            print(f"  already declared  {p.name}  ({why})")
+            print("                    --force re-stamps it")
+            continue
+        d = decl.build(A, sample=str(existing.get("sample", "") if existing else ""),
+                       run_key=a.run_key, commit=a.commit, version=version)
+        flag = d["flag_column"] or "no flag column"
+        n = d["n_flagged"]
+        print(f"  {'would stamp' if a.dry_run else 'stamped'}  {p.name}  "
+              f"{A.n_obs:,} obs  {flag}"
+              + (f"  {n:,} flagged  digest {d['flag_digest']}" if d["flag_column"] else ""))
+        if not a.dry_run:
+            A.uns[decl.KEY] = d
+            A.write_h5ad(p)
+    if a.dry_run:
+        print("\n  --dry-run: nothing was written.")
+    return rc
+
+
 def cmd_report(a) -> int:
     """Rebuild a finished run's report from the files in its own results directory.
 
@@ -682,6 +743,16 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--samplesheet", default=None,
                     help="the run's samplesheet, for the design panel of F2")
     rp.set_defaults(fn=cmd_report)
+
+    st = sub.add_parser("stamp",
+                        help="add the uns['scqc'] declaration to objects already written")
+    st.add_argument("objects", nargs="+", help=".h5ad file(s) this pipeline produced")
+    st.add_argument("--run-key", default="", help="the run that produced them, if known")
+    st.add_argument("--commit", default="", help="the commit that produced them, if known")
+    st.add_argument("--force", action="store_true",
+                    help="re-stamp an object that already carries a declaration")
+    st.add_argument("--dry-run", action="store_true", help="report, write nothing")
+    st.set_defaults(fn=cmd_stamp)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")
     s.add_argument("-v", "--verbose", action="store_true"); s.set_defaults(fn=cmd_selftest)

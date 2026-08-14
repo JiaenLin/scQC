@@ -104,6 +104,40 @@ cluster is 0% doublet by construction.
 `n_delivered` and `built_from` — three parallel arrays rather than a list of records, because HDF5
 has no record type and h5py fails on one.
 
+`uns["scqc"]` is on **every** filtered object, per-library and merged alike, and says what the
+flag column means:
+
+| field | is |
+|---|---|
+| `schema` | `scqc/provenance@1` — a consumer keys on this |
+| `flag_column` | `cluster_FLAG`, or `""` where step 6 produced nothing for this object |
+| `flag_meaning` | what the flag is, in full, carried on the object rather than only in this document |
+| `n_flagged` | how many carry it — `-1` where there is no flag column, because *none produced* is not *none flagged* |
+| `n_examined` | how many step 6 actually labelled. `n_obs - n_flagged` is **not** the unflagged count |
+| `flag_digest` | a fingerprint of the exact mask, so a consumer can check the column is still the one scQC wrote |
+| `flag_na_as` | `False` — the coercion the digest was taken under |
+| `run_key`, `commit`, `version`, `sample`, `written` | which run produced it. Empty rather than guessed where unresolvable |
+| `removed_on_flag` | `0`. scQC removed nothing on this basis, and says so on the object |
+
+**Why this exists.** A filtered object used to leave this pipeline carrying `cluster_FLAG` and
+nothing saying what it was for, which gave a downstream tool two bad options: ignore it, and
+annotate nuclei scQC flagged as technical; or guess from the column name, which is that tool
+deciding what is technical on scQC's behalf. The declaration is the third option — scQC says what
+it decided, in its own record, and the consumer decides what to do about it.
+
+**The digest is a cross-tool contract.** `adapters/declaration.py::flag_digest` must agree byte
+for byte with `scanno/exclude.py::flag_digest`, or verification fails on correct data and teaches
+whoever meets it to disable the check. The two are deliberately not shared code — neither repo
+depends on the other — and are held together by a known-answer vector asserted in both suites:
+`[True, False, True, True, False] -> 3ba679de109f5333`.
+
+Objects written before 0.3.1 carry the flag and not the declaration. **`scqc stamp <objects>`**
+adds it in place rather than costing a re-run. It computes the digest from the column as it
+stands, so a stamp added afterwards describes the object in hand and claims nothing about
+history, and it will not invent `--run-key` or `--commit`: a stamped object naming a run it did
+not come from is worse than one naming none, because the wrong provenance is the kind a reader
+trusts.
+
 ---
 
 ## tables/

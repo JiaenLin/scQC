@@ -3100,10 +3100,16 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
     import numpy as np
     import pandas as pd
 
+    from . import declaration as decl
+
     libs = params.get("libraries")
     if not isinstance(libs, list) or not libs:
         raise TaskFailure("required parameter 'libraries' must be a non-empty list of "
                           "{sample, h5ad, keep_csv} entries.")
+    # Run identity, from the orchestrator. Absent when this op is driven directly, in which case
+    # the fields are written empty rather than invented - a declaration that names a run key the
+    # object did not come from is worse than one that names none.
+    prov = params.get("provenance") or {}
     out_h5 = Path(str(out_prefix) + ".deliverable.h5ad")
     # BOTH SHAPES, because they answer different questions and the per-library subsets exist in
     # memory a moment before the concatenation anyway. The combined object is what integration and
@@ -3168,6 +3174,14 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                      for b in sub.obs_names])
 
         per_lib.append({"sample": s, "n_in": int(a.n_obs), "n_kept": int(sub.n_obs)})
+        # WHAT THE FLAG MEANS, on the object that carries it. Step 6's verdict reaches the
+        # deliverable as `cluster_FLAG` and nothing on the object said what it was for, so a
+        # downstream tool had to either ignore it - annotating nuclei this pipeline flagged - or
+        # guess from the column name, which is that tool deciding what is technical on scQC's
+        # behalf. The declaration is stamped on the PER-LIBRARY objects too, not only the merged
+        # one, because the per-library objects are what annotation reads.
+        decl.stamp(sub, sample=s, run_key=prov.get("run_key", ""),
+                   commit=prov.get("commit", ""), version=prov.get("version", ""))
         one = per_sample_dir / f"{s}.filtered.h5ad"
         sub.write_h5ad(str(one))
         written_per_sample.append(one)
@@ -3214,6 +3228,11 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
             f"the merged object holds {combined.n_obs:,} nuclei and the per-library objects hold "
             f"{expected:,} between them. The merge lost or duplicated observations, so the cohort "
             f"object is not the sum of its libraries and no count taken from it describes them.")
+    # Computed over the MERGED flag rather than carried from a part: the digest has to describe
+    # the column in the object it is stamped on, or verifying it downstream proves nothing about
+    # the file in hand. `sample` is empty here because this object is every library at once.
+    decl.stamp(combined, sample="", run_key=prov.get("run_key", ""),
+               commit=prov.get("commit", ""), version=prov.get("version", ""))
     combined.write_h5ad(str(out_h5))
     return ([out_h5] + written_per_sample,
             {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),

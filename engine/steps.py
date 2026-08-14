@@ -2048,9 +2048,15 @@ def _apply(task, pipeline, log):
             "annotations_csv": _deliverable_annotations(
                 pipeline, ap, s, kept_barcodes, rows,
                 [r for r in percell if r["sample"] == s])})
+    # The run's own identity, carried onto the delivered objects so a reader holding one can say
+    # which run produced it without finding this directory again. Resolved here because the
+    # adapter runs out of process and has no pipeline to ask. Anything unresolvable is passed
+    # EMPTY rather than guessed: a declaration naming a run key the object did not come from is
+    # worse than one naming none.
     res = _scanpy(pipeline, "apply_write", pipeline.results / "objects" / f"{samples[0]}_ambient.h5",
                   pipeline.results / "objects" / "cohort",
-                  {"libraries": keep_lists}, log, task.params["python_exe"])
+                  {"libraries": keep_lists, "provenance": _run_identity(pipeline)},
+                  log, task.params["python_exe"])
 
     delivered = (res.get("metrics") or {}).get("n_delivered")
     if delivered != int(kept):
@@ -2073,6 +2079,31 @@ def _apply(task, pipeline, log):
                         "removal_breakdown": str(bpath),
                         **{f"n_{c}": sum(1 for x in masks[c] if x) for c in criteria}},
             "versions": res.get("versions", {})}
+
+
+def _run_identity(pipeline) -> dict:
+    """Run key, commit and version, for stamping onto the delivered objects.
+
+    Every field degrades to an empty string rather than to a plausible value. A compute node
+    often has no git, and `git_provenance` already returns a marker instead of a hash there;
+    passing that marker on as though it were one would put a fiction in the object's own record.
+    """
+    from . import provenance as _prov
+
+    repo = Path(__file__).resolve().parents[1]
+    try:
+        git = _prov.git_provenance(repo)
+    except Exception:                                                     # noqa: BLE001
+        git = {}
+    commit = str(git.get("commit") or "")
+    if commit and not all(c in "0123456789abcdef" for c in commit.lower()):
+        commit = ""                       # "not a git checkout" is not a commit
+    try:
+        version = (repo / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        version = ""
+    return {"run_key": str(getattr(pipeline, "run_key", "") or ""),
+            "commit": commit, "version": version}
 
 
 def _deliverable_annotations(pipeline, ap, sample, kept, profile, percell) -> str:
