@@ -492,6 +492,34 @@ try:
 except Exception as e:                                                # noqa: BLE001
     fails.append(f"K: could not check the step-module registry: {type(e).__name__}: {e}")
 
+# ---- L. an adapter the orchestrator RUNS AS A SCRIPT has no parent package, so a relative
+#         import inside it raises `attempted relative import with no known parent package`. Same
+#         shape as the defects above: invisible from either side, and from inside the adapter it
+#         reads as ordinary package code.
+#
+#         Checked statically, and checked for imports INSIDE FUNCTIONS too - which is the part
+#         that costs. A relative import at module level fails the moment anything touches the
+#         file; one inside `_op_apply_write` fails at step 7, after every other step of a
+#         ten-library cohort has completed. That is exactly where it did fail, and neither
+#         `--help` nor a direct `import adapters.x` would have caught it.
+try:
+    _script_adapters = sorted(p for p in Path("adapters").glob("*.py")
+                              if "__main__" in p.read_text(encoding="utf-8"))
+    _rel = []
+    for _py in _script_adapters:
+        for _n in ast.walk(ast.parse(_py.read_text(encoding="utf-8"))):
+            if isinstance(_n, ast.ImportFrom) and (_n.level or 0) > 0:
+                _names = ", ".join(a.name for a in _n.names)
+                _rel.append(f"{_py}:{_n.lineno} from {'.' * _n.level}{_n.module or ''} "
+                            f"import {_names}")
+    for _r in _rel:
+        fails.append(f"L: {_r} - this module is run as a script, so it has no parent package and "
+                     f"a relative import raises. Use `from adapters.x import ...`.")
+    print(f"L. adapters run as scripts, none using a relative import: "
+          f"{len(_script_adapters)} checked, {len(_rel)} bad")
+except Exception as e:                                                # noqa: BLE001
+    fails.append(f"L: could not check adapter imports: {type(e).__name__}: {e}")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

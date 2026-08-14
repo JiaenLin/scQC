@@ -3100,7 +3100,11 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
     import numpy as np
     import pandas as pd
 
-    from . import declaration as decl
+    # Absolute, like the imports at the top of this file and for the same reason: this module is
+    # RUN AS A SCRIPT by the orchestrator, so it has no parent package and `from . import` raises
+    # `attempted relative import with no known parent package` - at step 7, after every other
+    # step has completed, which is the most expensive place in the pipeline to fail.
+    from adapters import declaration as decl
 
     libs = params.get("libraries")
     if not isinstance(libs, list) or not libs:
