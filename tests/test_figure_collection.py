@@ -190,12 +190,17 @@ with tempfile.TemporaryDirectory() as tmp:
           0 < f15_n < f7_n, f"F15={f15_n} F7={f7_n}")
 
     print("\nthe data each builder emits is what its function accepts")
+    # Bound OUTSIDE the guard below: report.figures imports matplotlib inside a function, not at
+    # module level, so this import cannot raise ModuleNotFoundError - while the RENDERING does
+    # need matplotlib. Binding it inside the try left `figmod` undefined on the skip path, and
+    # the drawable check further down then raised NameError instead of skipping. A suite that
+    # crashes where it means to skip cannot tell a reader which of the two happened.
+    from report import figures as figmod
+
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-
-        from report import figures as figmod
 
         for fid in sorted(figures):
             fn = figmod.FIGURE_FUNCTIONS.get(fid)

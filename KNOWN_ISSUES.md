@@ -133,6 +133,24 @@ is not something to do in the middle of measuring a different change. Pin it.
 
 ## 4. Smaller, all confirmed
 
+- ~~**`tests/test_figure_collection.py` FAILS where it should SKIP, on a bare interpreter.**~~ —
+  **FIXED.** `from report import figures as figmod` sat inside the `try` whose `except
+  ModuleNotFoundError` exists to skip the *rendering* block without matplotlib. The drawable
+  check further down then called `figmod.FIGURE_FUNCTIONS` unguarded, so the suite raised
+  `NameError: name 'figmod' is not defined` instead of skipping. Reproduced before the fix:
+  `python3 bin/scqc selftest` under a system interpreter without matplotlib gave
+  `24 passed, 1 failed, 2 skipped`; after, `25 passed, 0 failed, 2 skipped`.
+
+  `report/figures.py` imports matplotlib **inside a function**, not at module level, so the
+  module import never needed guarding — only the rendering did. `figmod` is now bound before the
+  `try`, and the drawable check runs on every interpreter, because it does not need matplotlib
+  at all.
+
+  **The lesson is the one this file already records twice: a suite that crashes where it means to
+  skip cannot tell a reader which of the two happened.** The suite enforcing "*the acceptance
+  test for a figure is a figure*" was the one whose own outcome was unreadable, and a failure
+  meaning "matplotlib is absent" looked in the summary line exactly like a figure that will not
+  render.
 - `bin/scqc` is `#!/usr/bin/env python3`; the orchestrator therefore runs under the system
   interpreter, which may lack `h5py`. `--python` governs subprocess tasks only. The failure
   arrives 40 lines into a run that looks healthy. Either document invoking it with the core
