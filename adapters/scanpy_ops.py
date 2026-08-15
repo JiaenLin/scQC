@@ -3105,6 +3105,7 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
     # `attempted relative import with no known parent package` - at step 7, after every other
     # step has completed, which is the most expensive place in the pipeline to fail.
     from adapters import declaration as decl
+    from adapters import matrix as mx
 
     libs = params.get("libraries")
     if not isinstance(libs, list) or not libs:
@@ -3187,7 +3188,10 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
         decl.stamp(sub, sample=s, run_key=prov.get("run_key", ""),
                    commit=prov.get("commit", ""), version=prov.get("version", ""))
         one = per_sample_dir / f"{s}.filtered.h5ad"
-        sub.write_h5ad(str(one))
+        # Classic string encoding: a nullable-string `obs/_index` is unreadable by everything
+        # except anndata, and the deliverable exists to be read by other things.
+        with mx.classic_string_encoding():
+            sub.write_h5ad(str(one))
         written_per_sample.append(one)
         del a, sub
 
@@ -3237,7 +3241,8 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
     # the file in hand. `sample` is empty here because this object is every library at once.
     decl.stamp(combined, sample="", run_key=prov.get("run_key", ""),
                commit=prov.get("commit", ""), version=prov.get("version", ""))
-    combined.write_h5ad(str(out_h5))
+    with mx.classic_string_encoding():
+        combined.write_h5ad(str(out_h5))
     return ([out_h5] + written_per_sample,
             {"n_delivered": int(combined.n_obs), "n_genes": int(combined.n_vars),
              "libraries": per_lib,

@@ -1187,6 +1187,51 @@ def _object_backed(labels, what: str, where: str):
     return labels.astype(object)
 
 
+class classic_string_encoding:
+    """Write string columns as HDF5 string DATASETS, not as nullable-string groups.
+
+    `object_backed_labels` below was written when anndata REFUSED to write pandas' StringDtype,
+    and it re-backs the frames so the write succeeds. On anndata >= 0.11 the write no longer
+    fails - it succeeds and produces a NULLABLE STRING, a group of `values` + `mask`, so
+    `obs/_index` stops being a dataset. The file round-trips through anndata perfectly and is
+    unreadable by anything else; a viewer reports a property access on undefined, which points
+    nowhere near the cause.
+
+    Re-backing does not help on pandas >= 3 either, because `str` is the default dtype there and
+    pandas coerces object straight back to it. It is the WRITER, not the dtype.
+
+    `allow_write_nullable_strings = False` is the remedy, and it is the COMPATIBLE direction:
+    the classic encoding is what every older reader expects, so the deliverable is readable by
+    more things rather than fewer. Measured on anndata 0.13.2 / pandas 3.0.5 - None gives a
+    group, False gives a dataset, True gives a group.
+
+    Scoped and restored, because it is a global on the anndata module: a pipeline has no business
+    changing how objects written elsewhere in the process are stored.
+    """
+
+    def __init__(self):
+        self._prev, self._had = None, False
+
+    def __enter__(self):
+        try:
+            import anndata
+            self._prev = anndata.settings.allow_write_nullable_strings
+            anndata.settings.allow_write_nullable_strings = False
+            self._had = True
+        except Exception:                                                 # noqa: BLE001
+            self._had = False
+        return self
+
+    def __exit__(self, *exc):
+        if self._had:
+            try:
+                import anndata
+                anndata.settings.allow_write_nullable_strings = self._prev
+            except Exception:                                             # noqa: BLE001
+                pass
+        return False
+
+
 def object_backed_labels(adata, where: str = "write_h5ad"):
     """`(obs, var)` re-backed by object arrays where anndata declines to write them.
 
