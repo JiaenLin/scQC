@@ -1578,12 +1578,11 @@ def _cluster_flags(task, pipeline, log):
     d = (task.params.get("decisions") or {}).get("cluster_check") or {}
     declared = {k: float(d[y]) for k, y in (("a_umi_frac", "a_umi_fraction"),
                                             ("b_pct_mt", "b_mito_pct"),
-                                            ("c_uninformative", "c_uninformative_pct"),
-                                            ("d_doublet", "d_doublet_pct"))
+                                            ("c_uninformative", "c_uninformative_pct"))
                 if d.get(y) is not None}
     if declared:
         base = {"a_umi_frac": proposed.a_umi_frac, "b_pct_mt": proposed.b_pct_mt,
-                "c_uninformative": proposed.c_uninformative, "d_doublet": proposed.d_doublet}
+                "c_uninformative": proposed.c_uninformative}
         thr = cf.Thresholds(**{**base, **declared},
                             source=(f"decisions.yml declares {', '.join(sorted(declared))}; "
                                     f"the rest is {proposed.source}"))
@@ -1624,7 +1623,7 @@ def _cluster_flags(task, pipeline, log):
                 for s in task.params["samples"])]}])
 
     fired, unknown = flagged.counts(), flagged.unknown_counts()
-    for k in ("A", "B", "C", "D", "FLAG", "WATCH"):
+    for k in ("A", "B", "C", "FLAG", "WATCH"):
         print(f"    {k:<6}fired {fired[k]:>4}   not evaluated {unknown[k]:>4}   "
               f"of {len(flagged.rows)}")
     # Both numbers, always. "How many fired" alone cannot distinguish a criterion that cleared

@@ -131,7 +131,7 @@ whoever meets it to disable the check. The two are deliberately not shared code 
 depends on the other — and are held together by a known-answer vector asserted in both suites:
 `[True, False, True, True, False] -> 3ba679de109f5333`.
 
-Objects written before 0.3.1 carry the flag and not the declaration. **`scqc stamp <objects>`**
+Objects written before 0.4.0 carry the flag and not the declaration. **`scqc stamp <objects>`**
 adds it in place rather than costing a re-run. It computes the digest from the column as it
 stands, so a stamp added afterwards describes the object in hand and claims nothing about
 history, and it will not invent `--run-key` or `--commit`: a stamped object naming a run it did

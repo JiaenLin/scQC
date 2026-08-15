@@ -102,7 +102,7 @@ def build_tables(tables: Path) -> None:
     # --- F8: the cluster profile (step 6)
     write(tables / "cluster_profile.csv",
           ["sample", "cluster", "n", "median_umi", "umi_frac_of_sample", "median_pct_mt",
-           "pct_uninformative", "pct_doublet", "A", "B", "C", "D", "FLAG", "WATCH"],
+           "pct_uninformative", "pct_doublet", "A", "B", "C", "FLAG", "WATCH"],
           [[s, c, 100, 900, 12.5, 4.0, 1.0, 3.0, "False", "False", "False", "False",
             "False", "False"] for s in SAMPLES for c in (0, 1)])
 

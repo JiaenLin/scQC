@@ -15,7 +15,7 @@ authors:
     given-names: Jiaen
     email: jiaenlin999@gmail.com
 repository-code: "https://github.com/JiaenLin/scQC"
-version: "0.3.1"
+version: "0.4.0"
 license: MIT
 type: software
 keywords:

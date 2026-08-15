@@ -14,12 +14,17 @@ from cluster_flags import (Thresholds, apply_flags, propose, # noqa: E402
 # reason that must survive any future edit to the numbers:
 #
 #   eight FLAG by B&C           high mitochondrial content WITH uninformative markers
-#   one FLAG by D alone         a mostly-doublet cluster with ordinary depth and markers
+#   one mostly-doublet cluster  ordinary depth and markers: it must NOT flag, because
+#                               criterion D was removed on 2026-08-15 (see the end of
+#                               this file). Kept in the fixture precisely so that a
+#                               reinstated D would light it up and fail the run.
 #   one of the eight sits on A  just below the 0.5x depth line, so A&C carries it instead of B
 #   near miss                   over B, under C - the conjunction must hold it back
 #   C alone                     WATCH, never FLAG
 #   ordinary                    nothing fires
-EXPECT_FLAG, EXPECT_WATCH = 9, 1
+# 8, not 9: the fixture's mostly-doublet cluster no longer flags. Criterion D was removed on
+# 2026-08-15 and that cluster fires nothing else - which is exactly why D went.
+EXPECT_FLAG, EXPECT_WATCH = 8, 1
 P = [
     dict(s="ctrl_01 c4", umi_frac_of_sample=1.11, median_pct_mt=19.40, pct_doublet=6.80,
          pct_mt_markers=50.0, pct_ribo_markers=0.0, pct_uninformative=50.0),
@@ -51,7 +56,7 @@ P = [
     dict(s="ordinary", umi_frac_of_sample=1.26, median_pct_mt=3.10, pct_doublet=7.30,
          pct_mt_markers=0.0, pct_ribo_markers=0.0, pct_uninformative=0.0),
 ]
-THR = Thresholds(0.5, 15.0, 50.0, 70.0, "APPROVED for this cohort - not derived by the module")
+THR = Thresholds(0.5, 15.0, 50.0, "APPROVED for this cohort - not derived by the module")
 
 fails = []
 print("Step 6 - cluster flags\n" + "=" * 74)
@@ -59,16 +64,14 @@ print("A. flags under approved thresholds")
 print(" " + str(THR).replace("\n", "\n "))
 f = apply_flags(P, THR)
 c = f.counts()
-print(f"\n FLAG {c['FLAG']} WATCH {c['WATCH']} D {c['D']}")
+print(f"\n FLAG {c['FLAG']} WATCH {c['WATCH']}")
 for r in f.rows:
     if r["FLAG"] or r["WATCH"]:
-        why = "".join(k for k in ("A", "B", "C", "D") if r[k])
+        why = "".join(k for k in ("A", "B", "C") if r[k])
         print(f" {'FLAG ' if r['FLAG'] else 'WATCH'} {r['s']:26s} [{why}]")
 if c["FLAG"] != EXPECT_FLAG or c["WATCH"] != EXPECT_WATCH:
     fails.append(f"A: expected {EXPECT_FLAG} FLAG / {EXPECT_WATCH} WATCH, "
                  f"got {c['FLAG']}/{c['WATCH']}")
-if not any(r["D"] and not r["C"] for r in f.rows):
-    fails.append("A: the mostly-doublet cluster must flag on D alone, without C")
 
 nearmiss = [r for r in f.rows if "near miss" in r["s"]][0]
 print(f"\n the conjunction's cost: {nearmiss['s']} at {nearmiss['median_pct_mt']}% mito "
@@ -82,7 +85,6 @@ print("B. markers not computed - C, FLAG, WATCH must be MISSING, never False")
 f2 = apply_flags(P, THR, markers_computed=False)
 bad = [r for r in f2.rows if r["C"] is not None or r["FLAG"] is not None]
 print(f" populated C/FLAG rows: {len(bad)} (must be 0)")
-print(f" D still computed: {sum(1 for r in f2.rows if r['D'])} (D needs no markers)")
 if bad:
     fails.append("B: C/FLAG/WATCH must be None without markers")
 
@@ -133,9 +135,9 @@ with tempfile.TemporaryDirectory() as _d:
         fails.append("E: a blank cell must read back as None")
 
     c_back = apply_flags(back, THR).counts()
-    print(f" verdicts through the file: FLAG {c_back['FLAG']} WATCH {c_back['WATCH']} "
-          f"D {c_back['D']}   (in memory: {c['FLAG']}/{c['WATCH']}/{c['D']})")
-    if (c_back["FLAG"], c_back["WATCH"], c_back["D"]) != (c["FLAG"], c["WATCH"], c["D"]):
+    print(f" verdicts through the file: FLAG {c_back['FLAG']} WATCH {c_back['WATCH']}"
+          f"   (in memory: {c['FLAG']}/{c['WATCH']})")
+    if (c_back["FLAG"], c_back["WATCH"]) != (c["FLAG"], c["WATCH"]):
         fails.append("E: the round trip changed the verdicts")
 
     # A FLAGGED profile, written and read back, must still answer `is True`. Step 7 selects with
@@ -144,7 +146,7 @@ with tempfile.TemporaryDirectory() as _d:
     # none, and the deliverable is described as sitting in no flagged cluster at all.
     _fp = write_profile_csv(f.rows, Path(_d) / "flagged.csv")
     _fb = read_profile_csv(_fp)
-    kinds = sorted({type(r[k]).__name__ for r in _fb for k in ("A", "B", "C", "D", "FLAG")})
+    kinds = sorted({type(r[k]).__name__ for r in _fb for k in ("A", "B", "C", "FLAG")})
     n_is_true = sum(1 for r in _fb if r.get("FLAG") is True)
     print(f" verdict types after the round trip: {kinds}")
     print(f" clusters answering `FLAG is True`: {n_is_true} (in memory: {c['FLAG']})")
@@ -175,3 +177,43 @@ print(f"proved: the conjunction yields {EXPECT_FLAG} FLAG and {EXPECT_WATCH} WAT
 print("profile, with the mostly-doublet cluster reached by D alone - the case a per-cell")
 print("doublet test cannot see - and the near miss held back at five points on one axis")
 print("proved: without markers, C, FLAG and WATCH stay MISSING; a blank never reads as a pass")
+
+
+# ---------------------------------------------------------------- D is gone, and stays gone
+#
+# Criterion D flagged a whole CLUSTER when more than 70% of its cells were called doublets.
+# Retired 2026-08-15 on PI instruction: *"just let the scDblfinder alone handle the doublet,
+# remove D is good as no evidence prove they are also doublet"*.
+#
+# The measurement behind it: on the SAMBO cohort D fired on exactly ONE cluster of 193, and that
+# cluster fired nothing else - not low UMI, not high mitochondrial, not marker share. Its entire
+# marginal contribution was 27 nuclei that the per-cell caller had DECLINED to call doublets. So
+# the criterion's only effect was to remove cells by association with their neighbours, against
+# per-cell evidence that they were not doublets.
+#
+# It is REMOVED, not defaulted off, for the reason scAnno's FLAG_SHARE was removed: a disabled
+# threshold is one edit away from returning, and the next person to see the parameter will assume
+# it was meant to be used. Per-cell `doublet_class` and `doublet_score` survive untouched, so a
+# consumer that wants to act on doublets still can - on evidence about the cell in front of it.
+def _chk(name, cond, detail=""):
+    print(f"  {'ok  ' if cond else 'FAIL'}  {name}" + (f"   {detail}" if detail else ""))
+    if not cond: fails.append(name)
+
+print("\nF. criterion D is removed, and cannot come back")
+_root = HERE.parent
+_src = (_root / "modules/06_cluster_check/cluster_flags.py").read_text(encoding="utf-8")
+_eng = (_root / "engine/steps.py").read_text(encoding="utf-8")
+import re as _re
+# WORD BOUNDARIES. A substring test reports `n_called_doublet` as a surviving `d_doublet`, which
+# is a false alarm about a real rule - and a gate that cries wolf is a gate that gets deleted.
+for _name, _text in (("cluster_flags.py", _src), ("steps.py", _eng)):
+    for _tok in ("d_doublet", "D_DEFAULT"):
+        _chk(f"{_name} has no {_tok}", not _re.search(rf"\b{_tok}\b", _text))
+import cluster_flags as _cf
+_chk("BOOLEAN_KEYS has no D", "D" not in _cf.BOOLEAN_KEYS, str(_cf.BOOLEAN_KEYS))
+_chk("Thresholds has no d_doublet field",
+      not hasattr(Thresholds(0.5, 1.0, 1.0), "d_doublet"))
+_chk("apply_flags writes no D column",
+      all("D" not in r for r in apply_flags(P, Thresholds(0.5, 1.0, 1.0)).rows))
+_chk("the threshold description does not mention D",
+      "D >" not in str(Thresholds(0.5, 1.0, 1.0)), str(Thresholds(0.5, 1.0, 1.0)))

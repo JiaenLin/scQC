@@ -86,7 +86,6 @@ def _unknown(v) -> bool:
     return v is None or (isinstance(v, float) and v != v)
 
 
-D_DEFAULT = 70.0 # the cited method's number, not one measured here
 TOPN = 20
 
 #: The profile columns that carry numbers. A CSV carries no types: every cell arrives as a string,
@@ -100,7 +99,7 @@ NUMERIC_KEYS = ("n", "median_umi", "umi_frac_of_sample", "median_pct_mt", "pct_u
 #: The three-valued verdicts. `bool("False")` is True and `"True" is True` is False, so a verdict
 #: read back as text is wrong whichever way the reader tests it - and step 7 tests it with `is
 #: True`, which quietly makes every flagged cluster unflagged rather than raising.
-BOOLEAN_KEYS = ("A", "B", "C", "C_mt", "C_ribo", "D", "FLAG", "WATCH")
+BOOLEAN_KEYS = ("A", "B", "C", "C_mt", "C_ribo", "FLAG", "WATCH")
 
 
 class ClusterRefusal(RuntimeError):
@@ -230,15 +229,14 @@ class Thresholds:
     a_umi_frac: float
     b_pct_mt: float
     c_uninformative: float
-    d_doublet: float = D_DEFAULT
     source: str = "PROPOSED from the cohort - not approved"
 
     def __str__(self) -> str:
         return (f"A < {self.a_umi_frac}x sample median · B > {self.b_pct_mt:g}% mito · "
-                f"C >= {self.c_uninformative:g}% markers · D > {self.d_doublet:g}% doublet"
+                f"C >= {self.c_uninformative:g}% markers"
                 f"\n {self.source}")
 
-def propose(profile, d_doublet=D_DEFAULT) -> Thresholds:
+def propose(profile) -> Thresholds:
     """Derive candidate thresholds from THIS cohort's distributions, the way step 5 does.
 
     `profile` is a list of dicts with umi_frac_of_sample, median_pct_mt, pct_uninformative.
@@ -277,7 +275,7 @@ def propose(profile, d_doublet=D_DEFAULT) -> Thresholds:
         note = (f"marker share is NOT clearly bimodal (p75 = {q(un, 0.75):.0f}%); C proposed at "
                 f"the p95, {c:.0f}% - a percentile, not a valley, so it is a weaker basis than "
                 f"the count floors have")
-    return Thresholds(0.5, b, c, d_doublet,
+    return Thresholds(0.5, b, c,
                       f"PROPOSED from this cohort - B at the p95 of cluster mito ({b:g}%); "
                       f"{note}. NOT approved; A is a convention, not a measurement")
 
@@ -287,7 +285,7 @@ class Flagged:
 
     def counts(self) -> dict:
         out = {}
-        for k in ("A", "B", "C", "D", "FLAG", "WATCH"):
+        for k in ("A", "B", "C", "FLAG", "WATCH"):
             out[k] = sum(1 for r in self.rows if r.get(k) is True)
         return out
 
@@ -298,12 +296,12 @@ class Flagged:
         cleared every cluster from one that was never computed on any of them.
         """
         out = {}
-        for k in ("A", "B", "C", "D", "FLAG", "WATCH"):
+        for k in ("A", "B", "C", "FLAG", "WATCH"):
             out[k] = sum(1 for r in self.rows if _unknown(r.get(k)))
         return out
 
 def apply_flags(profile, thr: Thresholds, markers_computed=True) -> Flagged:
-    """Compute A/B/C/D and the conjunction. Each verdict is True, False or None - never coerced.
+    """Compute A/B/C and the conjunction. Each verdict is True, False or None - never coerced.
 
     None means NOT EVALUATED - the input it needs was absent - and it propagates: a conjunction
     with an unknown operand that is not already decided by a False is itself unknown, and so is
@@ -316,17 +314,13 @@ def apply_flags(profile, thr: Thresholds, markers_computed=True) -> Flagged:
                     if not _unknown(r.get("umi_frac_of_sample")) else None)
         row["B"] = (r["median_pct_mt"] > thr.b_pct_mt
                     if not _unknown(r.get("median_pct_mt")) else None)
-        row["D"] = (r["pct_doublet"] > thr.d_doublet
-                    if not _unknown(r.get("pct_doublet")) else None)
 
         if not markers_computed or _unknown(r.get("pct_uninformative")):
             # MISSING, never False. A blank must not read as "evaluated and passed".
             #
-            # FLAG is withheld here rather than reduced to its D term. Three-valued OR would
-            # return True for a >70%-doublet cluster whatever C is, which is defensible in
-            # isolation and wrong in a sweep: the column would then mean the full rule at the
-            # resolution where markers exist and "D alone" everywhere else, under one name. D
-            # itself is reported, so nothing is hidden by withholding the conjunction.
+            # FLAG is withheld here rather than partially evaluated: the column must mean the
+            # same rule at every resolution, and a conjunction computed from a subset of its
+            # operands under the same name is how a sweep comes to compare two different rules.
             row["C"] = row["C_mt"] = row["C_ribo"] = None
             row["FLAG"] = row["WATCH"] = None
         else:
@@ -338,8 +332,7 @@ def apply_flags(profile, thr: Thresholds, markers_computed=True) -> Flagged:
             row["C_ribo"] = (r["pct_ribo_markers"] >= thr.c_uninformative
                              if not _unknown(r.get("pct_ribo_markers")) else None)
             row["FLAG"] = _or(_and(row["A"], row["C"]),
-                              _and(row["B"], row["C"]),
-                              row["D"])
+                              _and(row["B"], row["C"]))
             row["WATCH"] = _and(row["C"], _not(row["A"]), _not(row["B"]))
         out.append(row)
     return Flagged(out)
@@ -356,7 +349,7 @@ def sweep_summary(by_resolution) -> list:
     for res, prof in sorted(by_resolution.items()):
         v = list(prof)
         row = {"resolution": res, "clusters": len(v)}
-        for k in ("A", "B", "D"):
+        for k in ("A", "B"):
             row[k] = sum(1 for r in v if r.get(k) is True)
             row[f"{k}_evaluated"] = sum(1 for r in v if not _unknown(r.get(k)))
         for label, key in (("max_pct_mt", "median_pct_mt"),

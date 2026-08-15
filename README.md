@@ -4,13 +4,13 @@
 threshold from applying it.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.3.1-blue.svg)](#status)
+[![Status](https://img.shields.io/badge/status-0.4.0-blue.svg)](#status)
 
 Most QC pipelines take thresholds as arguments. scQC treats them as findings: it measures what it
 can from your data, refuses to guess what it cannot, and records who set every threshold it
 applies — the data, or a person in their own words — so the two can never be confused later.
 
-> **Read [Status](#status) before you plan a run.** At `0.3.1` scQC runs a cohort end to end —
+> **Read [Status](#status) before you plan a run.** At `0.4.0` scQC runs a cohort end to end —
 > `scqc run` builds the task graph and executes it, locally or on a PBS scheduler with one job per
 > task, invoking the aligner, the denoiser, the doublet caller and the analysis stack out of
 > process. It writes a report and, in apply mode, one filtered object per library plus a merged
@@ -100,7 +100,7 @@ scqc quality --valleys valleys.csv --metric umi   # propose a count floor, or re
 scqc cluster-preflight --profile clusters.csv --kept 120000   # what step 6 found, before removal
 scqc selftest                                     # run the bundled suites
 scqc stamp results/*/objects/*.h5ad               # declare what the flag means, on objects
-                                                  # written before 0.3.1
+                                                  # written before 0.4.0
 ```
 
 **Exit code 2 is a refusal**, 0 is pass or review, 1 is an error, so a gate can stop a shell
@@ -222,7 +222,7 @@ options — ignore the flag and annotate nuclei this pipeline flagged as technic
 the column name, which is that tool deciding what is technical on scQC's behalf. The declaration
 is the third option: scQC states its decision, the consumer decides what to do about it, and the
 digest lets the consumer prove the column is still the one scQC wrote. `scqc stamp <objects>`
-adds it to anything written before `0.3.1` without a re-run.
+adds it to anything written before `0.4.0` without a re-run.
 
 The per-library objects are primary and the cohort object is derived from them: each library is
 filtered on its own mitochondrial ceiling and cluster-checked on its own clustering.
@@ -353,7 +353,7 @@ it has caught came from calling a function with a hostile input and looking at w
 
 ## Status
 
-**0.3.1.** Being precise about this, because a QC tool that overstates itself does damage
+**0.4.0.** Being precise about this, because a QC tool that overstates itself does damage
 quietly — and one that understates itself is wrong in the same way, just harder to notice. Every
 row below was checked against the tree rather than remembered.
 

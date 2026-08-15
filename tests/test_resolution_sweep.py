@@ -81,7 +81,7 @@ sys.path.insert(0, str(HERE.parent / "modules" / "06_cluster_check"))
 from cluster_flags import BOOLEAN_KEYS, NUMERIC_KEYS  # noqa: E402
 
 check("the verdict columns are unchanged",
-      BOOLEAN_KEYS == ("A", "B", "C", "C_mt", "C_ribo", "D", "FLAG", "WATCH"), str(BOOLEAN_KEYS))
+      BOOLEAN_KEYS == ("A", "B", "C", "C_mt", "C_ribo", "FLAG", "WATCH"), str(BOOLEAN_KEYS))
 check("the measured columns are unchanged",
       NUMERIC_KEYS == ("n", "median_umi", "umi_frac_of_sample", "median_pct_mt",
                        "pct_uninformative", "pct_mt_markers", "pct_ribo_markers", "pct_doublet"),
