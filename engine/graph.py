@@ -299,6 +299,15 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             params={"sample": s, "python_exe": python_exe,
                     "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
                     "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
+                    # THE NUCLEAR-FRACTION SOURCE, declared per library or not at all. The
+                    # aligner's per-barcode read summary (STARsolo `CellReads.stats`); absent, no
+                    # fraction is measured and the joint criterion never arms. `nf_antisense` has
+                    # no default in the reader - the columns summed are recorded beside every
+                    # value, because including antisense changes what the number means without
+                    # changing its name.
+                    "cellreads_stats": str(by_sample[s].get("cellreads_stats") or "").strip(),
+                    "nf_antisense": str(
+                        by_sample[s].get("nf_antisense") or "").strip().lower() == "true",
                     # The floor the MITOCHONDRIAL quartiles are taken above. The count valleys in
                     # the same pass do not use it and must not: they need the debris mode this
                     # would delete.

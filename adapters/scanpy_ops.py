@@ -2415,6 +2415,57 @@ def _op_valley(adata, params, out_prefix) -> tuple:
         for _b in called:
             _w.writerow([_b])
 
+    # ------------------------------------------------------------------ the nuclear fraction
+    #
+    # MEASURED HERE AND APPLIED NOWHERE IN THIS STEP. It is computed in the pass that already
+    # holds the object and its barcodes, so the 131 MB per-droplet file is parsed ONCE per
+    # library, in a task that already runs per library and in parallel. Step 7 then reads the
+    # small per-barcode CSV written below rather than the aligner's file again.
+    #
+    # Absent `cellreads_stats` nothing here runs, nothing is written, and the metrics carry no
+    # nuclear fraction - so a run that did not ask for it is unchanged.
+    nf_path = None
+    nf_metrics = {}
+    if not _unknown(params.get("cellreads_stats")):
+        from adapters import nuclear_fraction as _nf
+
+        nf_by_bc, nf_stats = _nf.read_cellreads(
+            params["cellreads_stats"], list(adata.obs_names), sample=sample,
+            antisense=bool(params.get("nf_antisense", False)))
+        nf_path = Path(str(out_prefix) + ".nuclear_fraction.csv")
+        with nf_path.open("w", encoding="utf-8", newline="") as fh:
+            _w = _csv.writer(fh)
+            _w.writerow(["barcode", "nuclear_fraction"])
+            for _b in adata.obs_names:
+                _v = nf_by_bc.get(str(_b))
+                # BLANK, not 0, for an undefined or unjoined barcode. A zero here is a claim that
+                # the droplet held no intronic signal, which is a measurement nobody made.
+                _w.writerow([str(_b), "" if _v is None else f"{_v:.6f}"])
+
+        # THE MEDIAN IS TAKEN OVER THE POPULATION THE CRITERION CAN ACT ON: barcodes at or above
+        # the light floor with a DEFINED fraction. Below that floor the barcodes are debris the
+        # count floor removes anyway, and including them drags the median toward whatever the
+        # ambient looks like in this library rather than toward what its nuclei look like. It is
+        # the same population restriction the mitochondrial quartiles already use, for the same
+        # reason, and it is recorded beside the number.
+        _tot_all = adata.obs["total_counts"] if "total_counts" in adata.obs.columns else None
+        _floor = float(params.get("mito_floor_umi") or 0)
+        _pop = []
+        for _b, _c in zip(adata.obs_names, (list(_tot_all) if _tot_all is not None
+                                            else [None] * adata.n_obs)):
+            _v = nf_by_bc.get(str(_b))
+            if _v is None:
+                continue
+            if _c is not None and float(_c) < _floor:
+                continue
+            _pop.append(_v)
+        nf_metrics = {
+            "nf_median": _nf.median(_pop),
+            "nf_n_in_median": len(_pop),
+            "nf_median_floor_umi": _floor,
+            **{f"nf_{k}": v for k, v in nf_stats.items()},
+        }
+
     valleys = write_valleys_csv(records, str(out_prefix) + ".valleys.csv")
     density = write_density_csv(records, str(out_prefix) + ".valley_density.csv")
     jpath = Path(str(out_prefix) + ".valleys.json")
@@ -2428,7 +2479,11 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                "mito_quartiles": mito,
                "mito_population": mito_pop}
     metrics["n_called_by_denoiser"] = len(called)
-    return [valleys, density, jpath, cells_path], metrics
+    metrics.update(nf_metrics)
+    outs = [valleys, density, jpath, cells_path]
+    if nf_path is not None:
+        outs.append(nf_path)
+    return outs, metrics
 
 
 def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIVATION_MAX):
@@ -2849,7 +2904,7 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
 #: column names, not a convention the reader has to reconstruct: `audit_removal.audit()` is told
 #: which columns are criteria and checks that `removed` decomposes into exactly them.
 APPLY_CRITERIA = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
-                  "fail_mito_ceiling", "fail_doublet")
+                  "fail_mito_ceiling", "fail_doublet", "fail_mito_nf")
 
 
 def _op_apply_measure(adata, params, out_prefix) -> tuple:
@@ -2928,9 +2983,61 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     fail_mito = np.asarray([m == m and m > ceiling for m in mt], dtype=bool)
     fail_doublet = np.asarray(is_doublet, dtype=bool)
 
+    # ------------------------------------- the joint mitochondrial x nuclear-fraction criterion
+    #
+    #     fail_mito_nf = (mt > TRIGGER) AND (nf < FLOOR)
+    #
+    # ADDITIVE, never a replacement. `fail_mito_ceiling` is untouched and removes exactly what it
+    # removed with this off, so the removal is a strict SUPERSET of the run without it and every
+    # additional barcode comes from the band between the trigger and the applied ceiling.
+    #
+    # THE TRIGGER REMOVES NOTHING. It selects which barcodes the nuclear fraction is consulted on.
+    # Below it the fraction is never read, because a droplet whose mitochondrial percentage is
+    # already inside the declared bound is not one this criterion has anything to say about.
+    #
+    # All three parameters must be PRESENT and may be null, the same contract the other optional
+    # parameters here carry: a run with no joint criterion is a supported state and is recorded as
+    # one, while a missing parameter is a wiring defect - and the two produce identical tables.
+    for _k in ("nf_csv", "nf_floor", "nf_trigger_pct"):
+        if _k not in params:
+            raise TaskFailure(
+                f"parameter {_k!r} must be present, and may be null. A run with no joint "
+                f"mitochondrial x nuclear-fraction criterion is a supported state; a missing "
+                f"parameter is a wiring defect, and both produce the same table.")
+    nf_values = [None] * adata.n_obs
+    joint_armed = not any(_unknown(params[k]) for k in ("nf_csv", "nf_floor", "nf_trigger_pct"))
+    fail_mito_nf = np.zeros(adata.n_obs, dtype=bool)
+    if joint_armed:
+        nf_floor = float(params["nf_floor"])
+        nf_trigger = float(params["nf_trigger_pct"])
+        if not 0 < nf_floor < 1:
+            raise TaskFailure(
+                f"{sample}: nf_floor is {nf_floor:g}; it must lie strictly in (0, 1). The nuclear "
+                f"fraction is intronic / (intronic + exonic), a RATIO and not a percentage.")
+        by_bc = {}
+        with open(params["nf_csv"], encoding="utf-8", newline="") as fh:
+            for row in _csv.DictReader(fh):
+                raw = (row.get("nuclear_fraction") or "").strip()
+                by_bc[row["barcode"]] = float(raw) if raw else None
+        nf_values = [by_bc.get(str(b)) for b in adata.obs_names]
+        n_missing = sum(1 for b in adata.obs_names if str(b) not in by_bc)
+        if n_missing:
+            raise TaskFailure(
+                f"{sample}: {n_missing:,} of {adata.n_obs:,} barcodes are absent from "
+                f"{params['nf_csv']}. The table is written per barcode of this same object in "
+                f"step 5, so an absent row means the two describe different objects - which is "
+                f"not a filter that can be applied to some of a library.")
+        # AN UNKNOWN NUCLEAR FRACTION FAILS NOTHING, exactly as an unknown mitochondrial value
+        # does. It is not evidence of an intact nucleus and it is not evidence of debris, so it
+        # cannot be allowed to decide either way: a barcode over the trigger whose second axis is
+        # unmeasured is KEPT, and it is counted separately from the ones the fraction spared.
+        fail_mito_nf = np.asarray(
+            [(m == m and m > nf_trigger) and (v is not None and float(v) < nf_floor)
+             for m, v in zip(mt, nf_values)], dtype=bool)
+
     fails = {"fail_not_cellbender_cell": fail_cell, "fail_umi_floor": fail_umi,
              "fail_gene_floor": fail_gene, "fail_mito_ceiling": fail_mito,
-             "fail_doublet": fail_doublet}
+             "fail_doublet": fail_doublet, "fail_mito_nf": fail_mito_nf}
     removed = np.zeros(adata.n_obs, dtype=bool)
     for v in fails.values():
         removed |= v
@@ -2957,14 +3064,18 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = _csv.writer(fh)
+        # `nuclear_fraction` sits beside `pct_counts_mt` because the two are the criterion's two
+        # axes and a reader checking `fail_mito_nf` needs both. BLANK where undefined - never 0.
         w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
-                    "pct_counts_mt", "doublet_score", "doublet_class", "doublet_scored",
+                    "pct_counts_mt", "nuclear_fraction",
+                    "doublet_score", "doublet_class", "doublet_scored",
                     *APPLY_CRITERIA, "removed", "keep"])
         for i, b in enumerate(adata.obs_names):
             w.writerow([str(b), sample, bool(is_cell[i]),
                         "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
                         "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
                         "" if mt[i] != mt[i] else f"{mt[i]:.6f}",
+                        "" if nf_values[i] is None else f"{float(nf_values[i]):.6f}",
                         "" if _unknown(dbl_score[i]) else f"{float(dbl_score[i]):.6f}",
                         "" if _unknown(dbl_class[i]) else str(dbl_class[i]),
                         bool(scored[i]),
@@ -2974,7 +3085,18 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     metrics = {"sample": sample, "n_in": int(adata.n_obs), "n_keep": int(keep.sum()),
                "n_removed": int(removed.sum()),
                "thresholds": {"umi_floor": umi_floor, "gene_floor": gene_floor,
-                              "mito_ceiling_pct": ceiling, "light_floor": light_floor},
+                              "mito_ceiling_pct": ceiling, "light_floor": light_floor,
+                              "nf_floor": (None if not joint_armed else float(params["nf_floor"])),
+                              "nf_trigger_pct": (None if not joint_armed
+                                                 else float(params["nf_trigger_pct"]))},
+               "joint_armed": bool(joint_armed),
+               # What the second axis SPARED and what it could not judge - the two numbers the
+               # criterion cannot be read without. `n_mito_over_trigger` is its denominator.
+               "n_mito_over_trigger": (0 if not joint_armed else int(sum(
+                   1 for m in mt if m == m and m > float(params["nf_trigger_pct"])))),
+               "n_nf_unknown_over_trigger": (0 if not joint_armed else int(sum(
+                   1 for m, v in zip(mt, nf_values)
+                   if m == m and m > float(params["nf_trigger_pct"]) and v is None))),
                "n_doublet_scored": int(scored.sum()),
                **{f"n_{c}": int(fails[c].sum()) for c in APPLY_CRITERIA}}
     return [path], metrics

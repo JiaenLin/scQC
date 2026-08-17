@@ -1235,6 +1235,11 @@ def _quality_measure(task, pipeline, log):
                    # adapter's own default applies and records itself in the ceiling table, so
                    # there is no route by which the applied value goes unrecorded.
                    "mito_floor_umi": p["light_floor"],
+                   # Passed only when the samplesheet names one. Absent, no nuclear fraction is
+                   # read, none is written, and the run is what it was before this existed.
+                   **({"cellreads_stats": p["cellreads_stats"],
+                       "nf_antisense": p.get("nf_antisense", False)}
+                      if p.get("cellreads_stats") else {}),
                    **({"mito_derivation_max": p["mito_derivation_max"]}
                       if p.get("mito_derivation_max") is not None else {})},
                   log, p["python_exe"])
@@ -1255,7 +1260,12 @@ def _quality_measure(task, pipeline, log):
     # data separates - is about the shape.
     density = _promote(pipeline, res, ".valley_density.csv", f"{s}.valley_density.csv",
                        what=f"05_quality ({s})")
-    outputs = list(res.get("outputs", [])) + ([density] if density else [])
+    # PROMOTED to tables/, because step 7 reads it and a criterion whose input lives only in
+    # scratch is one nobody can re-check the filter against.
+    nf_csv = _promote(pipeline, res, ".nuclear_fraction.csv", f"{s}.nuclear_fraction.csv",
+                      what=f"05_quality ({s})") if m.get("nf_median") is not None else None
+    outputs = list(res.get("outputs", [])) + ([density] if density else []) \
+        + ([nf_csv] if nf_csv else [])
     return {"outputs": outputs,
             "metrics": {"valleys": got, "bimodal": bim,
                         "mito_quartiles": m.get("mito_quartiles"),
@@ -1264,7 +1274,17 @@ def _quality_measure(task, pipeline, log):
                         # else's, which is the entire disagreement this run went and settled.
                         "mito_population": m.get("mito_population"),
                         "called_barcodes": str(called_csv) if called_csv else None,
-                        "n_called_by_denoiser": m.get("n_called_by_denoiser")},
+                        "n_called_by_denoiser": m.get("n_called_by_denoiser"),
+                        # The nuclear fraction travels as METRICS, like everything else the
+                        # barrier reads, so no worker writes to shared state.
+                        "nf_median": m.get("nf_median"),
+                        "nf_n_in_median": m.get("nf_n_in_median"),
+                        "nf_n_joined": m.get("nf_n_joined"),
+                        "nf_n_defined": m.get("nf_n_defined"),
+                        "nf_join_pct": m.get("nf_join_pct"),
+                        "nf_source": m.get("nf_source"),
+                        "nf_columns": m.get("nf_columns"),
+                        "nf_csv": str(nf_csv) if nf_csv else None},
             "versions": res.get("versions", {})}
 
 
@@ -1277,6 +1297,7 @@ def _quality_stage(task, pipeline, log):
     valleys = {m: [] for m in VALLEY_METRICS}
     mito_stats = {}
     mito_pop = {}
+    nf_per = {}
     missing = []
     for s in task.params["samples"]:
         r = pipeline.results_by_key.get(f"05_quality/{s}")
@@ -1292,6 +1313,9 @@ def _quality_stage(task, pipeline, log):
         if q:
             mito_stats[s] = q
         mito_pop[s] = met.get("mito_population") or {}
+        nf_per[s] = {k: met.get(k) for k in
+                     ("nf_median", "nf_n_in_median", "nf_median_floor_umi", "nf_n_joined",
+                      "nf_n_defined", "nf_join_pct", "nf_columns", "nf_source", "nf_csv")}
     if missing:
         raise Refusal(
             f"05_quality: no measurement was recorded for {', '.join(missing)}. A library whose "
@@ -1357,6 +1381,60 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
     for n in d["notes"]:
         print(f"      {n}")
 
+    # ----------------------------------------------- the cohort nuclear-fraction floor
+    #
+    # ONE NUMBER FOR THE COHORT, the median of the ten per-library medians. Equal weight per
+    # LIBRARY, deliberately: pooling every cell instead would let a 16,000-cell library outvote a
+    # 7,500-cell one, and the floor would then be a statement about how many nuclei each animal
+    # yielded rather than about nuclear fractions.
+    #
+    # WHY NOT A PER-LIBRARY FLOOR. It would ADAPT: the library whose fractions run low gets the
+    # loosest floor, keeps what a stricter library loses, and the criterion applies a different
+    # standard in each arm of the design - a removal that is differential by construction and
+    # indistinguishable downstream from biology.
+    #
+    # THE TRIGGER IS NOT A NEW PARAMETER. It is the LOWER MITOCHONDRIAL BOUND already declared for
+    # this assay and already applied to the ceiling above - the percentage below which a nucleus's
+    # mitochondrial content is inside what this pipeline has stated a nucleus can be. Above it the
+    # fraction is consulted; below it, never read. Reusing the bound means this criterion adds no
+    # threshold anyone has to justify separately, and it cannot drift away from the ceiling's own.
+    nf_medians = {s: (nf_per.get(s) or {}).get("nf_median") for s in samples}
+    nf_have = {s: v for s, v in nf_medians.items() if v is not None}
+    nf_floor = nf_trigger = None
+    if nf_have:
+        if len(nf_have) != len(samples):
+            absent = sorted(set(samples) - set(nf_have))
+            raise Refusal(
+                f"05_quality (nuclear fraction): {len(nf_have)} of {len(samples)} libraries have "
+                f"one and {', '.join(absent)} do not. A floor pooled over some libraries and "
+                f"applied to all of them filters the rest on a boundary measured entirely in "
+                f"other animals, and which libraries had a source declared is not a random subset "
+                f"of a design. Declare a source for every library, or for none.")
+        from adapters import nuclear_fraction as _nfmod
+        nf_floor = _nfmod.median(list(nf_have.values()))
+        nf_trigger = float(lo)
+        print(f"    nuclear fraction: per-library medians "
+              f"{min(nf_have.values()):.4f}-{max(nf_have.values()):.4f}; cohort floor "
+              f"{nf_floor:.4f} (median of {len(nf_have)} library medians, equal weight)")
+        print(f"      joint criterion armed: mt > {nf_trigger:g}% AND nf < {nf_floor:.4f} "
+              f"- ADDITIVE to the ceiling, and the trigger is the declared lower bound")
+        import csv as _csvnf
+        pnf = _tables(pipeline) / "nuclear_fraction.csv"
+        with open(pnf, "w", newline="", encoding="utf-8") as fh:
+            w = _csvnf.writer(fh)
+            w.writerow(["sample", "nf_median", "n_in_median", "median_floor_umi", "n_joined",
+                        "n_defined", "join_pct", "columns", "source",
+                        "cohort_floor", "trigger_pct"])
+            for s in samples:
+                r = nf_per.get(s) or {}
+                w.writerow([s, f"{r.get('nf_median'):.6f}" if r.get("nf_median") is not None
+                            else "", r.get("nf_n_in_median"), r.get("nf_median_floor_umi"),
+                            r.get("nf_n_joined"), r.get("nf_n_defined"),
+                            f"{r.get('nf_join_pct'):.2f}" if r.get("nf_join_pct") is not None
+                            else "", r.get("nf_columns"), r.get("nf_source"),
+                            f"{nf_floor:.6f}", f"{nf_trigger:g}"])
+        print(f"      per-library medians and the cohort floor: {pnf}")
+
     import csv
     p = _tables(pipeline) / "mito_ceiling_per_sample.csv"
     with open(p, "w", newline="", encoding="utf-8") as fh:
@@ -1414,6 +1492,15 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
         "mito_derivation_max_pct": next(
             (pp.get("derivation_max_pct") for pp in (mito_pop or {}).values()
              if pp and pp.get("derivation_max_pct") is not None), None)})
+    # THE NUCLEAR-FRACTION FLOOR, on the same channel `_apply_thresholds` already reads. Null
+    # where no library declared a source: step 7 then sees three nulls and records the criterion
+    # as NOT EVALUATED, which is a different fact from it firing on nothing.
+    out["metrics"]["nf_floor"] = nf_floor
+    out["metrics"]["nf_trigger_pct"] = nf_trigger
+    out["metrics"]["nf_csv_by_sample"] = ({s2: (nf_per.get(s2) or {}).get("nf_csv")
+                                           for s2 in samples} if nf_floor is not None else {})
+    if nf_floor is not None:
+        out["outputs"] = list(out["outputs"]) + [str(pnf)]
     return out
 
 
@@ -1754,6 +1841,20 @@ def _attested(block):
     return v
 
 
+def _cohort_metric(pipeline, key):
+    """A value the 05_quality barrier published, or None. Never a default.
+
+    Step 7 reads what step 5 derived through the same channel `_apply_thresholds` uses, so no
+    threshold can reach the filter by a route the rest of the run did not travel.
+    """
+    return (getattr(pipeline.results_by_key.get("05_quality"), "metrics", None) or {}).get(key)
+
+
+def _nf_csv_for(pipeline, sample):
+    """This library's per-barcode nuclear-fraction table, or None where none was written."""
+    return (_cohort_metric(pipeline, "nf_csv_by_sample") or {}).get(sample)
+
+
 def _apply_thresholds(task, pipeline, samples):
     """(values, who decided each, ceiling per sample, how the ceilings were decided).
 
@@ -1812,6 +1913,12 @@ def _apply_measure(task, pipeline, log):
                     "gene_floor": resolved["quality.gene_floor"],
                     "mito_ceiling_pct": ceilings[s],
                     "light_floor": p["light_floor"],
+                    # ALWAYS PRESENT, null where the criterion is not armed. The op refuses a
+                    # MISSING key precisely so that "not evaluated" and "wired wrong" cannot
+                    # produce the same per-cell table.
+                    "nf_csv": _nf_csv_for(pipeline, s),
+                    "nf_floor": _cohort_metric(pipeline, "nf_floor"),
+                    "nf_trigger_pct": _cohort_metric(pipeline, "nf_trigger_pct"),
                     "doublet_csv": p["doublet_csv"],
                     "doublet_key": "doublet_class", "doublet_positive": "doublet"},
                    log, p["python_exe"])
