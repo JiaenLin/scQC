@@ -126,8 +126,17 @@ finish() { s=$?
   set +e                                  # REQUIRED — see below
   miss=""
   D=$(ls -d "$RUNDIR"/results/*/ 2>/dev/null | head -1)
-  [ -n "$D" ] || miss="$miss results/<digest>"
-  [ -s "$D/report.json" ] || miss="$miss report.json"
+  if [ -z "$D" ]; then
+    miss="$miss results/<digest>"
+  else
+    # THE PATHS MUST BE THE ONES THE TOOL ACTUALLY WRITES. `report.json` is under `reports/`,
+    # not at the top of the digest directory; `INPUTS.json` is at the top. Getting either wrong
+    # fails a run that produced everything — see the note below.
+    [ -s "$D/reports/report.json" ] || miss="$miss reports/report.json"
+    [ -s "$D/INPUTS.json" ]         || miss="$miss INPUTS.json"
+    n=$(ls "$D"/objects/cohort_per_sample/*.filtered.h5ad 2>/dev/null | wc -l)
+    [ "$n" -gt 0 ] || miss="$miss filtered_objects"
+  fi
   if [ -n "$miss" ] && [ "$s" -eq 0 ]; then s=97; fi        # `if`, not an && chain
   { echo "exit=$s"; echo "jobid=${PBS_JOBID:-none}"; hostname
     date -u +%Y-%m-%dT%H:%M:%SZ
@@ -149,6 +158,12 @@ Three things this encodes:
    the log. Chmod files and leave `logs/` writable.
 3. **A seal must check the products, not just the exit status.** A job without `set -e` ends on a
    successful `echo`, and a trap reading `$?` then writes a green seal on a run that died.
+4. **…but check for the paths the tool really writes, and verify them against a finished run
+   before trusting the seal.** A product check listing `<digest>/report.json` — one directory
+   level off from the `<digest>/reports/report.json` scQC actually writes — turned a completely
+   successful run into `FAILED.txt`, with every object and figure present on disk. **A seal that
+   fails a correct run is worse than no seal**, because the next person learns to ignore it. Run
+   the check against a known-good run directory once, and confirm it says nothing is missing.
 
 ## 4. Submitting
 
