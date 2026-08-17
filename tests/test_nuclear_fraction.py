@@ -156,8 +156,34 @@ check("a floor outside (0,1) is refused as a percentage mistake",
 
 _steps = (ROOT / "engine" / "steps.py").read_text(encoding="utf-8")
 check("E: the trigger is the DECLARED lower mitochondrial bound, not a new parameter",
-      "nf_trigger = float(lo)" in _steps,
+      'out["metrics"].get("mito_bound_lo")' in _steps,
       "a second threshold would need its own justification and could drift from the ceiling's")
+
+# --------------------------------------------------- F. the names are bound where they are USED
+#
+# THIS EXISTS BECAUSE A SOURCE GREP CANNOT CATCH IT. The floor derivation was first written into
+# `_mito_ceiling_stage`, which holds the bound - while the per-library medians it reads are
+# collected in `_quality_stage`, its caller. Every grep in section E passed, `py_compile` passed,
+# and the run died with `NameError: name 'nf_per' is not defined` eighteen minutes in, after ten
+# libraries had been measured and the doublet sweep had run.
+#
+# A whole-module linter would catch this, and there is none in this environment. So the check is
+# scoped and dependency-free: every `nf_*` name LOADED inside a function must be STORED in that
+# same function.
+import ast  # noqa: E402
+
+_tree = ast.parse(_steps)
+for _fn in [n for n in ast.walk(_tree) if isinstance(n, ast.FunctionDef)]:
+    loaded = {n.id for n in ast.walk(_fn)
+              if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+              and n.id.startswith("nf_")}
+    stored = {n.id for n in ast.walk(_fn)
+              if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+    stored |= {a.arg for a in _fn.args.args}
+    unbound = sorted(loaded - stored)
+    if loaded:
+        check(f"F: every nf_* name {_fn.name}() uses is bound in {_fn.name}()",
+              not unbound, f"unbound: {unbound} - the block is in the wrong function")
 check("E: a partial cohort is refused rather than filtered on other animals' boundary",
       "applied to all of them filters the rest on a boundary measured entirely in" in _steps)
 check("E: the floor reaches step 7 through the barrier's metrics, like every other threshold",

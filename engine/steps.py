@@ -1340,7 +1340,74 @@ def _quality_stage(task, pipeline, log):
         for k, v in (r.get("metrics") or {}).items():
             out["metrics"][f"{metric}_{k}"] = v
 
-    return _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop)
+    out = _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop)
+
+    # ----------------------------------------------- the cohort nuclear-fraction floor
+    #
+    # AFTER the ceiling, and deliberately: the trigger is the LOWER MITOCHONDRIAL BOUND that stage
+    # just applied, read from the metric it published rather than re-derived here. The two cannot
+    # drift apart, and this criterion adds no threshold anyone has to justify separately.
+    #
+    # ONE NUMBER FOR THE COHORT, the median of the per-library medians - equal weight per LIBRARY.
+    # Pooling every cell instead lets a 16,000-cell library outvote a 7,500-cell one, and the floor
+    # becomes a statement about how many nuclei each animal yielded rather than about nuclear
+    # fractions. A PER-LIBRARY floor would be worse: it ADAPTS, so the library whose fractions run
+    # low gets the loosest floor, keeps what a stricter library loses, and the criterion applies a
+    # different standard in each arm of the design - differential by construction.
+    samples = list(task.params["samples"])
+    nf_medians = {s: (nf_per.get(s) or {}).get("nf_median") for s in samples}
+    nf_have = {s: v for s, v in nf_medians.items() if v is not None}
+    nf_floor = nf_trigger = None
+    if nf_have:
+        if len(nf_have) != len(samples):
+            absent = sorted(set(samples) - set(nf_have))
+            raise Refusal(
+                f"05_quality (nuclear fraction): {len(nf_have)} of {len(samples)} libraries have "
+                f"one and {', '.join(absent)} do not. A floor pooled over some libraries and "
+                f"applied to all of them filters the rest on a boundary measured entirely in "
+                f"other animals, and which libraries had a source declared is not a random subset "
+                f"of a design. Declare a source for every library, or for none.")
+        from adapters import nuclear_fraction as _nfmod
+        nf_floor = _nfmod.median(list(nf_have.values()))
+        nf_trigger = out["metrics"].get("mito_bound_lo")
+        if nf_trigger is None:
+            raise Refusal(
+                "05_quality (nuclear fraction): the mitochondrial bound was not published, so "
+                "there is no trigger. The trigger is that bound by design; inventing one here "
+                "would be a second threshold that can drift away from the ceiling's own.")
+        nf_trigger = float(nf_trigger)
+        print(f"    nuclear fraction: per-library medians "
+              f"{min(nf_have.values()):.4f}-{max(nf_have.values()):.4f}; cohort floor "
+              f"{nf_floor:.4f} (median of {len(nf_have)} library medians, equal weight)")
+        print(f"      joint criterion armed: mt > {nf_trigger:g}% AND nf < {nf_floor:.4f} "
+              f"- ADDITIVE to the ceiling; the trigger is the declared lower bound")
+        import csv as _csvnf
+        pnf = _tables(pipeline) / "nuclear_fraction.csv"
+        with open(pnf, "w", newline="", encoding="utf-8") as fh:
+            w = _csvnf.writer(fh)
+            w.writerow(["sample", "nf_median", "n_in_median", "median_floor_umi", "n_joined",
+                        "n_defined", "join_pct", "columns", "source",
+                        "cohort_floor", "trigger_pct"])
+            for s in samples:
+                r = nf_per.get(s) or {}
+                w.writerow([s,
+                            f"{r.get('nf_median'):.6f}" if r.get("nf_median") is not None else "",
+                            r.get("nf_n_in_median"), r.get("nf_median_floor_umi"),
+                            r.get("nf_n_joined"), r.get("nf_n_defined"),
+                            f"{r.get('nf_join_pct'):.2f}" if r.get("nf_join_pct") is not None
+                            else "", r.get("nf_columns"), r.get("nf_source"),
+                            f"{nf_floor:.6f}", f"{nf_trigger:g}"])
+        print(f"      per-library medians and the cohort floor: {pnf}")
+        out["outputs"] = list(out.get("outputs", [])) + [str(pnf)]
+
+    # PUBLISHED on the barrier's metrics - the channel `_apply_thresholds` already reads. Null
+    # where no library declared a source: step 7 then sees three nulls and records the criterion
+    # as NOT EVALUATED, which is a different fact from it firing on nothing.
+    out["metrics"]["nf_floor"] = nf_floor
+    out["metrics"]["nf_trigger_pct"] = nf_trigger
+    out["metrics"]["nf_csv_by_sample"] = ({s: (nf_per.get(s) or {}).get("nf_csv")
+                                           for s in samples} if nf_floor is not None else {})
+    return out
 
 
 def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
@@ -1380,60 +1447,6 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
           f"(bound {lo}-{hi}%, {assay})")
     for n in d["notes"]:
         print(f"      {n}")
-
-    # ----------------------------------------------- the cohort nuclear-fraction floor
-    #
-    # ONE NUMBER FOR THE COHORT, the median of the ten per-library medians. Equal weight per
-    # LIBRARY, deliberately: pooling every cell instead would let a 16,000-cell library outvote a
-    # 7,500-cell one, and the floor would then be a statement about how many nuclei each animal
-    # yielded rather than about nuclear fractions.
-    #
-    # WHY NOT A PER-LIBRARY FLOOR. It would ADAPT: the library whose fractions run low gets the
-    # loosest floor, keeps what a stricter library loses, and the criterion applies a different
-    # standard in each arm of the design - a removal that is differential by construction and
-    # indistinguishable downstream from biology.
-    #
-    # THE TRIGGER IS NOT A NEW PARAMETER. It is the LOWER MITOCHONDRIAL BOUND already declared for
-    # this assay and already applied to the ceiling above - the percentage below which a nucleus's
-    # mitochondrial content is inside what this pipeline has stated a nucleus can be. Above it the
-    # fraction is consulted; below it, never read. Reusing the bound means this criterion adds no
-    # threshold anyone has to justify separately, and it cannot drift away from the ceiling's own.
-    nf_medians = {s: (nf_per.get(s) or {}).get("nf_median") for s in samples}
-    nf_have = {s: v for s, v in nf_medians.items() if v is not None}
-    nf_floor = nf_trigger = None
-    if nf_have:
-        if len(nf_have) != len(samples):
-            absent = sorted(set(samples) - set(nf_have))
-            raise Refusal(
-                f"05_quality (nuclear fraction): {len(nf_have)} of {len(samples)} libraries have "
-                f"one and {', '.join(absent)} do not. A floor pooled over some libraries and "
-                f"applied to all of them filters the rest on a boundary measured entirely in "
-                f"other animals, and which libraries had a source declared is not a random subset "
-                f"of a design. Declare a source for every library, or for none.")
-        from adapters import nuclear_fraction as _nfmod
-        nf_floor = _nfmod.median(list(nf_have.values()))
-        nf_trigger = float(lo)
-        print(f"    nuclear fraction: per-library medians "
-              f"{min(nf_have.values()):.4f}-{max(nf_have.values()):.4f}; cohort floor "
-              f"{nf_floor:.4f} (median of {len(nf_have)} library medians, equal weight)")
-        print(f"      joint criterion armed: mt > {nf_trigger:g}% AND nf < {nf_floor:.4f} "
-              f"- ADDITIVE to the ceiling, and the trigger is the declared lower bound")
-        import csv as _csvnf
-        pnf = _tables(pipeline) / "nuclear_fraction.csv"
-        with open(pnf, "w", newline="", encoding="utf-8") as fh:
-            w = _csvnf.writer(fh)
-            w.writerow(["sample", "nf_median", "n_in_median", "median_floor_umi", "n_joined",
-                        "n_defined", "join_pct", "columns", "source",
-                        "cohort_floor", "trigger_pct"])
-            for s in samples:
-                r = nf_per.get(s) or {}
-                w.writerow([s, f"{r.get('nf_median'):.6f}" if r.get("nf_median") is not None
-                            else "", r.get("nf_n_in_median"), r.get("nf_median_floor_umi"),
-                            r.get("nf_n_joined"), r.get("nf_n_defined"),
-                            f"{r.get('nf_join_pct'):.2f}" if r.get("nf_join_pct") is not None
-                            else "", r.get("nf_columns"), r.get("nf_source"),
-                            f"{nf_floor:.6f}", f"{nf_trigger:g}"])
-        print(f"      per-library medians and the cohort floor: {pnf}")
 
     import csv
     p = _tables(pipeline) / "mito_ceiling_per_sample.csv"
@@ -1492,15 +1505,6 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
         "mito_derivation_max_pct": next(
             (pp.get("derivation_max_pct") for pp in (mito_pop or {}).values()
              if pp and pp.get("derivation_max_pct") is not None), None)})
-    # THE NUCLEAR-FRACTION FLOOR, on the same channel `_apply_thresholds` already reads. Null
-    # where no library declared a source: step 7 then sees three nulls and records the criterion
-    # as NOT EVALUATED, which is a different fact from it firing on nothing.
-    out["metrics"]["nf_floor"] = nf_floor
-    out["metrics"]["nf_trigger_pct"] = nf_trigger
-    out["metrics"]["nf_csv_by_sample"] = ({s2: (nf_per.get(s2) or {}).get("nf_csv")
-                                           for s2 in samples} if nf_floor is not None else {})
-    if nf_floor is not None:
-        out["outputs"] = list(out["outputs"]) + [str(pnf)]
     return out
 
 
