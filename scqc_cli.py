@@ -760,6 +760,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # BEFORE ANYTHING ELSE. Selects pandas' non-Arrow string storage and installs the native crash
+    # handler - both process-global, and both must be in force before the first string column is
+    # built. Under `--executor pbs` the worker threads read h5ad objects while sibling threads fork
+    # for qsub/qstat, and the Arrow string path segfaults in that combination.
+    # See engine/native_io.py for the fault dump and the measurement.
+    from engine.native_io import harden
+
+    harden()
+
     p = build_parser()
     a = p.parse_args(argv)
     if not getattr(a, "fn", None):
