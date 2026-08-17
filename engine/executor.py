@@ -73,6 +73,34 @@ def _find_pbs(name: str) -> str | None:
     return None
 
 
+#: How long to keep asking the server for a finished job's log before giving up, in seconds.
+#:
+#: It is a CACHE EXPIRY, not a transfer: the file is already written, on storage this host can see.
+#: The bound that matters is the NFS client's directory attribute lifetime, `acdirmax`, whose usual
+#: default is 60 s - so a 30 s budget was under it even with the directory being re-read, and a
+#: task whose log landed just before the orchestrator first looked could not be found in time.
+#: 120 s is two of those, and it is only ever paid on a run that is about to fail anyway.
+#:
+#: Overridable because `acdirmax` is a mount option and some sites set it much higher. A filesystem
+#: nobody here has seen is not a reason to make a user patch the source.
+_LOG_VISIBILITY_S = 120.0
+
+
+def _log_visibility_s() -> float:
+    """The log-visibility budget, from `SCQC_LOG_VISIBILITY_S` if it is a usable number."""
+    raw = os.environ.get("SCQC_LOG_VISIBILITY_S", "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            # A malformed override falls back rather than stopping the run: this value controls
+            # how patient a wait is, and no setting of it is worth refusing a cohort over.
+            pass
+    return _LOG_VISIBILITY_S
+
+
 #: Where a PBS configuration lives when the environment does not carry one.
 _PBS_CONFS = (
     "/etc/pbs.conf",
@@ -361,19 +389,55 @@ class PBSExecutor:
             time.sleep(wait)
             wait = min(wait * 2, self.poll_s)
 
-        # The compute node wrote the log itself, on storage this host can see. Nothing has to
-        # arrive from anywhere, so this is only NFS attribute caching - seconds, not minutes.
-        for _ in range(30):
-            if log.exists():
+        # WAITING FOR THE LOG TO BECOME VISIBLE, WHICH IS NOT THE SAME AS WAITING FOR IT TO EXIST.
+        #
+        # The compute node wrote the log itself, on shared storage this host can see, so nothing
+        # has to arrive from anywhere. What is being waited out is the CLIENT'S CACHE.
+        #
+        # `Path.exists()` ON ITS OWN DOES NOT RE-ASK THE SERVER. On NFS a stat() for a name the
+        # client has already looked up and NOT found is answered from the negative dentry cache,
+        # and that entry is revalidated against the PARENT DIRECTORY's cached attributes rather
+        # than by asking about the file. A loop of thirty exists() calls is therefore thirty reads
+        # of ONE cached answer - thirty seconds of sleeping, and not one question. Listing the
+        # parent forces a READDIR to the server, and that is what makes a retry an actual retry.
+        #
+        # It needs the orchestrator to be on a different node from the task, which is the only
+        # condition under which the negative entry is cached at all - and under `--executor pbs`
+        # that is the NORMAL condition. It stays invisible behind a green suite because every
+        # local-executor test, and every run on one machine, exercises a filesystem where
+        # exists() is always the truth.
+        deadline_log = time.time() + _log_visibility_s()
+        while True:
+            # try/except rather than a guard: the directory is on the same shared storage, and a
+            # transient error reading it must not become the task's failure. Whatever it raises,
+            # the answer is the same - look again.
+            try:
+                os.listdir(log.parent)
+            except OSError:
+                pass
+            if log.exists() or time.time() >= deadline_log:
                 break
             time.sleep(1.0)
         if not log.exists():
+            # WHAT IS KNOWN, NOT A DIAGNOSIS. This message used to assert the job "died before its
+            # first line" - a claim about the job, contradicted by evidence this function already
+            # holds whenever qstat reported an Exit_status. A guess stated as fact sends the reader
+            # hunting a prologue failure that never happened.
+            said = (f"The scheduler reports Exit_status = {exit_status.group(1)}, so the job DID "
+                    f"run: this is the log not being VISIBLE from this host, not the job failing "
+                    f"to start."
+                    if exit_status else
+                    "The scheduler holds no exit status for it either, so the job may genuinely "
+                    "have died before its first line - a rejected resource request, a prologue "
+                    "failure, or a path the compute node cannot write.")
             raise TaskFailure(
-                f"PBS job {job} finished but {log} does not exist.\n"
-                f"    The job script redirects its own output there before doing anything, so the "
-                f"job died before its first line - a rejected resource request, a prologue "
-                f"failure, or a path the compute node cannot write. The scheduler's own account "
-                f"is in {log}.out and `qstat -xf {job}`.")
+                f"PBS job {job} finished but {log} is not visible after "
+                f"{_log_visibility_s():.0f}s.\n"
+                f"    {said}\n"
+                f"    The parent directory was re-listed on every attempt, so this is not the "
+                f"negative-dentry cache alone. If your filesystem needs longer, raise it with "
+                f"SCQC_LOG_VISIBILITY_S.\n"
+                f"    The scheduler's own account is in {log}.out and `qstat -xf {job}`.")
 
         out = log.read_text(encoding="utf-8", errors="replace")
         # The job's own word first; the scheduler's only if the job did not get to speak. Neither

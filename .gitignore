@@ -44,3 +44,8 @@ venv/
 # its numbers, none of which belong in a public general-purpose pipeline. It lives with the
 # private harness that produced it.
 HANDOVER.md
+
+# Written by the deploy procedure so a compute node (which has no git) can record which commit
+# ran. Generated, never edited, and untracked by design - but un-ignored it is permanent porcelain,
+# which makes any "clean worktree" check unsatisfiable and trains its reader to skip the check.
+HEAD.txt

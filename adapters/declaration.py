@@ -11,9 +11,9 @@ This is the third option. The object declares it:
       "schema":       "scqc/provenance@1",
       "flag_column":  "cluster_FLAG",     # "" when step 6 produced nothing for this object
       "flag_meaning": "the cluster this nucleus sits in was FLAGGED by step 6 ...",
-      "n_flagged":    3873,
-      "n_obs":        109140,
-      "flag_digest":  "08e09dc853c538d5",
+      "n_flagged":    <int>,           # -1 where there is no flag column at all
+      "n_obs":        <int>,
+      "flag_digest":  "<16 hex chars>",
       ...
     }
 

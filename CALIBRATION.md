@@ -125,7 +125,8 @@ independent routes disagreed by more than 1.5×.
 **Under the applied rule** — k = 3, bound 5–10%, with the `mt < 50%` derivation cut also in place —
 the same ten libraries give ceilings **5.00–10.00% (2.00×)**, the bound binding in **5 of 10**
 (4 upper, 1 lower), still classified `derived` by one library. The Tukey-implied k is **4.15**,
-1.38× the applied 3, inside the 2× review line. Delivered nuclei fall **115,991 → 109,140 (−5.9%)**.
+1.38× the applied 3, inside the 2× review line. Delivered nuclei fall by **5.9%** against the
+unbounded fence.
 
 ### The trade this makes, measured, because it is not visible from the number
 

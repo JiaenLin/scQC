@@ -38,7 +38,7 @@ The rest of the environment:
 |---|---|
 | Python | the project's own interpreter, called by absolute path — no activation needed |
 | `Rscript` | required for the doublet step; pass it with `--rscript` |
-| PBS commands | `qsub`/`qstat` must be on `PATH` **inside the job** — a batch job does not inherit `PBS_CONF_FILE`, `PBS_EXEC` or `PBS_SERVER`, so `module load` them in the script |
+| PBS commands | `qsub`/`qstat` must be on `PATH` **inside the job**. scQC searches `PATH` and the usual install prefixes and discovers `PBS_CONF_FILE`/`PBS_EXEC`/`PBS_SERVER` itself, then probes with `qstat -B` and refuses up front if PBS is present but unconfigured — rather than failing once per task |
 
 ## 2. Size the orchestrator for the whole pipeline
 
@@ -49,23 +49,38 @@ A task's declared `cpus`/`memory_gb`/`walltime_h` govern **the child job it subm
 scQC does in Python runs where you submitted it: reading each `.h5ad`, exporting the matrix the R
 step consumes, every cohort-level step, and the whole report build.
 
-So do not submit the orchestrator as a one-core helper. Practical starting point for ten libraries:
+So do not submit the orchestrator as a one-core helper.
 
 | | orchestrator | per-library children |
 |---|---|---|
-| cpus | 16 | scQC declares them (4 for the doublet step) |
-| memory | 120 gb | scQC declares them (32 gb for the doublet step) |
+| cpus | enough for the widest concurrent step, not for "just submitting" | scQC declares them |
+| memory | enough for the largest single object plus the merge and the report | scQC declares them |
 | walltime | **the whole run, including every child's queue wait** | scQC declares them |
 
 The orchestrator is asleep in `qstat` polling for most of its life, but it holds the allocation the
 whole time. Give it a walltime that covers the slowest possible path, not the compute time.
 
-Pick the queue from the requirement, never the requirement from the queue. Check the request against
-the queue's ceiling before submitting; `select` counts **chunks** and `ncpus`/`mem` are **per
-chunk**, so `select=2:ncpus=8` is sixteen cores.
+A workable starting point is *a few cores and enough memory to hold your largest library's object
+several times over*, then adjust from what the run actually used — `qstat -xf <jobid>` reports
+`resources_used.mem` and `resources_used.walltime` once it finishes. Measure your own cohort rather
+than copying a number from someone else's.
+
+**Discover your site's queues; do not assume any name.** `workq`, `short`, `long` and `batch` are
+conventions, not standards, and their ceilings differ everywhere:
+
+```bash
+qstat -Q                 # one line per queue
+qstat -Q -f <queue>      # its resources_max: ncpus, mem, walltime
+```
+
+Pick the queue from the requirement, never the requirement from the queue: over-requesting costs
+some queue time, under-requesting costs the whole run and you find out at the end. `select` counts
+**chunks** and `ncpus`/`mem` are **per chunk**, so `select=2:ncpus=8` is sixteen cores — the most
+common reason `qsub` refuses a job, with a message that does not say so.
 
 `--jobs N` sizes the orchestrator's thread pool, so it bounds both how many children exist at once
-and how many threads are doing Python work concurrently.
+and how many threads are doing Python work concurrently. If your site caps queued jobs per user,
+`--jobs` must stay under that cap.
 
 ## 3. The job script
 
@@ -74,9 +89,9 @@ Start from your site's PBS template if it has one. Every job script needs these 
 ```bash
 #!/bin/bash
 #PBS -N scqc_run
-#PBS -q long
-#PBS -l select=1:ncpus=16:mem=120gb
-#PBS -l walltime=24:00:00
+#PBS -q <your-queue>                       # from `qstat -Q`, not from a guess
+#PBS -l select=1:ncpus=<N>:mem=<M>gb      # per CHUNK; check against the queue ceiling
+#PBS -l walltime=<HH:MM:SS>              # the server default is 5 minutes
 #PBS -j oe
 
 set -euo pipefail            # without it a failed step runs on and PBS records exit 0
@@ -95,15 +110,17 @@ export PYTHONNOUSERSITE=1 \
 
 export OMP_NUM_THREADS="${NCPUS:-1}" MKL_NUM_THREADS="${NCPUS:-1}"
 
-module load pbspro 2>/dev/null || true   # qsub/qstat must be on PATH inside the job
+# qsub/qstat must be on PATH INSIDE the job, and a batch job does not inherit the login shell's
+# environment. The module name is site-specific - `module avail` to find yours.
+module load <pbs-module> 2>/dev/null || true
 
 "$PY" "$TOOL/scqc_cli.py" run \
     --project "$RUNDIR" --samplesheet "$RUNDIR/samplesheet.csv" \
     --mode apply \
-    --executor pbs --queue short \
+    --executor pbs --queue <child-queue> \
     --rscript "$RSCRIPT" --cpu \
     --dbr <rate> --dbr-sd <sd> \
-    --jobs 16 --seed 0 \
+    --jobs <N> --seed 0 \
   2>&1 | tee "$RUNDIR/logs/run.log"
 ```
 

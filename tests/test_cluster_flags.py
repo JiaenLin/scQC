@@ -185,9 +185,10 @@ print("proved: without markers, C, FLAG and WATCH stay MISSING; a blank never re
 # Retired 2026-08-15 on PI instruction: *"just let the scDblfinder alone handle the doublet,
 # remove D is good as no evidence prove they are also doublet"*.
 #
-# The measurement behind it: on the SAMBO cohort D fired on exactly ONE cluster of 193, and that
-# cluster fired nothing else - not low UMI, not high mitochondrial, not marker share. Its entire
-# marginal contribution was 27 nuclei that the per-cell caller had DECLINED to call doublets. So
+# The measurement behind it: on the calibration cohort D fired on exactly one cluster in nearly two
+# hundred, and that cluster fired nothing else - not low UMI, not high mitochondrial, not marker
+# share. Its entire marginal contribution was a few dozen nuclei that the per-cell caller had
+# DECLINED to call doublets. So
 # the criterion's only effect was to remove cells by association with their neighbours, against
 # per-cell evidence that they were not doublets.
 #
