@@ -472,9 +472,15 @@ def _finish(fig, title: str, subtitle: str = "") -> None:
 
 
 def _blank_panel(ax, message: str) -> None:
-    """A panel for something that was never computed. It says so; it does not draw zero."""
-    ax.text(0.5, 0.5, message, transform=ax.transAxes, ha="center", va="center", fontsize=8,
-            color=PALETTE["unknown"], wrap=True)
+    """A panel for something that was never computed. It says so; it does not draw zero.
+
+    WRAPPED HERE rather than by matplotlib. `wrap=True` measures against the FIGURE width, not
+    the axes, so on a multi-panel figure a long reason ran straight out of its own dashed box
+    and across its neighbours - the one panel whose whole job is to be legible.
+    """
+    ax.text(0.5, 0.5, "\n".join(_wrapped(line, 34) for line in str(message).split("\n")),
+            transform=ax.transAxes, ha="center", va="center", fontsize=7.6,
+            color=PALETTE["unknown"])
     ax.set_xticks([])
     ax.set_yticks([])
     for side in ("top", "right", "bottom", "left"):
@@ -1599,8 +1605,12 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
 
     rels = [r for r in (relations or []) if _mapping(r)]
     fig = _new_fig((max(7.6, 1.5 * len(facs) + 5.0), max(3.4, 0.34 * len(names) + 2.4)), dpi)
+    # NO `wspace` HERE. `tight_layout` overrides a spacing the gridspec already carries and
+    # warns "Axes that are not compatible with tight_layout" on every render when it has to -
+    # a warning printed once per report, about a layout that was then silently not what was
+    # asked for. The spacing is left to the one thing that is going to decide it anyway.
     gs = fig.add_gridspec(1, 2, width_ratios=(max(1.0, 0.95 * len(facs)),
-                                              max(1.6, 1.05 * len(facs))), wspace=0.5)
+                                              max(1.6, 1.05 * len(facs))))
 
     # --- the samplesheet as a grid: one row per library, one column per discovered factor
     ax = fig.add_subplot(gs[0, 0])
@@ -1699,11 +1709,12 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
                       "no pair of design factors partitions the libraries identically")
                      + " - computed from the samplesheet by exact comparison, not estimated", 110))
     if present:
-        fig.text(0.5, 0.005,
-                 _wrapped("   ·   ".join(f"{k.upper()}: {RELATION_MEANING[k]}" for k in present),
-                          150),
-                 ha="center", va="bottom", fontsize=6.6, color=PALETTE["muted"])
-        fig.subplots_adjust(bottom=0.20)
+        text = _wrapped("   ·   ".join(f"{k.upper()}: {RELATION_MEANING[k]}" for k in present),
+                        150)
+        # Reserved in the layout, for the reason F17 records at length.
+        fig.tight_layout(rect=(0, min(0.24, 0.036 * (1 + text.count("\n")) + 0.02), 1, 0.93))
+        fig.text(0.5, 0.008, text, ha="center", va="bottom", fontsize=6.6,
+                 color=PALETTE["muted"])
     return fig
 
 
@@ -1871,24 +1882,35 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
 
     pop = label_text(population, f"population {NOT_SUPPLIED}")
     cap_words = ("" if _unknown(cap) else
-                 f"; a violin is drawn from at most {int(cap):,} nuclei per arm, at an even "
-                 f"stride")
-    _finish(fig, "F17 - every QC metric across the confounded arms",
+                 f"; at most {int(cap):,} nuclei per arm, at an even stride")
+    head = ("F17 - every QC metric across the confounded arms",
             _wrapped(f"grey violin: every nucleus of the arm. marker: one library's OWN median, "
-                     f"at the same colour, shape and offset in every panel. amber band: the span "
-                     f"those medians cover. blue rule: the arm's median of them. Drawn over "
-                     f"{pop}{cap_words}", 118))
+                     f"in the same colour, shape and position in every panel. amber band: the "
+                     f"span those medians cover. blue rule: the arm's median of them. Over "
+                     f"{pop}{cap_words}", 132))
 
-    # ONE LEGEND FOR THE WHOLE FIGURE, at the foot, because the markers mean the same thing in
-    # every panel. Per-panel legends would repeat it up to nine times and cover the data doing so.
+    # ONE LEGEND FOR THE WHOLE FIGURE, at the foot, because a marker means the same thing in
+    # every panel; per-panel legends would repeat it up to nine times and cover the data.
+    #
+    # THE BAND IT SITS IN IS RESERVED IN THE LAYOUT, not taken back afterwards. Calling
+    # `subplots_adjust` after `tight_layout` moves the bottom edge and leaves the rows to absorb
+    # the difference unevenly - which on a grid whose last row holds one panel gave that panel a
+    # third of the figure, and it was the STATED-ABSENCE panel, drawn as a dashed box the size of
+    # the other six put together.
+    handles = []
     if libraries:
         from matplotlib.lines import Line2D
         handles = [Line2D([], [], linestyle="none", marker=style_of[s][1], markersize=4.6,
                           color=style_of[s][0], markeredgecolor="white", markeredgewidth=0.6,
                           label=str(s)) for s in libraries]
-        fig.legend(handles=handles, loc="lower center", ncol=min(len(libraries), 6),
+    legend_rows = -(-len(handles) // 6) if handles else 0
+    bottom = min(0.22, 0.030 * legend_rows + 0.012) if legend_rows else 0.0
+    top = 1.0 - min(0.20, 0.028 * (1 + head[1].count("\n")) + 0.012)
+    fig.suptitle(f"{head[0]}\n{head[1]}", fontsize=9, y=0.995)
+    fig.tight_layout(rect=(0, bottom, 1, top))
+    if handles:
+        fig.legend(handles=handles, loc="lower center", ncol=min(len(handles), 6),
                    fontsize=6.6, frameon=False, handletextpad=0.4, columnspacing=1.4)
-        fig.subplots_adjust(bottom=0.10 + 0.028 * -(-len(libraries) // 6))
     return fig
 
 
@@ -1916,7 +1938,7 @@ def fig_f18_removal_by_arm(rates, *, arms=None, overall=None, criteria=None,
     tot = _mapping(overall)
 
     fig = _new_fig((max(8.0, 0.62 * len(crits) * max(1, len(order)) + 4.6), 4.0), dpi)
-    gs = fig.add_gridspec(1, 2, width_ratios=(1.0, 2.4), wspace=0.32)
+    gs = fig.add_gridspec(1, 2, width_ratios=(1.0, 2.4))      # spacing: see F16
 
     # --- left: the whole filter, per arm
     ax = fig.add_subplot(gs[0, 0])
