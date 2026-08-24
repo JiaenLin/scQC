@@ -987,10 +987,11 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
             ax.axvspan(min(xs), float(bounds[0]), color=PALETTE["muted"], alpha=0.12)
             ax.axvspan(float(bounds[1]), max(xs), color=PALETTE["muted"], alpha=0.12)
         ax.plot(x, y, linewidth=1.1, color=PALETTE["ok"])
-        # SEPARATED VERTICALLY, not horizontally. The two lines are a measured valley and the
-        # cohort constant derived from it, so they sit within a few percent of each other on
-        # every well-behaved library - which is the good case, and the case in which two labels
-        # at the same height overprint into an unreadable column of letters.
+        # OPPOSITE ENDS OF THE AXIS, not merely offset. The two lines are a measured valley and
+        # the cohort constant derived from it, so on a well-behaved library they sit within a few
+        # percent of each other - the good case, and the one in which two labels at the same
+        # height overprint into an unreadable column of letters. Top and bottom cannot collide
+        # however close the two values are.
         top = (max(ys) if max(ys) > 0 else 1.0)
         v = valleys.get(s)
         if not _unknown(v):
@@ -999,8 +1000,8 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
                    rotation=90, va="top", color=PALETTE["second"])
         if not _unknown(cut):
             ax.axvline(float(cut), color=PALETTE["threshold"], linestyle="--", linewidth=1.2)
-            _label(ax, float(cut), top * 0.55, f" cut {float(cut):,.0f}", fontsize=6.5,
-                   rotation=90, va="top", color=PALETTE["threshold"])
+            _label(ax, float(cut), top * 0.02, f" cut {float(cut):,.0f}", fontsize=6.5,
+                   rotation=90, va="bottom", color=PALETTE["threshold"])
         ax.set_xlim(min(xs), max(xs))
         # A density that is flat at zero everywhere is a real input - it is what a caller passes
         # when the estimate failed - and it must not produce a singular axis warning on top of it.
