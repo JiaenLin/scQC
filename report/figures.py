@@ -1632,7 +1632,10 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
                                    edgecolor="white", linewidth=1.2, hatch=hatch))
             ax.text(j + 0.5, len(names) - 1 - i + 0.5, text, ha="center", va="center",
                     fontsize=6.4, color=ink, fontweight="bold")
-    ax.set_xlim(0, len(facs))
+    # The arm bracket lives INSIDE the axes, in a margin the axes reserves for it. Drawn outside
+    # with `annotation_clip=False` its label ran under the panel beside it and was cut off
+    # mid-word - a label that names the confound, unreadable, on the figure about the confound.
+    ax.set_xlim(0, len(facs) + (1.15 if _mapping(arms) else 0.0))
     ax.set_ylim(0, len(names))
     ax.set_xticks([j + 0.5 for j in range(len(facs))])
     ax.set_xticklabels(facs, fontsize=8, rotation=18, ha="right")
@@ -1653,13 +1656,13 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
             if not rows or rows != list(range(rows[0], rows[-1] + 1)):
                 continue
             top, bottom = len(names) - rows[0], len(names) - 1 - rows[-1]
-            ax.annotate("", xy=(len(facs) + 0.10, bottom + 0.06),
-                        xytext=(len(facs) + 0.10, top - 0.06), annotation_clip=False,
+            ax.annotate("", xy=(len(facs) + 0.16, bottom + 0.06),
+                        xytext=(len(facs) + 0.16, top - 0.06),
                         arrowprops={"arrowstyle": "-", "linewidth": 2.6,
                                     "color": PALETTE["refuse"]})
-            _label(ax, len(facs) + 0.20, (top + bottom) / 2.0,
-                   str(label).replace("\n", " / "), ha="left", va="center", fontsize=6.4,
-                   color=PALETTE["refuse"], fontweight="bold")
+            _label(ax, len(facs) + 0.44, (top + bottom) / 2.0,
+                   str(label).replace("\n", " / "), ha="center", va="center", fontsize=6.6,
+                   rotation=90, color=PALETTE["refuse"], fontweight="bold")
 
     # --- the reading: every pair of factors, compared exactly
     ax2 = fig.add_subplot(gs[0, 1])
@@ -1704,15 +1707,17 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
                if any(str(r.get("kind")) == k for r in rels)]
     n_aliased = sum(1 for r in rels if str(r.get("kind")) == "aliased")
     _finish(fig, "F16 - what is confounded with what",
-            _wrapped((f"{n_aliased} pair(s) of design factors partition the libraries identically"
+            _wrapped((f"{n_aliased} pair{'' if n_aliased == 1 else 's'} of design factors "
+                      f"partition{'s' if n_aliased == 1 else ''} the libraries identically"
                       if n_aliased else
                       "no pair of design factors partitions the libraries identically")
                      + " - computed from the samplesheet by exact comparison, not estimated", 110))
     if present:
         text = _wrapped("   ·   ".join(f"{k.upper()}: {RELATION_MEANING[k]}" for k in present),
                         150)
-        # Reserved in the layout, for the reason F17 records at length.
-        fig.tight_layout(rect=(0, min(0.24, 0.036 * (1 + text.count("\n")) + 0.02), 1, 0.93))
+        # Reserved in the layout and measured in inches, for the reasons F17 records at length.
+        band = (0.20 * (1 + text.count("\n")) + 0.10) / fig.get_figheight()
+        fig.tight_layout(rect=(0, min(band, 0.3), 1, 0.93))
         fig.text(0.5, 0.008, text, ha="center", va="bottom", fontsize=6.6,
                  color=PALETTE["muted"])
     return fig
@@ -1788,9 +1793,13 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
             style_of[s] = _median_style(len(libraries))
             libraries.append(s)
 
+    # NOT `grid_shape`, which is tuned for per-library panels and puts seven into a 3x3 with two
+    # dead cells. Seven QC metrics is the ordinary case here, so the width is chosen to leave at
+    # most one empty cell while staying wide rather than tall.
     total = len(specs) + len(gone)
-    rows, cols = grid_shape(total)
-    fig = _new_fig((3.6 * cols + 0.5, 3.25 * rows + 1.35), dpi)
+    cols = total if total <= 4 else (3 if total in (5, 6, 9) else 4)
+    rows = -(-total // cols)
+    fig = _new_fig((3.6 * cols + 0.5, 3.15 * rows + 1.5), dpi)
 
     for idx, spec in enumerate(specs):
         ax = fig.add_subplot(rows, cols, idx + 1)
@@ -1903,11 +1912,15 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
         handles = [Line2D([], [], linestyle="none", marker=style_of[s][1], markersize=4.6,
                           color=style_of[s][0], markeredgecolor="white", markeredgewidth=0.6,
                           label=str(s)) for s in libraries]
+    # RESERVED IN INCHES, converted to the fraction `rect` wants. A fraction is height-dependent:
+    # the same 0.028-per-line rule that fits a two-row grid leaves a hand's width of nothing above
+    # a four-row one, because a title does not get taller when the figure does.
+    height = fig.get_figheight()
     legend_rows = -(-len(handles) // 6) if handles else 0
-    bottom = min(0.22, 0.030 * legend_rows + 0.012) if legend_rows else 0.0
-    top = 1.0 - min(0.20, 0.028 * (1 + head[1].count("\n")) + 0.012)
+    bottom = (0.20 * legend_rows + 0.10) / height if legend_rows else 0.0
+    top = 1.0 - (0.20 * (1 + head[1].count("\n")) + 0.10) / height
     fig.suptitle(f"{head[0]}\n{head[1]}", fontsize=9, y=0.995)
-    fig.tight_layout(rect=(0, bottom, 1, top))
+    fig.tight_layout(rect=(0, min(bottom, 0.3), 1, max(top, 0.6)))
     if handles:
         fig.legend(handles=handles, loc="lower center", ncol=min(len(handles), 6),
                    fontsize=6.6, frameon=False, handletextpad=0.4, columnspacing=1.4)
