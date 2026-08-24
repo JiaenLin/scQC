@@ -2254,6 +2254,22 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     # design can carry the question at all, and the answer is not something a rerun can improve.
     parts.append(_confounding_section(doc.get("confounding") or {}, uri))
 
+    # ---------------------------------------------------------------- where the cuts came from
+    # BEFORE THE SPINE, because the spine shows what each cut CHANGED and these show why the cut
+    # is where it is. Both were assembled on every run, rendered to an image on every run, and
+    # placed nowhere - so the report carried sixteen of its eighteen figures and said nothing
+    # about the two missing, including the one REPORT_DESIGN.md calls one of the two that matter
+    # most. A figure that is drawn and not positioned is invisible from both ends: the assembler
+    # reports success and the page has no gap to notice.
+    parts.append(
+        "<section><div class='head'><h2>Where each count floor came from</h2>"
+        "<p class='sub'>The density each valley was measured on, per library, with that "
+        "library's own valley and the one cohort floor drawn at the same place on every panel. A "
+        "library the constant fits badly shows as a cut sitting away from its own valley. Step 5 "
+        "derives two floors, in different units, so there are two figures.</p></div>"
+        f"{_fig_panel(figs.get('F6'), uri('F6'))}"
+        f"{_fig_panel(figs.get('F13'), uri('F13'))}</section>")
+
     # ---------------------------------------------------------------- the spine
     umi_cut = _one_value(_column(per_sample, "umi_floor_proposed"))
     gene_cut = _one_value(_column(per_sample, "gene_floor_proposed"))
@@ -2529,6 +2545,26 @@ def build_report(payload: dict, out_html, out_json, *, now=None, render_figures_
 
     html_text = render_html(doc, figures["uris"])
     assert_self_contained(html_text)
+
+    # A FIGURE THAT WAS DRAWN AND PLACED NOWHERE IS INVISIBLE FROM BOTH ENDS. The assembler
+    # reports it as produced, the renderer reports it as rendered, and the page has no gap to
+    # notice - which is how F6 and F13 were computed on every run for as long as there have been
+    # runs and appeared on none of them. Checked against the DOCUMENT THAT WAS PRODUCED, not
+    # against a list of what the renderer meant to place: a list would have to be kept in step
+    # with the renderer, and it is the renderer that drifts.
+    unplaced = sorted(fid for fid, block in figures["index"].items()
+                      if block.get("rendered") and f"alt='{fid}:" not in html_text)
+    if unplaced:
+        _defect(doc["defects"], "figures",
+                f"{', '.join(unplaced)} rendered and {'is' if len(unplaced) == 1 else 'are'} not "
+                f"placed anywhere in the document. The figure was drawn and the page does not "
+                f"carry it, which no other check can see.")
+        doc["defects"] = _regroup(doc["defects"])
+        doc["verdict"]["defect_count"] = sum(1 for d in doc["defects"]
+                                             if d["severity"] == "defect")
+        doc["verdict"]["lines"] = verdict_lines(doc)
+        html_text = render_html(doc, figures["uris"])
+        assert_self_contained(html_text)
 
     import hashlib
     blobs = {out_html: html_text.encode("utf-8"),
