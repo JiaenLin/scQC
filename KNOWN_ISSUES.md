@@ -26,7 +26,7 @@ succeeds.** The broken attempt succeeded.
 Residual, and now a real question rather than an artefact: five libraries of ten report zero
 flagged clusters. That is no longer explained by clustering empty droplets.
 
-## 1b. Five of fifteen figures were never drawn — FIXED, and three of the reasons were wrong
+## 1b. Five of the then-fifteen figures were never drawn — FIXED, and three of the reasons were wrong
 
 The report printed a reason where each missing figure should have been, and the reasons read as
 statements about the pipeline's design: a step "computes something, uses it, and discards it".

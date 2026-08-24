@@ -168,8 +168,10 @@ repository.
 **0.4.0.** `scqc run` builds the task graph and executes it, locally or on PBS, invoking the
 aligner, denoiser, doublet caller and analysis stack out of process. It writes the report and, in
 apply mode, one filtered object per library plus a merged cohort object with a ledger naming every
-barcode removed and why. All fifteen report figures are drawn. Per-step subcommands remain, for
-judging tables produced elsewhere.
+barcode removed and why. All eighteen report figures are drawn, three of them a confounding
+block: which design factors these libraries cannot tell apart, how far apart the arms that
+leaves sit on every QC metric, and whether the filter widened the gap. Per-step subcommands
+remain, for judging tables produced elsewhere.
 
 Read [KNOWN_ISSUES.md](KNOWN_ISSUES.md) before quoting a number from a run.
 
