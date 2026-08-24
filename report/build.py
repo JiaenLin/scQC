@@ -2015,6 +2015,150 @@ def _evenness(findings):
     return worst, where
 
 
+def build_confounding(design: dict, rows: list) -> dict:
+    """How entangled the design factors are, and how large the difference across the worst pair is.
+
+    NOT AN ESTIMATE OF A SEPARABLE BATCH EFFECT, and it must never be read as one. When two
+    factors partition the libraries identically, nothing computed from this cohort can say which
+    of them a difference belongs to - that is what confounded means, and a number labelled "the
+    batch effect" would be a fabrication with a plausible shape.
+
+    What it does give is the structure, exactly, and the SIZE of the difference across the split,
+    attributable to either factor or both. That is enough to decide whether a design is worth
+    proceeding with, which is the question actually being asked.
+
+    `design` is {factor: {sample: level}}. `rows` are the per-library rows the report already has.
+    """
+    samples = sorted({s for lv in design.values() for s in lv})
+    factors = sorted(design)
+
+    # A PAIR IS COMPLETE WHEN EACH LEVEL OF ONE DETERMINES A LEVEL OF THE OTHER. Agreement alone
+    # cannot say that: two factors can agree on most libraries and still be separable, and the
+    # difference between "not identifiable" and "estimable but imprecise" is the whole decision.
+    pairs = []
+    for i, a in enumerate(factors):
+        for b in factors[i + 1:]:
+            both = [s for s in samples if s in design[a] and s in design[b]]
+            if len(both) < 2:
+                continue
+            fwd, rev, broken = {}, {}, 0
+            for s in both:
+                fwd.setdefault(design[a][s], set()).add(design[b][s])
+                rev.setdefault(design[b][s], set()).add(design[a][s])
+            broken = sum(1 for v in fwd.values() if len(v) > 1)
+            complete = broken == 0 and all(len(v) == 1 for v in rev.values())
+            determined = sum(1 for s in both if len(fwd[design[a][s]]) == 1)
+            pairs.append({
+                "a": a, "b": b, "n": len(both),
+                "determined": determined,
+                "agreement": round(determined / len(both), 3) if both else None,
+                "complete": bool(complete),
+                "kind": "complete - not identifiable" if complete
+                        else ("partial - estimable, imprecise" if determined
+                              else "crossed"),
+            })
+    pairs.sort(key=lambda p_: (not p_["complete"], -(p_["agreement"] or 0)))
+
+    # THE MAGNITUDE, on metrics that are properties of the PREPARATION. A library's ribosomal
+    # and mitochondrial fractions, its doublet rate and how many cells the call lost are set by
+    # dissociation and chemistry, not by the biology under test - so a difference in them across
+    # a confounded split is a technical difference far more readily than a biological one. It is
+    # indicative of scale. It is not an apportionment, and cannot be turned into one.
+    worst = pairs[0] if pairs and pairs[0]["complete"] else None
+    magnitude = []
+    if worst:
+        by_level = {}
+        for s in samples:
+            by_level.setdefault(design[worst["a"]].get(s), []).append(s)
+        for key, label in (("ribo_median", "ribosomal %, median"),
+                           ("mito_q3", "mitochondrial %, Q3"),
+                           ("doublet_rate_pct", "doublet rate %"),
+                           ("cells_lost", "cells lost at the call")):
+            arms = {}
+            for level, members in sorted(by_level.items()):
+                vals = [r["cells"].get(key) for r in rows
+                        if r.get("sample") in members and isinstance(r.get("cells"), dict)]
+                vals = [float(v) for v in vals if isinstance(v, (int, float))]
+                if vals:
+                    arms[str(level)] = round(sum(vals) / len(vals), 3)
+            if len(arms) >= 2:
+                lo, hi = min(arms.values()), max(arms.values())
+                # THE VALUES, not only their means: the figure draws one point per library, and a
+                # mean cannot show whether two arms separate cleanly or overlap with one outlier
+                # carrying the difference. That distinction is the whole reading.
+                per_lib = {}
+                for level, members in sorted(by_level.items()):
+                    vals = [r["cells"].get(key) for r in rows
+                            if r.get("sample") in members and isinstance(r.get("cells"), dict)]
+                    per_lib[str(level)] = [float(v) for v in vals
+                                           if isinstance(v, (int, float))]
+                magnitude.append({
+                    "metric": label, "arms": arms, "values": per_lib,
+                    # A ratio needs a non-zero denominator and a difference always exists; both
+                    # are reported so neither has to be inferred from the other.
+                    "difference": round(hi - lo, 3),
+                    "ratio": round(hi / lo, 2) if lo > 0 else None,
+                })
+    return {"factors": factors, "n_samples": len(samples), "pairs": pairs,
+            "worst": worst, "magnitude": magnitude,
+            "recorded_ribo": any(
+                isinstance((r.get("cells") or {}).get("ribo_median"), (int, float)) for r in rows)}
+
+
+def render_confounding(c: dict) -> str:
+    """The confounding panel: structure, then size, then the sentence a reader must not write.
+
+    It leads with the STRUCTURE because that is exact, and puts the magnitudes second because
+    they are indicative and the only part that can be over-read. Nothing here is labelled "the
+    batch effect": when two factors partition the libraries identically, no measurement from
+    this cohort can say which of them a difference belongs to, and a number with that label
+    would be a fabrication with a plausible shape.
+    """
+    worst = c.get("worst")
+    if worst:
+        head = (f"<p class='big' style='color:var(--review)'>{_e(worst['a'])} &harr; "
+                f"{_e(worst['b'])}</p><p class='note'>cannot be separated &mdash; "
+                f"{worst['determined']}/{worst['n']} libraries determined</p>")
+    else:
+        head = ("<p class='big'>none complete</p><p class='note'>no pair of factors partitions "
+                "the libraries identically</p>")
+
+    rows = "".join(
+        f"<tr><td>{_e(p['a'])} &harr; {_e(p['b'])}</td>"
+        f"<td>{p['determined']}/{p['n']}</td>"
+        f"<td>{_e(p['kind'])}</td></tr>"
+        for p in c["pairs"])
+
+    mag = ""
+    if c.get("magnitude"):
+        mrows = ""
+        for m in c["magnitude"]:
+            arms = " &middot; ".join(f"{_e(k)} {v}" for k, v in m["arms"].items())
+            ratio = f"{m['ratio']}&times;" if m.get("ratio") else "&mdash;"
+            mrows += (f"<tr><td>{_e(m['metric'])}</td><td>{arms}</td>"
+                      f"<td>{m['difference']}</td><td>{ratio}</td></tr>")
+        mag = (f"<table><tr><th>measured on</th><th>per arm</th><th>difference</th>"
+               f"<th>ratio</th></tr>{mrows}</table>"
+               f"<p class='sub'>These are properties of the PREPARATION &mdash; dissociation and "
+               f"chemistry set them, not the biology under test &mdash; so a difference across a "
+               f"confounded split is a technical difference far more readily than a biological "
+               f"one. It is indicative of SIZE. It is not an apportionment between the two "
+               f"factors, and cannot be turned into one.</p>")
+        if not c.get("recorded_ribo"):
+            mag += ("<p class='sub'>Ribosomal content is not in this table: this run predates its "
+                    "per-library summary. It appears on the next run.</p>")
+
+    return (f"<div class='decision'><div class='cell'>"
+            f"<p class='lbl'>Confounded factors</p>{head}</div></div>"
+            f"<table><tr><th>pair</th><th>determined</th><th>kind</th></tr>{rows}</table>"
+            f"{mag}"
+            f"<p class='sub' style='margin-bottom:0'><strong>What this does not say.</strong> "
+            f"A complete pair is not identifiable: no analysis of this cohort can attribute a "
+            f"difference to one factor rather than the other, and none of the sizes above is an "
+            f"estimate of a separable batch effect. What survives is every contrast the "
+            f"confounded pair does not touch.</p>")
+
+
 def render_html(doc: dict, figure_uris: dict) -> str:
     """The single-file document, in the layout of docs/REPORT_DESIGN.md.
 
@@ -2084,6 +2228,11 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     parts.append("<p class='sub' style='margin-bottom:0'>A filter that falls harder on one arm "
                  "of the design puts a technical gradient where the biology is measured. This "
                  "is the number to read first.</p>")
+
+    # ------------------------------------------------------- confounding, when there is any
+    conf = doc.get("confounding") or {}
+    if conf.get("pairs"):
+        parts.append(render_confounding(conf))
 
     # ---------------------------------------------------------------- the spine
     umi_cut = _one_value(_column(per_sample, "umi_floor_proposed"))

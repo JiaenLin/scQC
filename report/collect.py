@@ -118,6 +118,9 @@ def _rows(path: Path) -> list:
         return list(csv.DictReader(fh))
 
 
+from engine.task import TaskFailure  # noqa: E402
+
+
 def _num(value):
     """A number, or None for a blank. Never 0.0 for a blank - that is a measurement."""
     if value is None:
@@ -507,6 +510,80 @@ def _f9(tables: Path, n_in, n_removed) -> dict:
     return data
 
 
+def _f16(sheet):
+    """{factor: {sample: level}} for every factor the samplesheet actually carries."""
+    from engine.steps import _design  # noqa: PLC0415  (circular import at module load)
+    factors = list(_design(sheet))
+    if not factors:
+        raise TaskFailure(
+            "the samplesheet carries no design factor with two or more levels, so there is no "
+            "pair of factors that could be confounded. That is a property of this cohort, not "
+            "a failure.")
+    of_sample = {r.get("sample"): r for r in sheet}
+    out = {}
+    for f in factors:
+        levels = {s: (r or {}).get(f) for s, r in of_sample.items() if (r or {}).get(f)}
+        if levels:
+            out[f] = levels
+    return {"design": out}
+
+
+#: The per-library columns F17 draws, and why each one is readable across a confounded split:
+#: every one is set by dissociation, chemistry or the cell call rather than by the condition
+#: under test. NOT a fixed list of factor names - these are scQC's own metric columns, which
+#: exist on every cohort.
+_F17_METRICS = (("ribo_median", "ribosomal %, median"),
+                ("mito_q3", "mitochondrial %, Q3"),
+                ("doublet_rate_pct", "doublet rate %"),
+                ("cells_lost", "cells lost at the call"))
+
+
+def _f17(sheet, thresholds):
+    """Per-arm values of the technical columns, for the most entangled pair of factors."""
+    from engine.steps import _design  # noqa: PLC0415
+
+    factors = list(_design(sheet))
+    of_sample = {r.get("sample"): r for r in sheet}
+    # THE PAIR THAT IS ACTUALLY CONFOUNDED, found rather than named: the two factors whose levels
+    # determine each other for the most libraries. On a cohort with none, the best pair is a poor
+    # one and the figure still draws the arms of the strongest factor - which is the honest
+    # answer to "how far apart are these groups" when nothing is entangled.
+    best, best_score = None, -1
+    for i, a in enumerate(factors):
+        for b in factors[i + 1:]:
+            both = [s for s in of_sample if of_sample[s].get(a) and of_sample[s].get(b)]
+            if len(both) < 2:
+                continue
+            fwd = {}
+            for s in both:
+                fwd.setdefault(of_sample[s][a], set()).add(of_sample[s][b])
+            score = sum(1 for s in both if len(fwd[of_sample[s][a]]) == 1) / len(both)
+            if score > best_score:
+                best, best_score = (a, b), score
+    if not best:
+        raise TaskFailure("fewer than two design factors carry a level on two or more libraries")
+
+    a, b = best
+    by_level = {}
+    for r in thresholds:
+        lv = (of_sample.get(r.get("sample")) or {}).get(a)
+        if lv:
+            by_level.setdefault(str(lv), []).append(r)
+    metrics = []
+    for key, label in _F17_METRICS:
+        arms = {lv: [_num(r.get(key)) for r in rs] for lv, rs in sorted(by_level.items())}
+        arms = {lv: [v for v in vs if v is not None] for lv, vs in arms.items()}
+        if sum(len(v) for v in arms.values()) >= 2 and sum(1 for v in arms.values() if v) >= 2:
+            metrics.append({"label": label, "arms": arms})
+    if not metrics:
+        raise TaskFailure(
+            f"no technical column in tables/thresholds_per_sample.csv has values in two arms of "
+            f"{a!r}. Ribosomal content is summarised per library only on runs made after that "
+            f"column was added.")
+    return {"metrics": metrics, "pair": f"{a} / {b}",
+            "agreement": round(best_score, 3)}
+
+
 def collect(tables, *, samplesheet_rows=None, samplesheet=None,
             n_in=None, n_removed=None) -> tuple:
     """Every figure this run's files can support, plus a note for every one they cannot.
@@ -630,6 +707,19 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
         emb_src = "tables/<sample>.embedding.csv + " + src
         _try("F10", emb_src, lambda: _f10(tables, percell, colour_by="doublet", fig_id="F10"))
         _try("F11", emb_src, lambda: _f10(tables, percell, colour_by="removed", fig_id="F11"))
+
+    # THE CONFOUNDING PAIR, from the samplesheet and the per-library table this report already
+    # reads. F16 is the design itself; F17 is how far apart its arms sit on quantities the
+    # condition under test did not set. Both come from files a finished run has, so a reader can
+    # get them from `scqc report` without the pipeline running again.
+    #
+    # `_design()` DISCOVERS the factors - the same routine the gates use. A fixed list of factor
+    # names is how the ambient design panel came to render empty on every cohort but the one it
+    # was written beside, and this is the same trap one figure over.
+    if sheet and thresholds:
+        _try("F16", "the samplesheet", lambda: _f16(sheet))
+        _try("F17", "the samplesheet + tables/thresholds_per_sample.csv",
+             lambda: _f17(sheet, thresholds))
 
     # After the per-cell tables, because that is where the denominator comes from: F9 draws each
     # criterion's unique removals against the population they were removed FROM, and a bar chart

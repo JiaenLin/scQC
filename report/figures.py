@@ -1511,4 +1511,123 @@ FIGURE_FUNCTIONS = {
     # panels is the filter and not the chart.
     "F14": fig_f7_before_after,
     "F15": fig_f7_before_after,
+    # The confounding panel. F16 is the design itself - which factors are the same
+    # partition - and F17 is how far apart that partition's arms sit on quantities
+    # dissociation and chemistry set. Neither apportions; together they let a reader
+    # see the entanglement and its size without being told either.
+    "F16": fig_f16_design_grid,
+    "F17": fig_f17_confounded_metrics,
 }
+
+
+def fig_f16_design_grid(design, *, order=None, dpi: int = DEFAULT_DPI):
+    """F16 - which factors are the same partition of the libraries?
+
+    `design` maps a factor to `{sample: level}`. One row per library, one column per factor,
+    each cell coloured by its level within that factor.
+
+    THIS IS THE FIGURE THE CONFOUNDING SECTION EXISTS FOR. Two factors that partition the
+    libraries identically produce two columns with the same block structure, and a reader sees
+    that in less time than it takes to read a sentence claiming it. A table of agreement ratios
+    says the same thing and has to be believed; this has to be looked at.
+
+    Levels are coloured per column, not globally: the levels of `age` and the levels of
+    `chemistry` are different vocabularies, and a shared palette would suggest a correspondence
+    between `aged` and whichever chemistry happened to sort first.
+    """
+    if not design:
+        raise TaskFailure("F16 needs at least one design factor")
+    plt = _mpl()
+    factors = sorted(design)
+    samples = order or sorted({s for lv in design.values() for s in lv})
+    if not samples:
+        raise TaskFailure("F16 needs at least one library")
+
+    fig = _new_fig((1.15 * len(factors) + 2.0, 0.34 * len(samples) + 1.5), dpi)
+    ax = fig.add_subplot(111)
+    cmaps = ("tab10", "Set2", "Pastel1", "Set3")
+    for ci, f in enumerate(factors):
+        levels = sorted({str(design[f].get(s)) for s in samples if design[f].get(s) is not None})
+        cmap = plt.get_cmap(cmaps[ci % len(cmaps)])
+        idx = {lv: cmap(i % 10) for i, lv in enumerate(levels)}
+        for ri, s in enumerate(samples):
+            lv = design[f].get(s)
+            if lv is None:
+                continue
+            ax.add_patch(plt.Rectangle((ci, ri), 0.94, 0.9, facecolor=idx[str(lv)],
+                                       edgecolor="white", linewidth=1.2))
+            ax.text(ci + 0.47, ri + 0.45, str(lv), ha="center", va="center", fontsize=7,
+                    color="#1a1a1a")
+
+    ax.set_xlim(0, len(factors))
+    ax.set_ylim(0, len(samples))
+    ax.set_xticks([c + 0.47 for c in range(len(factors))])
+    ax.set_xticklabels(factors, fontsize=9)
+    ax.set_yticks([r + 0.45 for r in range(len(samples))])
+    ax.set_yticklabels(samples, fontsize=8)
+    ax.invert_yaxis()
+    for side in ("top", "right", "left", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(length=0)
+    ax.set_title("Each column is one factor. Columns with the same blocks are the same "
+                 "partition.", fontsize=9, pad=10)
+    fig.tight_layout()
+    return fig
+
+
+def fig_f17_confounded_metrics(metrics, *, pair=None, dpi: int = DEFAULT_DPI):
+    """F17 - how far apart are the arms, on quantities the biology did not set?
+
+    `metrics` is a list of `{"label": str, "arms": {level: [values]}}`, one entry per metric,
+    values one per library.
+
+    Each panel is one metric, one point per library, arms side by side with the arm median as a
+    bar. Read together with F16: F16 shows that two factors are the same split, this shows how
+    far apart that split's arms are on quantities dissociation and chemistry set rather than the
+    condition under test.
+
+    IT DOES NOT APPORTION, and no arrangement of these points could. When two factors partition
+    the libraries identically, a separation here belongs to both of them jointly - the figure
+    shows the SIZE of a difference whose cause is not identifiable from this cohort.
+    """
+    usable = [m for m in (metrics or [])
+              if len([v for arm in m.get("arms", {}).values() for v in arm]) >= 2
+              and len(m.get("arms", {})) >= 2]
+    if not usable:
+        raise TaskFailure("F17 needs at least one metric with values in two or more arms")
+    plt = _mpl()
+    rows, cols = grid_shape(len(usable))
+    fig = _new_fig((3.3 * cols, 2.9 * rows), dpi)
+
+    for i, m in enumerate(usable, 1):
+        ax = fig.add_subplot(rows, cols, i)
+        arms = sorted(m["arms"])
+        cmap = plt.get_cmap("tab10")
+        for xi, arm in enumerate(arms):
+            vals = [float(v) for v in m["arms"][arm] if v is not None]
+            if not vals:
+                continue
+            # the individual libraries, jittered only enough to stop exact overlap hiding one
+            step = 0.055
+            xs = [xi + (j - (len(vals) - 1) / 2) * step for j in range(len(vals))]
+            ax.scatter(xs, vals, s=26, color=cmap(xi % 10), zorder=3,
+                       edgecolor="white", linewidth=0.6)
+            med = _median(vals)
+            if med is not None:
+                ax.plot([xi - 0.26, xi + 0.26], [med, med], color=cmap(xi % 10),
+                        linewidth=2.4, zorder=2)
+        ax.set_xticks(range(len(arms)))
+        ax.set_xticklabels(arms, fontsize=8)
+        ax.set_xlim(-0.6, len(arms) - 0.4)
+        ax.set_title(m["label"], fontsize=9)
+        ax.tick_params(labelsize=8)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        ax.grid(axis="y", alpha=0.25, linewidth=0.6)
+        ax.set_axisbelow(True)
+
+    if pair:
+        fig.suptitle(f"Arms of {pair} - one point per library, bar is the arm median",
+                     fontsize=9, y=0.99)
+    fig.tight_layout()
+    return fig

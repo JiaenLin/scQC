@@ -144,7 +144,7 @@ found. Unknown is kept distinct from absent throughout: a nullable boolean is `p
 
 **If gene symbols are not unique in your reference**, `var` is re-indexed by the identifier and
 the symbols are kept in `var["gene_symbol"]`. Symbol matching on a delivered object — `mt-`,
-`^Rp[sl]` — should read that column. A reference whose symbols are unique is left as it arrived.
+`^Rp[sl](?!6k)` — should read that column. A reference whose symbols are unique is left as it arrived.
 
 📄 Full column-by-column reference: **[OUTPUTS.md](OUTPUTS.md)**.
 
