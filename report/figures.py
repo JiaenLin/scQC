@@ -948,6 +948,18 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
 
     Alongside F2 this is the figure that carries the report: it is the only one that shows a
     derived threshold sitting where the data actually separates - or not.
+
+    THE X AXIS IS LOG, AND THAT IS NOT A PREFERENCE. The valley is a minimum between two modes
+    that are orders of magnitude apart - a few hundred UMI against tens of thousands - and step 5
+    finds it by fitting the density in log10 space, which is why the table it writes carries a
+    `grid_log10` column beside the grid. Drawn against linear UMI the entire structure this figure
+    exists to show, both modes and the cut between them, occupies the first fraction of a percent
+    of the axis and the rest is empty: on the calibration cohort the valley sat at 350 and the
+    axis ran to 140,000. The ticks read in ORIGINAL UNITS, so the reader is never asked to
+    interpret an exponent.
+
+    A density containing a non-positive grid point cannot go on a log axis; that panel is drawn
+    linear and SAYS SO, rather than silently dropping the points or the axis.
     """
     if not densities:
         raise TaskFailure("F6 needs at least one library's density")
@@ -961,23 +973,34 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
         prepared[s] = ([float(v) for v in x], [float(v) for v in y], densities[s].get("n"))
         xs += [min(prepared[s][0]), max(prepared[s][0])]
         ys += [0.0, max(prepared[s][1])]
+    # ONE DECISION FOR THE WHOLE FIGURE. Panels meant for comparison share limits, so they must
+    # also share a scale: two panels of the same quantity on different axes look like a
+    # difference in the data.
+    log_x = min(xs) > 0 and (_unknown(cut) or float(cut) > 0)
 
     for i, (s, (x, y, n)) in enumerate(sorted(prepared.items()), start=1):
         ax = fig.add_subplot(rows, cols, i)
+        if log_x:
+            _log_axis(ax, "x")
         if (not _unknown(bounds) and bounds is not None and len(bounds) == 2
                 and not any(_unknown(b) for b in bounds)):
             ax.axvspan(min(xs), float(bounds[0]), color=PALETTE["muted"], alpha=0.12)
             ax.axvspan(float(bounds[1]), max(xs), color=PALETTE["muted"], alpha=0.12)
         ax.plot(x, y, linewidth=1.1, color=PALETTE["ok"])
+        # SEPARATED VERTICALLY, not horizontally. The two lines are a measured valley and the
+        # cohort constant derived from it, so they sit within a few percent of each other on
+        # every well-behaved library - which is the good case, and the case in which two labels
+        # at the same height overprint into an unreadable column of letters.
+        top = (max(ys) if max(ys) > 0 else 1.0)
         v = valleys.get(s)
         if not _unknown(v):
             ax.axvline(float(v), color=PALETTE["second"], linestyle=":", linewidth=1.1)
-            _label(ax, float(v), max(ys), f" valley {float(v):,.0f}", fontsize=6.5, rotation=90,
-                   va="top", color=PALETTE["second"])
+            _label(ax, float(v), top * 0.99, f" valley {float(v):,.0f}", fontsize=6.5,
+                   rotation=90, va="top", color=PALETTE["second"])
         if not _unknown(cut):
             ax.axvline(float(cut), color=PALETTE["threshold"], linestyle="--", linewidth=1.2)
-            _label(ax, float(cut), max(ys), f" cut {float(cut):,.0f}", fontsize=6.5, rotation=90,
-                   va="top", ha="right", color=PALETTE["threshold"])
+            _label(ax, float(cut), top * 0.55, f" cut {float(cut):,.0f}", fontsize=6.5,
+                   rotation=90, va="top", color=PALETTE["threshold"])
         ax.set_xlim(min(xs), max(xs))
         # A density that is flat at zero everywhere is a real input - it is what a caller passes
         # when the estimate failed - and it must not produce a singular axis warning on top of it.
@@ -986,6 +1009,8 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
         note = n_label(n, "nuclei")
         if _unknown(v):
             note += "\nvalley NOT SUPPLIED"
+        if not log_x:
+            note += "\nLINEAR axis: a grid point is at or below zero"
         _panel_note(ax, note, loc="upper right")
         ax.set_xlabel(label_text(metric_label, f"metric ({NOT_SUPPLIED} - name it)"),
                       fontsize=7.5)
@@ -993,8 +1018,10 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
         _tidy(ax)
 
     _finish(fig, f"{fig_id} · per-library density with the measured valley and the applied cut",
-            "the same cut is drawn on every panel at the same scale; a shaded margin is outside "
-            "the bounds a derived floor is allowed to take")
+            _wrapped(f"{'log' if log_x else 'linear'} axis, in original units - the density is "
+                     f"fitted in log space and the two modes are orders of magnitude apart. The "
+                     f"same cut is drawn on every panel at the same scale; a shaded margin is "
+                     f"outside the bounds a derived floor is allowed to take", 118))
     return fig
 
 
