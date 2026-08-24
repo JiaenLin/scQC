@@ -1713,8 +1713,9 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
                       "no pair of design factors partitions the libraries identically")
                      + " - computed from the samplesheet by exact comparison, not estimated", 110))
     if present:
-        text = _wrapped("   ·   ".join(f"{k.upper()}: {RELATION_MEANING[k]}" for k in present),
-                        150)
+        # ONE LINE PER RELATIONSHIP. Joined with a separator and wrapped, the wrap fell on the
+        # separator and left a dangling "·" at the end of a line, which reads as a truncation.
+        text = "\n".join(_wrapped(f"{k.upper()}: {RELATION_MEANING[k]}", 150) for k in present)
         # Reserved in the layout and measured in inches, for the reasons F17 records at length.
         band = (0.20 * (1 + text.count("\n")) + 0.10) / fig.get_figheight()
         fig.tight_layout(rect=(0, min(band, 0.3), 1, 0.93))
