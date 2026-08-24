@@ -154,9 +154,10 @@ Named, each with what would close it and who it is blocked on. A run with no ope
 
 ## Figures
 
-Fifteen, each answering a single question a reader would otherwise have to ask. Nine follow the
+Eighteen, each answering a single question a reader would otherwise have to ask. Nine follow the
 steps; F10/F11, F7/F12 and F6/F13 are pairs — the same treatment applied twice, because a
-comparison is what carries the meaning.
+comparison is what carries the meaning. **F16–F18 belong to no step**: they describe the design
+and what the filter did to it, and no step of this pipeline can change either.
 
 **F10 and F11 must share one embedding.** Re-embedding the retained nuclei changes the layout, and
 a reader comparing the two panels would be looking at a difference that may be the projection
@@ -195,10 +196,56 @@ a distribution nobody drew.
 | F13 | 5 quality | where is the GENE cut and why there? - step 5 derives two floors and applies both | F6's form on the gene axis, with the gene floor drawn |
 | F14 | 5 quality | what did the GENE floor change? | F7's form on the gene axis |
 | F15 | 5 quality | what did the MITOCHONDRIAL ceiling change, library by library? | F7's form on the mitochondrial axis, over the barcodes above the light floor, with each library's OWN ceiling drawn as a segment |
+| F16 | — the design | what is confounded with what, before any number is read? | the samplesheet as a grid, beside every pair of factors classified `aliased` / `nested` / `crossed` |
+| F17 | — the design | how far apart do the confounded arms sit on each QC metric — further than the libraries inside an arm? | one panel per QC metric: a violin per arm over the KEPT nuclei, each library's own median drawn on it, and the between-arm gap against the widest within-arm spread |
+| F18 | — the design | did the filter remove the same share from each confounded arm? | removal rate per arm, in total and per criterion |
 
 **F2 and F6 are the two that matter most.** F2 is the only figure that can show a technical
 removal has become an apparent biological difference. F6 is the only one that shows a derived
 threshold sitting where the data actually separates — or not.
+
+### The confounding block — F16, F17, F18
+
+Everything else in the report describes something the pipeline **did** and could have done
+differently. These three describe what the **experiment is**. If two design factors partition the
+libraries identically, they were fixed that way before the first library was made, and no
+threshold, no correction and no rerun separates them afterwards. The section therefore states the
+problem and offers no remedy, because there is none at this end of the process.
+
+**It is not a statistic, and there is no p-value in it.** A confounded factor cannot be tested —
+that is what confounded means. What F16 computes is exact: the partition each factor induces over
+the libraries, compared with every other factor's. Two factors are `aliased` when each is fixed by
+the other, `nested` when the implication runs one way, and `crossed` otherwise.
+
+**An arm is what the aliasing leaves**, and its label carries *every* aliased factor's level —
+`aged / GEXSCOPE-V2 / batch A` — so a reader looking at a difference between arms cannot avoid
+seeing that it could be any of the three.
+
+**F17's argument is the library medians, not the violins.** A violin per arm shows a difference and
+cannot say whether the arm or the libraries in it produced it — and in a confounded design those
+are the same libraries every time. Each library's own median is drawn inside its arm, the span
+those medians cover is shaded, and the panel prints the between-arm gap against the widest
+within-arm spread. An arm difference no larger than the spread between libraries of the same arm
+is a library effect wearing the design's name. The ratio is an **estimate** and the figure says
+so.
+
+**F17 draws every metric the per-cell table carries**, including the two that are usually
+discarded: `pct_counts_ribo`, which step 7 measures and until now dropped, and the derived
+complexity `log10 genes / log10 UMI`. A metric left out of that list is one whose arm difference
+nobody will look at.
+
+**The percentage names the pattern that produced it.** `pct_counts_mt` and `pct_counts_ribo` are
+decided by a samplesheet pattern, and the axis prints it — `ribosomal % per nucleus (pattern
+^Rp[sl])`. A ribosomal pattern has matched a ribosomal protein *kinase* before now (PRINCIPLES.md
+section 1), and a percentage whose gene class is not on the page is a number no reader can check.
+
+**F18 is the half the pipeline creates.** Whatever the libraries were on arrival, a filter that
+takes twice as large a share out of one arm has made the arms differ for a reason that has nothing
+to do with the factor they are named after — and nothing downstream sees it or can undo it.
+
+**A clean design produces an absence, not an invented contrast.** Where no two factors are
+aliased, F17 and F18 report that in place of a figure. Inventing an arm to compare would
+manufacture a confound the design does not have.
 
 **A per-library threshold is never drawn as one line.** F15's ceiling is ten different rules,
 and a single line across the panel would assert a cohort constant that was never applied -

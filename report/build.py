@@ -173,6 +173,12 @@ FIGURE_QUESTIONS = {
     "F13": "where is the GENE cut and why there? - step 5 derives two floors and applies both",
     "F14": "what did the GENE floor change?",
     "F15": "what did the MITOCHONDRIAL ceiling change, library by library?",
+    # THE CONFOUNDING BLOCK. These three belong to no step: they describe the DESIGN and what the
+    # filter did to it, and a pipeline cannot change either by running better.
+    "F16": "what is confounded with what, before any number is read?",
+    "F17": "how far apart do the confounded arms sit on each QC metric - further than the "
+           "libraries inside an arm?",
+    "F18": "did the filter remove the same share from each confounded arm?",
 }
 
 PARAM_CLASSES = {
@@ -1277,6 +1283,98 @@ def build_removal_breakdown(payload, defects: list) -> dict:
             "widest_ratio_criterion": worst_crit}
 
 
+#: The three figures of the confounding section, in the order the questions must be asked in.
+CONFOUNDING_FIGURES = ("F16", "F17", "F18")
+
+
+def build_confounding(payload, defects: list) -> dict:
+    """Which design factors cannot be told apart in these libraries, and the evidence for it.
+
+    THIS SECTION IS NOT ABOUT THE RUN. Everything else in this document reports something the
+    pipeline did and could have done differently. A design in which two factors partition the
+    libraries identically was fixed before the first library was made, and no threshold, no
+    correction and no rerun changes it - so the section states it as a property of the experiment
+    and offers no remedy, because there is none at this end of the process.
+
+    The relationships are read out of F16's OWN DATA rather than recomputed here, for the reason
+    the removal breakdown gives: a section that derives its own numbers can disagree with the
+    figure beside it and nothing on the page would say which was right. One computation - in
+    `report/collect.design_relations` - and two presentations of it.
+
+    An absent figure here is a NOTICE and not a defect. The commonest reason for F17 and F18 to
+    be absent is that no two factors are aliased, which is a clean design and the best possible
+    outcome; recording it as a defect would train a reader to ignore the count.
+    """
+    where = "section 2 · confounding"
+    payload_figs = _get(payload, "figures")
+    fig_notes = _get(payload, "figure_notes")
+
+    blocks = []
+    for fid in CONFOUNDING_FIGURES:
+        spec = MISSING if payload_figs is MISSING else _get(payload_figs, fid)
+        block = {"id": fid, "question": FIGURE_QUESTIONS.get(fid, ""), "caption": "",
+                 "source": "", "status": ""}
+        if spec is MISSING or not isinstance(spec, dict):
+            reason = "" if fig_notes is MISSING else _text(_get(fig_notes, fid), "")
+            block["status"] = ("NOT PRODUCED — " + reason if reason else
+                               "NOT PRODUCED — no data was supplied for this figure")
+            _defect(defects, where, f"figure {fid} was not assembled.", severity="notice")
+        else:
+            block["caption"] = _text(_get(spec, "caption"), "")
+            block["source"] = _text(_get(spec, "source"), "")
+            if not block["source"]:
+                _defect(defects, where, f"figure {fid} names no source for the data it draws.",
+                        severity="notice")
+        blocks.append(block)
+
+    relations, factors, arms = [], [], []
+    f16 = MISSING if payload_figs is MISSING else _get(payload_figs, "F16")
+    data = MISSING if f16 is MISSING or not isinstance(f16, dict) else _get(f16, "data")
+    if isinstance(data, dict):
+        relations = [r for r in _as_list(_get(data, "relations")) if isinstance(r, dict)]
+        factors = [str(f) for f in _as_list(_get(data, "factors"))]
+        arm_map = _get(data, "arms")
+        arms = sorted(arm_map) if isinstance(arm_map, dict) else []
+
+    aliased = [r for r in relations if str(r.get("kind")) == "aliased"]
+    nested = [r for r in relations if str(r.get("kind")) == "nested"]
+    rows = [{"a": str(r.get("a")), "b": str(r.get("b")), "kind": str(r.get("kind")),
+             "detail": _text(_get(r, "detail"), "")}
+            for r in sorted(relations, key=lambda r: (
+                {"aliased": 0, "nested": 1}.get(str(r.get("kind")), 2),
+                str(r.get("a")), str(r.get("b"))))]
+
+    if not factors:
+        headline = ("No design factor was discovered in the samplesheet, so nothing here can be "
+                    "confounded. A column is not a factor if it is constant, if it has more "
+                    "levels than the libraries can support, or if it has a single library per "
+                    "level.")
+        severity = "ok"
+    elif aliased:
+        pairs = ", ".join(f"{r['a']} = {r['b']}" for r in rows if r["kind"] == "aliased")
+        headline = (f"{len(aliased)} pair(s) of design factors partition these libraries "
+                    f"identically: {pairs}. No analysis of these data can attribute a difference "
+                    f"to one of an aliased pair rather than the other. This is a property of the "
+                    f"experiment; nothing downstream can separate them.")
+        severity = "REFUSE"
+    elif nested:
+        headline = (f"No pair is fully aliased, but {len(nested)} pair(s) are nested: one factor "
+                    f"is fixed once the other is known, so its effect sits inside the other's "
+                    f"and cannot be taken back out.")
+        severity = "REVIEW"
+    else:
+        headline = (f"None of the {len(factors)} design factors is aliased with or nested in "
+                    f"another: every pair is crossed, and each factor's effect can be estimated "
+                    f"separately from the others.")
+        severity = "ok"
+
+    return {"stated": bool(relations) or bool(factors),
+            "factors": factors, "arms": arms, "rows": rows, "figures": blocks,
+            "n_aliased": len(aliased), "n_nested": len(nested),
+            "headline": headline, "severity": severity,
+            "source": "the run's samplesheet + tables/<sample>.percell.csv"}
+
+
 def build_per_sample(payload, defects: list) -> dict:
     """Every threshold this run derived, one row per library.
 
@@ -1376,6 +1474,10 @@ def assemble(payload, *, now=None) -> dict:
         "parameters": parameters,
         "steps": steps,
         "per_sample": build_per_sample(payload, defects),
+        # Before the removal breakdown, because it is the question that decides what the
+        # breakdown MEANS: the same removal rate is unremarkable in a crossed design and is the
+        # whole finding in an aliased one.
+        "confounding": build_confounding(payload, defects),
         "removal_breakdown": build_removal_breakdown(payload, defects),
         "provenance": provenance,
         "open_items": open_items,
@@ -1877,6 +1979,56 @@ def _fig_panel(block, uri, *, title=None) -> str:
             + "</div>")
 
 
+def _confounding_section(block, uri) -> str:
+    """The confounding block: one sentence, the pairs that produced it, and three figures.
+
+    Placed immediately after the decision strip, because it decides what every number below it
+    means. The evenness cell of that strip already asks whether the filter fell evenly across the
+    design; this section is the same question asked of the design itself, and the answer bounds
+    what any of the rest can be used to claim.
+
+    The sentence, the table and the figures all come from one computation - see
+    `build_confounding`. Nothing is derived here.
+    """
+    if not block or not block.get("stated"):
+        return ""
+    chip = {"REFUSE": "refuse", "REVIEW": "review"}.get(str(block.get("severity")), "ok")
+    rows = block.get("rows") or []
+    table = ""
+    if rows:
+        # The aliased rows carry the `flag` class, so the pairs that make a claim impossible are
+        # the ones a reader's eye lands on rather than the ones that happen to sort first.
+        def _row(r):
+            cls = " class='flag'" if r["kind"] == "aliased" else ""
+            return ("<tr>"
+                    f"<td><span class='mono'>{_e(r['a'])}</span></td>"
+                    f"<td><span class='mono'>{_e(r['b'])}</span></td>"
+                    f"<td{cls}>{_e(r['kind'])}</td>"
+                    f"<td>{_e(r['detail'])}</td></tr>")
+
+        trs = "".join(_row(r) for r in rows)
+        table = ("<div class='scroll'><table><thead><tr><th>factor</th><th>factor</th>"
+                 "<th>relationship</th><th>how it was determined</th></tr></thead>"
+                 f"<tbody>{trs}</tbody></table></div>")
+    arms = block.get("arms") or []
+    arms_line = ""
+    if arms:
+        shown = " · ".join("<span class='mono'>"
+                           + _e(str(a).replace("\n", " / ")) + "</span>" for a in arms)
+        arms_line = ("<p class='sub' style='margin-top:9px'>The arms F17 and F18 compare, one "
+                     "per distinct combination of the aliased factors: " + shown + ".</p>")
+    panels = "".join(_fig_panel(b, uri(b["id"])) for b in (block.get("figures") or []))
+    return ("<section><div class='head'><h2>Where the design is confounded</h2>"
+            "<p class='sub'>Computed from the samplesheet by exact comparison of the partitions "
+            "each factor induces over the libraries. Not a statistic and not a test: a "
+            "confounded factor cannot be tested, which is why it is reported here instead.</p>"
+            "</div>"
+            f"<div class='card'><p><span class='chip c-{chip}'>{_e(chip)}</span> "
+            f"{_e(block.get('headline', ''))}</p>{table}{arms_line}"
+            f"<p class='src'>source: {_e(str(block.get('source', '')))}</p></div>"
+            f"{panels}</section>")
+
+
 def _cut(value: str, label: str, how: str) -> str:
     """The threshold between a before and an after, with how it was arrived at."""
     return (f"<div class='cut'><span class='val'>{_e(value)}</span>"
@@ -2084,6 +2236,12 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     parts.append("<p class='sub' style='margin-bottom:0'>A filter that falls harder on one arm "
                  "of the design puts a technical gradient where the biology is measured. This "
                  "is the number to read first.</p>")
+
+    # ---------------------------------------------------------------- the design itself
+    # BEFORE the pipeline's own work, because it bounds what any of it can be used to claim. The
+    # strip above asks whether the filter fell evenly across the design; this asks whether the
+    # design can carry the question at all, and the answer is not something a rerun can improve.
+    parts.append(_confounding_section(doc.get("confounding") or {}, uri))
 
     # ---------------------------------------------------------------- the spine
     umi_cut = _one_value(_column(per_sample, "umi_floor_proposed"))
@@ -2337,9 +2495,14 @@ def build_report(payload: dict, out_html, out_json, *, now=None, render_figures_
         _defect(doc["defects"], "figures",
                 "figure rendering was switched off for this build; every figure block is empty.")
     doc["figures"] = figures["index"]
+    # The confounding figures belong to no step, so they need the same pass over them. Without
+    # it a figure that ASSEMBLED and then failed to draw would appear as an empty panel saying
+    # only "NOT PRODUCED", with the exception that explains it recorded nowhere on the page.
+    fig_holders = [step["figures"] for step in doc["steps"]]
+    fig_holders.append((doc.get("confounding") or {}).get("figures") or [])
     for fid, block in figures["index"].items():
-        for step in doc["steps"]:
-            for f in step["figures"]:
+        for holder in fig_holders:
+            for f in holder:
                 if f["id"] == fid and not block["rendered"]:
                     f["status"] = block["source"]
     # The defect count and the verdict block are recomputed after the figures, so the front page

@@ -40,6 +40,7 @@ because it tells the next reader not to look.
 from __future__ import annotations
 
 import csv
+import math
 import sys
 from pathlib import Path
 
@@ -60,6 +61,17 @@ UNAVAILABLE = {
     "F11": "a per-library embedding, as F10.",
     "F13": "the density curve the gene valley was found on, "
            "`tables/<sample>.valley_density.csv`.",
+    # THE CONFOUNDING BLOCK. Its inputs are the samplesheet and the per-cell tables, both of
+    # which an apply-mode run has - so an absence here is a property of the DESIGN, and the note
+    # says which property rather than naming a file.
+    "F16": "the design. `collect()` was given no samplesheet rows, or the samplesheet carries "
+           "no factor: `_design()` excludes a column that is constant, one with more levels "
+           "than the libraries can support, and one with a single library per level.",
+    "F17": "a confounded pair. No two design factors partition these libraries identically, so "
+           "there is no arm to compare - which is a clean design, not a missing figure. F16 "
+           "shows every pair and how it was classified.",
+    "F18": "a confounded pair, as F17; or the per-cell tables, which measure mode does not "
+           "write.",
 }
 
 
@@ -106,6 +118,21 @@ CAPTIONS = {
     "F14": "F7's form on the GENE axis: genes per nucleus before and after the filter, with the "
            "cohort gene floor across every library. Step 7 applies this floor as well as the "
            "count floor, and a report showing only one of them shows part of the filter.",
+    "F16": "Every library against every design factor the samplesheet carries, and then every "
+           "pair of those factors compared exactly. Two factors that partition the libraries "
+           "identically are ALIASED: no analysis of these data can say which of the two a "
+           "difference belongs to. This is a property of the experiment and no step of this "
+           "pipeline can change it.",
+    "F17": "Each QC metric across the arms the aliasing leaves, over the nuclei the filter "
+           "kept. The violin is the arm; the dots are the individual libraries' own medians "
+           "and the amber band is the span they cover. An arm difference no larger than the "
+           "spread between libraries of the same arm is a library effect, whatever it is "
+           "labelled. The ratio printed on each panel is that comparison and is an estimate, "
+           "not a test - a confounded factor cannot be tested.",
+    "F18": "The share of each arm's barcodes the filter removed, in total and per criterion. "
+           "This is the part of the confounding the pipeline itself creates: a criterion that "
+           "takes a larger share out of one arm has made the arms differ for a reason that has "
+           "nothing to do with the factor they are named after.",
     "F15": "Mitochondrial % per nucleus before and after the filter, over the barcodes above the "
            "light floor - the population the ceiling was derived over, because a percentage of a "
            "30-UMI droplet is not a measurement. The ceiling is PER LIBRARY, so each library "
@@ -507,6 +534,307 @@ def _f9(tables: Path, n_in, n_removed) -> dict:
     return data
 
 
+# ---------------------------------------------------- F16-F18 · the confounding estimation
+#
+# WHAT THIS BLOCK IS FOR. Every other builder here assembles evidence about what the PIPELINE
+# did. These three assemble evidence about what the EXPERIMENT is: which design factors cannot
+# be told apart from each other in these libraries, how far apart the resulting arms sit on
+# every QC metric this run measured, and whether the filter widened that gap.
+#
+# NOTHING HERE IS A TEST. A confounded factor cannot be tested - that is what confounded means -
+# so no p-value is computed and none would mean anything. What is computed is exact: the
+# partition each factor induces over the libraries, compared with every other factor's, and the
+# distributions of the measured values within each arm.
+
+#: At most this many values per arm reach a violin. A violin drawn from 20,000 nuclei and one
+#: drawn from 200,000 are the same picture, and the payload is written to disk. The library
+#: MEDIANS are always taken over every value, before any cap - a median of a subsample is a
+#: different number and this figure's whole argument rests on those medians.
+CONFOUNDING_MAX_POINTS = 20_000
+
+#: The per-cell QC metrics, in the order the panels are drawn. `(column, label, log)`.
+#: `complexity` is not a column: it is derived below from two that are, and is labelled as such.
+#:
+#: EVERY METRIC THE PER-CELL TABLE CARRIES IS HERE. A metric left out of this list is one whose
+#: arm difference nobody will look at, and the arm difference is the entire question.
+CONFOUNDING_METRICS = (
+    ("total_counts", "UMI per nucleus", True),
+    ("n_genes", "genes detected per nucleus", True),
+    ("complexity", "complexity (log10 genes / log10 UMI)", False),
+    ("pct_counts_mt", "mitochondrial % per nucleus", False),
+    ("pct_counts_ribo", "ribosomal % per nucleus", False),
+    ("nuclear_fraction", "nuclear fraction (intronic / intronic+exonic)", False),
+    ("doublet_score", "doublet score", False),
+)
+
+
+def _partition(mapping: dict) -> dict:
+    """`{level: frozenset(samples)}` for one factor's `{sample: level}`."""
+    out: dict = {}
+    for s, lv in mapping.items():
+        if lv is None or not str(lv).strip():
+            continue
+        out.setdefault(str(lv), set()).add(str(s))
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def _relation(a_map: dict, b_map: dict) -> tuple:
+    """How two factors sit against each other, by EXACT comparison of their partitions.
+
+    Returns `(kind, detail)` with kind in `aliased` / `nested` / `crossed`.
+
+    This is arithmetic on sets, not a statistic. Two factors are aliased when knowing one tells
+    you the other and knowing the other tells you the one - their partitions of the libraries are
+    identical, and no quantity of data separates them. One is nested in the other when the
+    implication runs one way only. Anything else is crossed and can be estimated separately.
+
+    Restricted to the libraries that carry BOTH values, and the count is returned in the detail:
+    a pair compared over three of ten libraries is a different claim from one compared over all
+    ten, and the figure prints which.
+    """
+    shared = sorted(set(a_map) & set(b_map))
+    pairs = [(str(a_map[s]), str(b_map[s])) for s in shared
+             if str(a_map[s]).strip() and str(b_map[s]).strip()]
+    if not pairs:
+        return "crossed", "no library carries a value for both"
+    b_of_a: dict = {}
+    a_of_b: dict = {}
+    for a, b in pairs:
+        b_of_a.setdefault(a, set()).add(b)
+        a_of_b.setdefault(b, set()).add(a)
+    b_from_a = all(len(v) == 1 for v in b_of_a.values())
+    a_from_b = all(len(v) == 1 for v in a_of_b.values())
+    n = len(pairs)
+    if b_from_a and a_from_b:
+        return "aliased", f"one-to-one over {n} librar{'y' if n == 1 else 'ies'}"
+    if b_from_a:
+        return "nested", f"the second is fixed by the first, over {n} libraries"
+    if a_from_b:
+        return "nested", f"the first is fixed by the second, over {n} libraries"
+    return "crossed", f"both levels of each occur with both of the other, over {n} libraries"
+
+
+def design_relations(sheet: list) -> dict:
+    """The design, every pair of its factors compared, and the arms that survive the aliasing.
+
+    Returns `{"factors", "levels", "relations", "arms", "aliased_group", "samples"}`.
+    `arms` is None when no two factors are aliased - in which case there is nothing for F17 and
+    F18 to compare, and saying so is the correct answer rather than inventing a contrast.
+
+    THE ARM IS THE ALIASED GROUP'S OWN PARTITION. Where age, chemistry and batch all induce the
+    same split, the arm is that split and its label carries all three names - because a reader
+    looking at a difference between those arms must see, in the label itself, that it could be
+    any of the three.
+    """
+    from engine.steps import _design  # noqa: PLC0415  (avoids a circular import at module load)
+
+    levels = _design(sheet or [])
+    factors = sorted(levels)
+    samples = [str(r.get("sample")) for r in (sheet or []) if str(r.get("sample") or "").strip()]
+    out = {"factors": factors, "levels": levels, "relations": [], "arms": None,
+           "aliased_group": [], "samples": samples}
+    if len(factors) < 2:
+        return out
+
+    edges = []
+    for i, a in enumerate(factors):
+        for b in factors[i + 1:]:
+            kind, detail = _relation(levels[a], levels[b])
+            out["relations"].append({"a": a, "b": b, "kind": kind, "detail": detail})
+            if kind == "aliased":
+                edges.append((a, b))
+    if not edges:
+        return out
+
+    # The connected components of the aliased relation. Aliasing is transitive over exact
+    # partitions, so a component is a set of factors that are all one factor as far as these
+    # libraries can tell; the largest one is what the arms are built from.
+    parent = {f: f for f in factors}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in edges:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    groups: dict = {}
+    for f in factors:
+        groups.setdefault(find(f), []).append(f)
+    group = max((g for g in groups.values() if len(g) > 1), key=lambda g: (len(g), g))
+    group = sorted(group)
+    out["aliased_group"] = group
+
+    arms: dict = {}
+    for s in (samples or sorted({x for f in group for x in levels[f]})):
+        vals = [str(levels[f].get(s) or "") for f in group]
+        if not all(v.strip() for v in vals):
+            continue
+        arms.setdefault("\n".join(vals), []).append(str(s))
+    out["arms"] = {k: arms[k] for k in sorted(arms)} if len(arms) > 1 else None
+    return out
+
+
+def _arm_of_sample(arms: dict) -> dict:
+    return {s: label for label, members in (arms or {}).items() for s in members}
+
+
+def _ordered_samples(relations: dict) -> list:
+    """Libraries ordered so an arm's rows are contiguous - F16 draws a bracket only if they are."""
+    arms = relations.get("arms")
+    known = relations.get("samples") or []
+    if not arms:
+        return sorted(known) if known else []
+    out = []
+    for label in sorted(arms):
+        out.extend(sorted(arms[label]))
+    out.extend(sorted(s for s in known if s not in set(out)))
+    return out
+
+
+def _f16(relations: dict) -> dict:
+    if not relations.get("factors"):
+        raise ValueError(
+            "the samplesheet carries no design factor. `_design()` excludes a column that is "
+            "constant, one with more levels than libraries can support, and one with a single "
+            "library per level - so a cohort of one or two libraries has no factor by "
+            "construction and there is nothing here to be confounded")
+    return {"levels": relations["levels"], "samples": _ordered_samples(relations),
+            "factors": relations["factors"], "relations": relations["relations"],
+            "arms": relations.get("arms")}
+
+
+def _gene_pattern_note(sheet: list, column: str, what: str) -> str:
+    """`(prefix mt-)` for the axis label, or a statement that the libraries disagree.
+
+    The gene class behind a percentage is decided by a pattern in the samplesheet, and the
+    percentage on the page is only as good as that pattern. scQC's own docs/PRINCIPLES.md
+    section 1 is about a ribosomal pattern that matched a ribosomal protein KINASE, so the
+    pattern is printed beside the number rather than left for a reader to go and look up.
+    """
+    seen = sorted({str(r.get(column) or "").strip() for r in (sheet or [])
+                   if str(r.get(column) or "").strip()})
+    if not seen:
+        return f" ({what} NOT STATED in the samplesheet)"
+    if len(seen) == 1:
+        return f" ({what} {seen[0]})"
+    return f" ({what} DIFFERS across libraries: {', '.join(seen)})"
+
+
+def _f17(percell: dict, relations: dict, sheet: list) -> dict:
+    """Every QC metric the per-cell tables carry, per confounded arm, over the KEPT nuclei.
+
+    THE KEPT POPULATION, deliberately. This figure is about what a confound will contaminate
+    downstream, and downstream sees what the filter kept. What the filter itself did differently
+    between the arms is F18's question and is not mixed into this one.
+    """
+    arms = relations.get("arms")
+    if not arms:
+        raise ValueError(
+            "no two design factors are aliased in this samplesheet, so there is no confounded "
+            "arm to compare. F16 shows every pair and how it was classified")
+    of_sample = _arm_of_sample(arms)
+    order = sorted(arms)
+
+    values: dict = {key: {a: {} for a in order} for key, _lab, _log in CONFOUNDING_METRICS}
+    for s, rows in percell.items():
+        arm = of_sample.get(str(s))
+        if arm is None:
+            continue
+        for key, _lab, _log in CONFOUNDING_METRICS:
+            values[key][arm][s] = []
+        for r in rows:
+            if _flag(r.get("keep")) is not True:
+                continue
+            counts, genes = _num(r.get("total_counts")), _num(r.get("n_genes"))
+            for key, _lab, _log in CONFOUNDING_METRICS:
+                if key == "complexity":
+                    # log10 genes / log10 UMI - the standard novelty score. Undefined at or
+                    # below 10 UMI, where the denominator approaches 1 and the ratio explodes;
+                    # such a nucleus contributes nothing rather than a large invented number.
+                    v = (None if counts is None or genes is None or counts < 10 or genes < 1
+                         else math.log10(genes) / math.log10(counts))
+                else:
+                    v = _num(r.get(key))
+                if v is not None:
+                    values[key][arm][s].append(float(v))
+
+    metrics, absent = [], {}
+    for key, label, log in CONFOUNDING_METRICS:
+        if key == "pct_counts_mt":
+            label += _gene_pattern_note(sheet, "mt_prefix", "prefix")
+        elif key == "pct_counts_ribo":
+            label += _gene_pattern_note(sheet, "ribo_pattern", "pattern")
+        by_arm, medians, n_total = {}, {}, 0
+        for arm in order:
+            per_lib = values[key][arm]
+            pooled = [v for s in sorted(per_lib) for v in per_lib[s]]
+            n_total += len(pooled)
+            if not pooled:
+                continue
+            step = max(1, -(-len(pooled) // CONFOUNDING_MAX_POINTS))
+            by_arm[arm] = pooled[::step][:CONFOUNDING_MAX_POINTS]
+            medians[arm] = {s: sorted(v)[len(v) // 2] for s, v in per_lib.items() if v}
+        if not n_total:
+            absent[label] = (f"the per-cell tables carry no value for `{key}`, so this metric "
+                             f"was not measured by this run")
+            continue
+        metrics.append({"key": key, "label": label, "log": bool(log),
+                        "by_arm": by_arm, "library_medians": medians})
+    if not metrics:
+        raise ValueError("no QC metric in the per-cell tables carried a value for any arm")
+    return {"metrics": metrics, "arms": order, "absent": absent or None,
+            "cap": CONFOUNDING_MAX_POINTS,
+            "population": "the nuclei the filter KEPT (`keep` is true)"}
+
+
+def _f18(percell: dict, relations: dict) -> dict:
+    """What each criterion removed from each arm, over every barcode the arm held."""
+    arms = relations.get("arms")
+    if not arms:
+        raise ValueError(
+            "no two design factors are aliased in this samplesheet, so there is no confounded "
+            "arm whose removal rates could be compared. F16 shows every pair")
+    of_sample = _arm_of_sample(arms)
+    order = sorted(arms)
+
+    criteria: list = []
+    for rows in percell.values():
+        for r in rows[:1]:
+            criteria = [c for c in r if str(c).startswith("fail_")]
+        if criteria:
+            break
+    if not criteria:
+        raise ValueError("no `fail_*` column in the per-cell tables, so no criterion can be "
+                         "attributed to an arm")
+
+    counts = {a: {"n_in": 0, "n_removed": 0, **{c: 0 for c in criteria}} for a in order}
+    for s, rows in percell.items():
+        arm = of_sample.get(str(s))
+        if arm is None:
+            continue
+        bucket = counts[arm]
+        for r in rows:
+            bucket["n_in"] += 1
+            if _flag(r.get("removed")) is True:
+                bucket["n_removed"] += 1
+            for c in criteria:
+                if _flag(r.get(c)) is True:
+                    bucket[c] += 1
+
+    rates, overall = {}, {}
+    for a in order:
+        b = counts[a]
+        n = b["n_in"]
+        overall[a] = {"n_in": n, "n_removed": b["n_removed"],
+                      "pct": (100.0 * b["n_removed"] / n) if n else None}
+        rates[a] = {c: (100.0 * b[c] / n) if n else None for c in criteria}
+    return {"rates": rates, "arms": order, "overall": overall, "criteria": criteria}
+
+
 def collect(tables, *, samplesheet_rows=None, samplesheet=None,
             n_in=None, n_removed=None) -> tuple:
     """Every figure this run's files can support, plus a note for every one they cannot.
@@ -596,6 +924,19 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     _try("F5", "tables/doublet_sweep.csv", lambda: _f5(tables))
     _try("F8", "tables/cluster_profile.csv", lambda: _f8(tables))
 
+    # THE DESIGN, computed once and shared by all three confounding figures so they cannot
+    # disagree about which factors are aliased. A samplesheet that will not parse is caught here
+    # rather than three times: `relations` degrades to an empty design and each `_try` below
+    # records its own reason.
+    try:
+        relations = design_relations(sheet)
+    except Exception as exc:                                            # noqa: BLE001
+        relations = {"factors": [], "levels": {}, "relations": [], "arms": None,
+                     "aliased_group": [], "samples": []}
+        notes["F16"] = (f"the design could not be read from the samplesheet - "
+                        f"{type(exc).__name__}: {exc}")
+    _try("F16", "the run's samplesheet", lambda: _f16(relations))
+
     if samples:
         try:
             percell = _percell(tables, samples)
@@ -630,6 +971,11 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
         emb_src = "tables/<sample>.embedding.csv + " + src
         _try("F10", emb_src, lambda: _f10(tables, percell, colour_by="doublet", fig_id="F10"))
         _try("F11", emb_src, lambda: _f10(tables, percell, colour_by="removed", fig_id="F11"))
+        # THE CONFOUNDING ESTIMATE. Both read the same per-cell tables every other applied-axis
+        # figure reads, so a number on them is the number the criteria were evaluated on.
+        _try("F17", src + " + the run's samplesheet",
+             lambda: _f17(percell, relations, sheet))
+        _try("F18", src + " + the run's samplesheet", lambda: _f18(percell, relations))
 
     # After the per-cell tables, because that is where the denominator comes from: F9 draws each
     # criterion's unique removals against the population they were removed FROM, and a bar chart

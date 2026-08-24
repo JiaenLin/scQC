@@ -74,6 +74,7 @@ integration and differential testing.
 | `total_counts` | float | UMI in this nucleus — **the value the UMI floor was applied to** |
 | `n_genes` | float | genes detected — the value the gene floor was applied to |
 | `pct_counts_mt` | float | mitochondrial percentage — the value the ceiling was applied to |
+| `pct_counts_ribo` | float / **column absent** | ribosomal percentage, over the gene class the samplesheet's `ribo_pattern` selects. **Nothing is filtered on it.** Present only where the per-cell table measured it — the column is absent, never all-blank |
 | `doublet_score` | float / absent | the detector's score, where the call file carried one |
 | `doublet_class` | label / absent | `singlet` / `doublet`, or absent where never scored |
 | `cluster` | label | its cluster in that library's clustering. A **label**, not a number — cluster ids read as integers and are not |
@@ -84,10 +85,20 @@ integration and differential testing.
 
 Whatever the input object already carried is preserved alongside these.
 
-**The first five are the values the filter read**, carried onto the object so a reader can see why
-any nucleus survived without recomputing anything. They come from the per-cell table rather than
-being recomputed at write time, so the object provably holds the numbers the criteria were
-evaluated on — recomputing would give the same answers and could not prove it.
+**These are the values the filter read**, carried onto the object so a reader can see why any
+nucleus survived without recomputing anything. They come from the per-cell table rather than being
+recomputed at write time, so the object provably holds the numbers the criteria were evaluated on
+— recomputing would give the same answers and could not prove it.
+
+`pct_counts_ribo` is the exception and is carried on the same terms for a different reason: it is
+measured beside `pct_counts_mt` in step 7 and no criterion reads it, so it decided nothing. It is
+here because it is the one QC axis that could not otherwise be checked without going back to the
+matrix, and because the report's confounding block (F17) draws it across the design.
+
+> **An optional column is carried only where it holds something.** A column whose every value is
+> missing has no type to infer from, and `_annotation_column` would type it as a categorical with
+> no categories — the string path, on an object being written to h5ad. Absent is the honest state
+> and it is also the safe one.
 
 > **Absent is a third state and is preserved as one.** A barcode step 6 never labelled, or a
 > cluster missing from the profile, leaves these `None` — never `False`, never `0`. *"This cluster
@@ -157,7 +168,7 @@ All CSV, all readable with the standard library alone.
 | `<sample>.light_floor.csv` | library | that library's export: how many barcodes cleared the floor, how many sat below it, how many were not selected |
 | `<sample>.doublet_sweep.csv` | setting | the called rate at each swept `dbr.sd` for that library. `--dbr-sd-sweep` only |
 | `mito_ceiling_per_sample.csv` | library | quartiles, `derived`, `ceiling`, `clamped`, and **the population it was derived over** |
-| `<sample>.percell.csv` | **barcode** | every barcode the library held: the four measured values, the doublet score and class, and which of the five criteria fired. Apply mode only |
+| `<sample>.percell.csv` | **barcode** | every barcode the library held: the measured values (`total_counts`, `n_genes`, `pct_counts_mt`, `pct_counts_ribo`, `nuclear_fraction`), the doublet score and class, and which of the criteria fired. Apply mode only. `pct_counts_ribo` is **present only where it was measured** — the column is absent, never blank, when the object arrived with QC metrics that did not include it |
 | `ambient_lr_diagnostics.csv` | library | `fraction_removed`, `convergence_indicator`, `measured` |
 | `thresholds_per_sample.csv` | library | every threshold the run derived, each column marked *per library* or *cohort constant* |
 

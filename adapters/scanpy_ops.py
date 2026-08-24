@@ -2970,6 +2970,24 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     genes = _float_array(adata.obs["n_genes_by_counts"])
     mt = _float_array(adata.obs["pct_counts_mt"])
 
+    # THE RIBOSOMAL PERCENTAGE, PUBLISHED ONLY WHERE IT EXISTS.
+    #
+    # `qc_metrics` has always computed `pct_counts_ribo` beside `pct_counts_mt`, and it has never
+    # left this op: the per-cell table carried four measured values and this was the fifth. It is
+    # not a criterion and does not become one here - nothing is filtered on it - but it is the one
+    # QC axis a reader could not check without going back to the matrix.
+    #
+    # PRESENT OR ABSENT, NEVER BLANK. This op computes the metrics itself only when the object
+    # arrives without them; one handed in with `total_counts` already present may carry no
+    # ribosomal column, and the honest table then has no such column at all. A column present and
+    # empty on every row is not "not measured" - it is a column, and every reader of this file
+    # would need a private rule for telling the two apart. It is also the shape that breaks
+    # things: an all-empty text column is what pandas hands to its Arrow string backend, which
+    # raises outright in an interpreter without pyarrow, so one absent metric would take down
+    # every consumer of the per-cell table rather than the one figure that wanted it.
+    ribo = (_float_array(adata.obs["pct_counts_ribo"])
+            if "pct_counts_ribo" in adata.obs.columns else None)
+
     # The object holds what the denoiser produced; a barcode left with no counts is not a cell it
     # called. Recorded as its own criterion rather than folded into the UMI floor, or the ledger
     # would say a droplet was removed for being shallow when it was never a cell.
@@ -3067,7 +3085,8 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
         # `nuclear_fraction` sits beside `pct_counts_mt` because the two are the criterion's two
         # axes and a reader checking `fail_mito_nf` needs both. BLANK where undefined - never 0.
         w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
-                    "pct_counts_mt", "nuclear_fraction",
+                    "pct_counts_mt", *(["pct_counts_ribo"] if ribo is not None else []),
+                    "nuclear_fraction",
                     "doublet_score", "doublet_class", "doublet_scored",
                     *APPLY_CRITERIA, "removed", "keep"])
         for i, b in enumerate(adata.obs_names):
@@ -3075,6 +3094,8 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                         "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
                         "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
                         "" if mt[i] != mt[i] else f"{mt[i]:.6f}",
+                        *([] if ribo is None else
+                          ["" if ribo[i] != ribo[i] else f"{ribo[i]:.6f}"]),
                         "" if nf_values[i] is None else f"{float(nf_values[i]):.6f}",
                         "" if _unknown(dbl_score[i]) else f"{float(dbl_score[i]):.6f}",
                         "" if _unknown(dbl_class[i]) else str(dbl_class[i]),

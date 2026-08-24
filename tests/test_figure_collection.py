@@ -34,7 +34,15 @@ sys.path.insert(0, str(ROOT))
 from report.collect import DENSITY_FIGURES, UNAVAILABLE, collect  # noqa: E402
 
 PASS, FAIL = [], []
-SAMPLES = ("libA", "libB")
+
+#: THREE libraries, not two, and the third is what makes the design testable.
+#:
+#: `_design()` admits a column as a factor only when its level count is at most n-1, which is how
+#: it refuses an identifier - a column with one library per level. On a TWO-library fixture that
+#: ceiling is 1 and no column can ever pass it, so every design-aware figure (F2's by-design
+#: panel, and the whole confounding block) was assembled against a cohort that has no design by
+#: construction. The suite reported PASS for figures whose design code had never run.
+SAMPLES = ("libA", "libB", "libC")
 
 
 def check(name, cond, detail=""):
@@ -63,7 +71,7 @@ def build_tables(tables: Path) -> None:
           [["scope", "cohort constant", "per library", "cohort constant",
             "per library", "cohort constant", "per library"]]
           + [[s, 200, 340, 350, 250, 260, ceil]
-             for s, ceil in zip(SAMPLES, (12.5, 19.75))])
+             for s, ceil in zip(SAMPLES, (12.5, 19.75, 15.25))])
 
     write(tables / "ambient_summary.csv", ["sample", "fraction_removed_overall"],
           [[s, 0.11] for s in SAMPLES])
@@ -113,18 +121,32 @@ def build_tables(tables: Path) -> None:
     for s in SAMPLES:
         cells = []
         emb = []
+        # The libraries are deliberately OFFSET from each other - each carries `shift` on every
+        # measured axis - so a figure that pools the arms, or one that draws a per-library median
+        # where it means a per-arm one, comes out visibly wrong instead of coincidentally right.
+        shift = SAMPLES.index(s)
         for i in range(300):
             bc = f"{s}_{i:04d}"
             scored = i % 4 != 0                      # a quarter below the light floor: UNKNOWN
             doublet = scored and i % 9 == 0
             removed = doublet or i % 11 == 0
-            cells.append([bc, s, 120 + 7 * i, 40 + 3 * (i % 210), 1.5 + (i % 37),
-                          scored, "doublet" if doublet else ("singlet" if scored else ""),
+            cells.append([bc, s, True, 120 + 7 * i + 40 * shift,
+                          40 + 3 * (i % 210) + 5 * shift, 1.5 + (i % 37) + shift,
+                          6.0 + (i % 11) * 0.5 + shift, 0.30 + (i % 50) / 200.0,
+                          0.01 * (i % 60), "doublet" if doublet else ("singlet" if scored else ""),
+                          scored,
+                          i % 11 == 0, i % 23 == 0, doublet,
                           removed, not removed])
             emb.append([bc, s, math.cos(i / 7.0) * 4, math.sin(i / 5.0) * 4, True, i % 2])
+        # EVERY COLUMN STEP 7 WRITES, in its order. `pct_counts_ribo` is among them, and the
+        # `fail_*` columns are here because F18 attributes a removal to a criterion from THIS
+        # file - the ledger names only what left, and cannot give a denominator.
         write(tables / f"{s}.percell.csv",
-              ["barcode", "sample", "total_counts", "n_genes", "pct_counts_mt",
-               "doublet_scored", "doublet_class", "removed", "keep"], cells)
+              ["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
+               "pct_counts_mt", "pct_counts_ribo", "nuclear_fraction",
+               "doublet_score", "doublet_class", "doublet_scored",
+               "fail_umi_floor", "fail_mito_ceiling", "fail_doublet",
+               "removed", "keep"], cells)
         write(tables / f"{s}.embedding.csv",
               ["barcode", "sample", "x", "y", "clustered", "cluster"], emb)
 
@@ -146,8 +168,20 @@ print("\nassembling every figure from a finished run's tables/")
 with tempfile.TemporaryDirectory() as tmp:
     tables = Path(tmp) / "tables"
     build_tables(tables)
-    sheet = [{"sample": s, "age": a, "diet": d}
-             for s, a, d in (("libA", "young", "chow"), ("libB", "aged", "hfd"))]
+    # A DESIGN WITH A CONFOUND IN IT AND ONE FACTOR THAT IS FREE OF IT. age, diet and chemistry
+    # partition these libraries identically - they are one factor as far as this cohort can tell -
+    # while batch cuts across all three. A fixture whose factors were all aliased would pass
+    # whether or not the classification worked.
+    sheet = [{"sample": s, "age": a, "diet": d, "chemistry": c, "batch": b}
+             for s, a, d, c, b in (("libA", "young", "chow", "v2", "A"),
+                                   ("libB", "aged", "hfd", "v3", "A"),
+                                   ("libC", "young", "chow", "v2", "B"))]
+    # CONSTANT, so `_design` excludes them as factors - and present, so F17 can print the pattern
+    # behind each percentage on the axis that carries it. A ribosomal percentage whose pattern is
+    # not on the page is a number no reader can check, and this one has matched a ribosomal
+    # protein KINASE before now (docs/PRINCIPLES.md section 1).
+    for row in sheet:
+        row["mt_prefix"], row["ribo_pattern"] = "mt-", "^Rp[sl]"
     figures, notes = collect(tables, samplesheet_rows=sheet)
 
     # The five that had a "not produced" note are exactly the ones this change is about, so they
@@ -157,6 +191,8 @@ with tempfile.TemporaryDirectory() as tmp:
               notes.get(fid, "absent with no note, which is worse"))
     for fid in ("F2", "F3", "F4", "F7", "F8", "F9", "F12"):
         check(f"{fid} still assembles", fid in figures, notes.get(fid, ""))
+    for fid in ("F16", "F17", "F18"):
+        check(f"{fid} is assembled", fid in figures, notes.get(fid, "absent with no note"))
     check("no figure is left with a note", not notes, str(sorted(notes)))
 
     print("\nthe applied axes carry values, not empty panels")
@@ -188,6 +224,60 @@ with tempfile.TemporaryDirectory() as tmp:
                           or {}).values())
     check("F15 is restricted to the population its ceiling was derived over",
           0 < f15_n < f7_n, f"F15={f15_n} F7={f7_n}")
+
+    print("\nthe confounding block reads the design exactly, and is not a statistic")
+    f16 = (figures.get("F16", {}).get("data") or {})
+    rel = {(r["a"], r["b"]): r["kind"] for r in (f16.get("relations") or [])}
+    check("F16 found every discovered factor", sorted(f16.get("factors") or [])
+          == ["age", "batch", "chemistry", "diet"], str(f16.get("factors")))
+    check("F16 compared every pair", len(rel) == 6, f"{len(rel)} pairs")
+    check("age and chemistry are ALIASED - the confound the fixture contains",
+          rel.get(("age", "chemistry")) == "aliased", str(rel))
+    check("age and diet are ALIASED", rel.get(("age", "diet")) == "aliased", str(rel))
+    check("batch is CROSSED with age, and is not swept into the aliased group",
+          rel.get(("age", "batch")) == "crossed", str(rel))
+    arms = f16.get("arms") or {}
+    check("the aliasing leaves two arms", len(arms) == 2, str(sorted(arms)))
+    check("...and each arm's label names ALL THREE aliased factors, so a reader cannot "
+          "attribute a difference to one of them",
+          all(len(str(a).split("\n")) == 3 for a in arms), str(sorted(arms)))
+    check("the two same-arm libraries are in one arm",
+          any(sorted(v) == ["libA", "libC"] for v in arms.values()), str(arms))
+
+    f17 = (figures.get("F17", {}).get("data") or {})
+    mets = {m["key"]: m for m in (f17.get("metrics") or [])}
+    from report.collect import CONFOUNDING_METRICS
+
+    check("F17 draws every QC metric the per-cell table carries",
+          set(mets) == {k for k, _l, _g in CONFOUNDING_METRICS},
+          f"missing {sorted({k for k, _l, _g in CONFOUNDING_METRICS} - set(mets))}"
+          f" absent={sorted(f17.get('absent') or {})}")
+    check("...including the ribosomal percentage, which step 7 measures and used to discard",
+          "pct_counts_ribo" in mets, str(sorted(mets)))
+    check("...and the axis names the pattern the percentage came from",
+          "^Rp[sl]" in str(mets.get("pct_counts_ribo", {}).get("label", "")),
+          str(mets.get("pct_counts_ribo", {}).get("label")))
+    check("F17 has values in both arms for every metric",
+          all(len(m.get("by_arm") or {}) == 2 for m in mets.values()),
+          str({k: sorted(m.get("by_arm") or {}) for k, m in mets.items() if
+               len(m.get("by_arm") or {}) != 2}))
+    # THE LIBRARY MEDIANS ARE THE FIGURE'S ARGUMENT. Pooled per arm they would be two numbers
+    # and the panel would say nothing about whether the arm or its libraries produced the gap.
+    meds = (mets.get("total_counts") or {}).get("library_medians") or {}
+    check("F17 keeps each library's own median inside its arm",
+          sorted(len(v) for v in meds.values()) == [1, 2], str(meds))
+    check("F17 states the population it drew over",
+          "keep" in str(f17.get("population", "")), str(f17.get("population")))
+    check("F17 declares the cap its violins were drawn under",
+          isinstance(f17.get("cap"), int) and f17["cap"] > 0, str(f17.get("cap")))
+
+    f18 = (figures.get("F18", {}).get("data") or {})
+    check("F18 attributes removal to every criterion the per-cell table carries",
+          sorted(f18.get("criteria") or [])
+          == ["fail_doublet", "fail_mito_ceiling", "fail_umi_floor"], str(f18.get("criteria")))
+    check("F18's denominator is every barcode the arm held, not the ones that survived",
+          sum(v["n_in"] for v in (f18.get("overall") or {}).values()) == 300 * len(SAMPLES),
+          str({k: v.get("n_in") for k, v in (f18.get("overall") or {}).items()}))
 
     print("\nthe data each builder emits is what its function accepts")
     # Bound OUTSIDE the guard below: report.figures imports matplotlib inside a function, not at
@@ -237,6 +327,56 @@ with tempfile.TemporaryDirectory() as tmp:
           notes.get("F5", "")[:60])
     check("every unavailable figure carries a note",
           all(fid in notes for fid in UNAVAILABLE), str(sorted(set(UNAVAILABLE) - set(notes))))
+
+# ------------------------------------------------------------------------------------------
+# The relationships a three-library fixture CANNOT contain.
+#
+# `nested` needs two factors with different level counts, and a clean crossed design needs four
+# libraries. Both are checked directly against `design_relations`, which is pure - it takes
+# samplesheet rows and returns sets - rather than by inflating the fixture above until it can
+# express every case. A fixture grown to cover an edge case stops being a plausible run.
+
+print("\nthe relationships a three-library fixture cannot hold")
+from report.collect import design_relations  # noqa: E402
+
+
+def rel_of(rows):
+    return {(r["a"], r["b"]): r["kind"] for r in design_relations(rows)["relations"]}
+
+
+nested_rows = [{"sample": "s1", "grp": "a1", "arm": "b1"},
+               {"sample": "s2", "grp": "a1", "arm": "b1"},
+               {"sample": "s3", "grp": "a2", "arm": "b2"},
+               {"sample": "s4", "grp": "a3", "arm": "b2"}]
+check("a coarsening of another factor is NESTED, not aliased and not crossed",
+      rel_of(nested_rows).get(("arm", "grp")) == "nested", str(rel_of(nested_rows)))
+check("...and nesting alone leaves no arm to compare - `arms` is None, not an invented contrast",
+      design_relations(nested_rows)["arms"] is None,
+      str(design_relations(nested_rows)["arms"]))
+
+crossed_rows = [{"sample": "s1", "age": "young", "diet": "chow"},
+                {"sample": "s2", "age": "young", "diet": "hfd"},
+                {"sample": "s3", "age": "aged", "diet": "chow"},
+                {"sample": "s4", "age": "aged", "diet": "hfd"}]
+check("a fully crossed 2x2 is CROSSED", rel_of(crossed_rows).get(("age", "diet")) == "crossed",
+      str(rel_of(crossed_rows)))
+check("...and a clean design yields no arms, so F17 and F18 report an absence rather than a "
+      "contrast nobody asked for", design_relations(crossed_rows)["arms"] is None)
+
+check("one factor cannot be confounded with itself",
+      design_relations([{"sample": "s1", "age": "young"}, {"sample": "s2", "age": "aged"},
+                        {"sample": "s3", "age": "young"}])["relations"] == [])
+check("a samplesheet with no rows produces a design with no factors and does not raise",
+      design_relations([]) == {"factors": [], "levels": {}, "relations": [], "arms": None,
+                               "aliased_group": [], "samples": []})
+
+# A CONSTANT COLUMN IS NOT A FACTOR, and this is the one that would quietly wreck the section:
+# `mt_prefix` and `ribo_pattern` are samplesheet columns on every real run, and a design that
+# counted them would report the reference as confounded with the biology.
+const_rows = [dict(r, mt_prefix="mt-", ribo_pattern="^Rp[sl]") for r in crossed_rows]
+check("a column that is constant across the cohort is not a design factor",
+      sorted(design_relations(const_rows)["factors"]) == ["age", "diet"],
+      str(design_relations(const_rows)["factors"]))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

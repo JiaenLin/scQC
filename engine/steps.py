@@ -2261,21 +2261,33 @@ def _deliverable_annotations(pipeline, ap, sample, kept, profile, percell) -> st
     # percentage and no doublet call - `qc_metrics()` is computed inside each op, on a freshly
     # loaded object, and was never written back - so a reader could not see why any nucleus had
     # survived, and had to recompute all four to find out. Every one of them was already in hand.
+    # `pct_counts_ribo` joins them for the same reason and on the same terms: computed in step 7,
+    # never filtered on, and previously discarded at the end of the op that measured it.
     #
     # Taken from the per-cell table rather than recomputed here, so the object provably carries
     # the numbers the criteria were evaluated on. Recomputing would give the same answers and
     # would not be able to prove it.
     measured = {str(r["barcode"]): r for r in (percell or [])}
+
+    # AN OPTIONAL COLUMN IS CARRIED ONLY WHERE THE TABLE ACTUALLY MEASURED IT, and the condition
+    # is not fussiness. `_annotation_column` infers a column's dtype from its own values; a column
+    # whose every value is missing has no type to infer and falls through to a categorical with no
+    # categories - the string path, on an object about to be written to h5ad. Carrying a column
+    # only when it holds something cannot reach that branch. The check is on VALUES, not on the
+    # header: step 7 omits the header entirely when it has nothing to write, and a future column
+    # that appears empty would be caught by the same test without anyone remembering to add one.
+    optional = [c for c in ("pct_counts_ribo",)
+                if any(str((r or {}).get(c, "") or "").strip() for r in (percell or []))]
+    value_columns = ["total_counts", "n_genes", "pct_counts_mt", *optional,
+                     "doublet_score", "doublet_class"]
     for row in obs_rows:
         m = measured.get(str(row["barcode"])) or {}
-        for col in ("total_counts", "n_genes", "pct_counts_mt", "doublet_score",
-                    "doublet_class"):
+        for col in value_columns:
             v = m.get(col)
             row[col] = None if v is None or str(v).strip() == "" else v
 
     out = pipeline.scratch / f"{sample}_apply.annotations.csv"
-    fields = ["barcode", "total_counts", "n_genes", "pct_counts_mt",
-              "doublet_score", "doublet_class",
+    fields = ["barcode", *value_columns,
               "cluster", "cluster_FLAG", "cluster_WATCH",
               "cluster_pct_doublet", "cluster_median_pct_mt"]
     with out.open("w", newline="", encoding="utf-8") as fh:

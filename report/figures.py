@@ -1479,6 +1479,469 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
     return fig
 
 
+# ------------------------------------------------------- F16-F18 · the confounding estimation
+#
+# THESE THREE ARE NOT A STEP. Every other figure here illustrates something the pipeline DID;
+# these illustrate something the EXPERIMENT IS, and no pipeline can change it. If two factors
+# partition the libraries identically they stay that way however well the libraries were made,
+# and no threshold, no correction and no quantity of data separates them afterwards.
+#
+# The order is the order the questions have to be asked in:
+#
+#   F16  WHAT is confounded with what - read off the samplesheet by exact comparison of the
+#        partitions. Not a statistic and not a p-value: two factors either induce the same
+#        partition of the libraries or they do not, and that is a fact about the design.
+#   F17  HOW FAR APART the confounded arms sit on every QC metric, drawn against how far apart
+#        the LIBRARIES INSIDE an arm sit. The second is what makes the first readable: an arm
+#        difference no larger than the spread between libraries of the same arm is a library
+#        effect wearing the design's name.
+#   F18  WHETHER THE FILTER made it worse - per criterion, per arm. This is the one part of the
+#        confounding the pipeline itself creates, and therefore the one it must show.
+
+#: How two design factors sit against each other. The colour AND the word are drawn in every
+#: cell, so the matrix survives greyscale and a reader who has not read the legend.
+RELATION_COLOURS = {"aliased": PALETTE["refuse"], "nested": PALETTE["review"],
+                    "crossed": PALETTE["ok"]}
+
+#: What each relationship entails for a claim. Printed on the figure: the word on its own does
+#: not tell a reader what they may and may not conclude, which is the only thing they need.
+RELATION_MEANING = {
+    "aliased": "identical partition of the libraries - no analysis of these data can attribute "
+               "a difference to one of the two rather than the other",
+    "nested": "one is fixed once the other is known - its effect sits inside the other's and "
+              "cannot be taken back out of it",
+    "crossed": "both levels of each occur with both levels of the other - separable",
+}
+
+#: Level colours, one per level within a factor. `unknown` is deliberately NOT among them:
+#: PALETTE reserves it for never-examined, and a design level borrowing it would read as an
+#: absence of information rather than as a level somebody chose.
+LEVEL_COLOURS = ("#0072B2", "#E69F00", "#009E73", "#56B4E9", "#D55E00", "#F0E442")
+
+
+def _count(v) -> str:
+    """A count for an annotation, or a stated absence. Never a silent blank."""
+    if _unknown(v):
+        return NOT_SUPPLIED
+    try:
+        return f"{int(v):,}"
+    except (TypeError, ValueError, OverflowError):
+        return f"{v!r}"
+
+
+def _ink_on(hex_colour: str) -> str:
+    """Black or white text, whichever stays legible on the given fill.
+
+    Relative luminance rather than a per-colour lookup, so editing the palette later cannot
+    leave white text on yellow - which is invisible in print and reads as an empty cell.
+    """
+    h = str(hex_colour).lstrip("#")
+    try:
+        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return "#000000"
+    return "#000000" if (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.55 else "#FFFFFF"
+
+
+def _level_colours(levels) -> dict:
+    """A colour per level, stable for a given ordering of levels."""
+    return {lv: LEVEL_COLOURS[i % len(LEVEL_COLOURS)] for i, lv in enumerate(levels)}
+
+
+def _wrapped(text: str, width: int) -> str:
+    lines = []
+    for para in str(text).split("\n"):
+        lines += textwrap.wrap(para, width) or [""]
+    return "\n".join(lines)
+
+
+def _rect():
+    """`matplotlib.patches.Rectangle`, imported where it is used.
+
+    `import matplotlib` does NOT bind `matplotlib.patches`; it is a submodule and reaching it
+    through the package attribute works only once something else has imported it. Every figure
+    here has to be drawable on its own.
+    """
+    from matplotlib.patches import Rectangle
+    return Rectangle
+
+
+def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, arms=None,
+                       dpi: int = DEFAULT_DPI):
+    """F16 - what is confounded with what, before any number is read?
+
+    `levels` maps a factor to `{sample: level}`; `relations` is a list of
+    `{"a", "b", "kind", "detail"}` with `kind` in RELATION_COLOURS; `arms` maps an arm label to
+    the libraries in it - an arm being what is left once the aliased factors are collapsed, and
+    the unit F17 and F18 compare.
+
+    THE LEFT PANEL IS THE EVIDENCE, THE RIGHT PANEL IS THE READING OF IT. The grid is the
+    samplesheet redrawn and nothing is computed to make it; if two columns carry the same block
+    structure the two factors are aliased, and that is visible in the grid before the matrix
+    beside it says so in a word. A reader who distrusts the matrix can check it by eye.
+    """
+    Rectangle = _rect()
+    if not _mapping(levels):
+        raise TaskFailure("F16 needs the design: a mapping of factor -> {sample: level}")
+    facs = [f for f in (factors or sorted(levels)) if f in levels]
+    if not facs:
+        raise TaskFailure("F16 was given a design with no factors to draw")
+    names = list(samples or sorted({s for m in levels.values() for s in m}))
+    if not names:
+        raise TaskFailure("F16 was given no libraries to draw")
+
+    rels = [r for r in (relations or []) if _mapping(r)]
+    fig = _new_fig((max(7.6, 1.5 * len(facs) + 5.0), max(3.4, 0.34 * len(names) + 2.4)), dpi)
+    gs = fig.add_gridspec(1, 2, width_ratios=(max(1.0, 0.95 * len(facs)),
+                                              max(1.6, 1.05 * len(facs))), wspace=0.5)
+
+    # --- the samplesheet as a grid: one row per library, one column per discovered factor
+    ax = fig.add_subplot(gs[0, 0])
+    palettes = {f: _level_colours(sorted({str(v) for v in levels[f].values()
+                                          if not _unknown(v) and str(v).strip()}))
+                for f in facs}
+    for j, f in enumerate(facs):
+        pal = palettes[f]
+        for i, s in enumerate(names):
+            raw = levels[f].get(s)
+            if _unknown(raw) or not str(raw).strip():
+                colour, text, ink, hatch = "#FFFFFF", "not stated", PALETTE["unknown"], \
+                    UNKNOWN_HATCH
+            else:
+                text = str(raw)
+                colour, hatch = pal.get(text, PALETTE["unknown"]), None
+                ink = _ink_on(colour)
+            ax.add_patch(Rectangle((j, len(names) - 1 - i), 1, 1, facecolor=colour,
+                                   edgecolor="white", linewidth=1.2, hatch=hatch))
+            ax.text(j + 0.5, len(names) - 1 - i + 0.5, text, ha="center", va="center",
+                    fontsize=6.4, color=ink, fontweight="bold")
+    ax.set_xlim(0, len(facs))
+    ax.set_ylim(0, len(names))
+    ax.set_xticks([j + 0.5 for j in range(len(facs))])
+    ax.set_xticklabels(facs, fontsize=8, rotation=18, ha="right")
+    ax.set_yticks([len(names) - 1 - i + 0.5 for i in range(len(names))])
+    ax.set_yticklabels(names, fontsize=7)
+    ax.tick_params(length=0)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_title(f"the samplesheet, redrawn · {n_label(len(names), 'libraries')}", fontsize=8)
+
+    # --- the arm bracket, on the RIGHT so it cannot collide with the library names. Drawn only
+    # where an arm's rows are CONTIGUOUS: a bracket spanning rows that are not adjacent would
+    # claim a grouping the picture does not show.
+    if _mapping(arms):
+        index = {s: i for i, s in enumerate(names)}
+        for label, members in arms.items():
+            rows = sorted(index[s] for s in members if s in index)
+            if not rows or rows != list(range(rows[0], rows[-1] + 1)):
+                continue
+            top, bottom = len(names) - rows[0], len(names) - 1 - rows[-1]
+            ax.annotate("", xy=(len(facs) + 0.10, bottom + 0.06),
+                        xytext=(len(facs) + 0.10, top - 0.06), annotation_clip=False,
+                        arrowprops={"arrowstyle": "-", "linewidth": 2.6,
+                                    "color": PALETTE["refuse"]})
+            _label(ax, len(facs) + 0.20, (top + bottom) / 2.0,
+                   str(label).replace("\n", " / "), ha="left", va="center", fontsize=6.4,
+                   color=PALETTE["refuse"], fontweight="bold")
+
+    # --- the reading: every pair of factors, compared exactly
+    ax2 = fig.add_subplot(gs[0, 1])
+    kind_of = {}
+    for r in rels:
+        a, b, kind = str(r.get("a")), str(r.get("b")), str(r.get("kind"))
+        kind_of[(a, b)] = kind_of[(b, a)] = kind
+    n = len(facs)
+    for i, a in enumerate(facs):
+        for j, b in enumerate(facs):
+            y = n - 1 - i
+            if i == j:
+                ax2.add_patch(Rectangle((j, y), 1, 1, facecolor="#F2F2F2", edgecolor="white",
+                                        linewidth=1.2))
+                continue
+            kind = kind_of.get((a, b))
+            known = kind in RELATION_COLOURS
+            colour = RELATION_COLOURS.get(kind, PALETTE["unknown"])
+            ax2.add_patch(Rectangle((j, y), 1, 1, facecolor=colour, edgecolor="white",
+                                    linewidth=1.2, hatch=None if known else UNKNOWN_HATCH))
+            ax2.text(j + 0.5, y + 0.5, kind if known else NOT_SUPPLIED, ha="center",
+                     va="center", fontsize=6.2, color=_ink_on(colour), fontweight="bold")
+    ax2.set_xlim(0, n)
+    ax2.set_ylim(0, n)
+    ax2.set_xticks([j + 0.5 for j in range(n)])
+    ax2.set_xticklabels(facs, fontsize=7.5, rotation=18, ha="right")
+    ax2.set_yticks([n - 1 - i + 0.5 for i in range(n)])
+    ax2.set_yticklabels(facs, fontsize=7.5)
+    ax2.tick_params(length=0)
+    for side in ("top", "right", "bottom", "left"):
+        ax2.spines[side].set_visible(False)
+    ax2.set_title("every pair of factors, compared exactly", fontsize=8)
+
+    present = [k for k in ("aliased", "nested", "crossed")
+               if any(str(r.get("kind")) == k for r in rels)]
+    if present:
+        _label(ax2, 0.0, -0.6,
+               _wrapped("   ".join(f"{k} = {RELATION_MEANING[k]}" for k in present), 96),
+               fontsize=6.4, color=PALETTE["muted"], ha="left", va="top")
+
+    n_aliased = sum(1 for r in rels if str(r.get("kind")) == "aliased")
+    _finish(fig, "F16 - what is confounded with what",
+            (f"{n_aliased} pair(s) of design factors partition the libraries identically"
+             if n_aliased else
+             "no pair of design factors partitions the libraries identically")
+            + " - computed from the samplesheet by exact comparison, not estimated")
+    return fig
+
+
+def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, absent=None,
+                           dpi: int = DEFAULT_DPI):
+    """F17 - how far apart do the confounded arms sit, and is that further than their libraries?
+
+    `metrics` is a list of `{"key", "label", "log", "by_arm": {arm: [values]},
+    "library_medians": {arm: {sample: median}}}`. One panel per metric, one violin per arm, and
+    every library's OWN median drawn on top of the arm it belongs to.
+
+    WHY THE LIBRARY MEDIANS ARE THE POINT OF THIS FIGURE
+
+    A violin per arm shows a difference. It cannot show whether that difference is the arm or the
+    libraries that happen to be in it - and in a confounded design those are the same libraries
+    every time, which is exactly why the design is confounded. Drawing each library's own median
+    inside its arm puts the two spreads on one axis: if the libraries of one arm sit as far from
+    each other as the arms sit from each other, the arm difference is not evidence about the
+    factor, whatever a test of it would report.
+
+    So every panel draws and prints two quantities - the GAP between the arms' library-median
+    centres, and the widest WITHIN-ARM span of library medians. Their ratio is this panel's
+    estimate of how much of the metric the design could even in principle account for. IT IS AN
+    ESTIMATE AND THE FIGURE SAYS SO. There is no test here and no p-value: a confounded factor
+    cannot be tested, which is the whole reason this section exists.
+
+    `absent` maps a metric label to the reason it could not be drawn, and those panels are drawn
+    as stated absences - a panel silently left out reads as a metric nobody thought worth showing.
+    """
+    import math
+
+    Rectangle = _rect()
+    specs = [m for m in (metrics or []) if _mapping(m)]
+    gone = _mapping(absent)
+    if not specs and not gone:
+        raise TaskFailure("F17 needs at least one metric, or a stated reason for every absence")
+    order = list(arms or sorted({a for m in specs for a in _mapping(m.get("by_arm"))}))
+    if not order:
+        raise TaskFailure("F17 needs the confounded arms to compare")
+    arm_x = {a: float(i) for i, a in enumerate(order)}
+
+    total = len(specs) + len(gone)
+    rows, cols = grid_shape(total)
+    fig = _new_fig((3.5 * cols + 0.6, 3.05 * rows + 1.1), dpi)
+
+    for idx, spec in enumerate(specs):
+        ax = fig.add_subplot(rows, cols, idx + 1)
+        log = bool(spec.get("log"))
+        label = label_text(spec.get("label"), f"metric ({NOT_SUPPLIED} - name it)")
+        by_arm = _mapping(spec.get("by_arm"))
+        med_by_arm = _mapping(spec.get("library_medians"))
+
+        data, positions, dropped = [], [], 0
+        for arm in order:
+            vals = [float(v) for v in (by_arm.get(arm) or []) if not _unknown(v)]
+            if log:
+                positive = [math.log10(v) for v in vals if v > 0]
+                dropped += len(vals) - len(positive)
+                vals = positive
+            if not vals:
+                continue
+            data.append(vals)
+            positions.append(arm_x[arm])
+        if not data:
+            _blank_panel(ax, f"{label}\n\nno values in any arm")
+            continue
+
+        parts = ax.violinplot(data, positions=positions, widths=0.62, showextrema=False,
+                              showmedians=False)
+        for body in parts["bodies"]:
+            body.set_facecolor(PALETTE["before"])
+            body.set_alpha(0.95)
+            body.set_edgecolor("none")
+
+        # --- every library's own median, inside its own arm. This is the comparison.
+        centres, spans = {}, {}
+        for arm in order:
+            meds = {s: float(v) for s, v in _mapping(med_by_arm.get(arm)).items()
+                    if not _unknown(v) and (not log or float(v) > 0)}
+            if not meds:
+                continue
+            y = {s: (math.log10(v) if log else v) for s, v in meds.items()}
+            ordered = sorted(y.values())
+            centres[arm] = ordered[len(ordered) // 2]
+            spans[arm] = (ordered[0], ordered[-1])
+            x0 = arm_x[arm]
+            ax.add_patch(Rectangle((x0 - 0.30, spans[arm][0]), 0.60,
+                                   max(spans[arm][1] - spans[arm][0], 0.0),
+                                   facecolor=PALETTE["review"], alpha=0.30,
+                                   edgecolor=PALETTE["review"], linewidth=0.9, zorder=3))
+            names_by_y = sorted(y, key=lambda name: y[name])
+            step = 0.0 if len(y) < 2 else 0.44 / (len(y) - 1)
+            # NAMED WHERE NAMING FITS. Above six libraries in an arm the names overplot each
+            # other into a grey smear, so only the extremes are named - which are the ones a
+            # reader is looking for anyway. The count is printed either way.
+            to_name = set(names_by_y) if len(names_by_y) <= 6 \
+                else {names_by_y[0], names_by_y[-1]}
+            for k, s in enumerate(names_by_y):
+                px = x0 - 0.22 + k * step
+                ax.plot([px], [y[s]], marker="o", markersize=3.8, color=PALETTE["after"],
+                        markeredgecolor="white", markeredgewidth=0.5, zorder=5)
+                if s in to_name:
+                    _annot(ax, str(s), (px, y[s]), textcoords="offset points", xytext=(4.5, 0),
+                           fontsize=5.4, color=PALETTE["muted"], va="center", zorder=6)
+            ax.hlines(centres[arm], x0 - 0.32, x0 + 0.32, color=PALETTE["ok"], linewidth=2.2,
+                      zorder=6)
+
+        # --- the two quantities, drawn and printed
+        note = None
+        if len(centres) >= 2:
+            cs = [centres[a] for a in order if a in centres]
+            lo, hi = min(cs), max(cs)
+            gap = hi - lo
+            widest = max((spans[a][1] - spans[a][0]) for a in spans)
+            xb = max(arm_x.values()) + 0.46
+            ax.annotate("", xy=(xb, lo), xytext=(xb, hi), annotation_clip=False,
+                        arrowprops={"arrowstyle": "<->", "linewidth": 1.2,
+                                    "color": PALETTE["refuse"]})
+            if log:
+                shown_gap = f"{10 ** gap:,.2f}x"
+                shown_span = f"{10 ** widest:,.2f}x"
+            else:
+                shown_gap, shown_span = f"{gap:,.3g}", f"{widest:,.3g}"
+            ratio = ("one library in every arm - not computable" if widest <= 0
+                     else f"gap / spread = {gap / widest:,.2f}")
+            note = (f"between the arms: {shown_gap}\n"
+                    f"widest spread WITHIN an arm: {shown_span}\n{ratio}")
+        elif centres:
+            note = "only one arm has library medians - there is nothing to compare it with"
+        if note:
+            _panel_note(ax, note, loc="upper left", wrap=32)
+
+        n_drawn = sum(len(v) for v in data)
+        _panel_note(ax, n_label(n_drawn, "nuclei drawn"), loc="lower left", wrap=30)
+
+        ax.set_xticks([arm_x[a] for a in order])
+        ax.set_xticklabels([str(a) for a in order], fontsize=6.6)
+        ax.set_xlim(min(arm_x.values()) - 0.62, max(arm_x.values()) + 0.80)
+        ax.set_ylabel(label, fontsize=7.5)
+        ax.margins(y=0.20)
+        if log:
+            from matplotlib.ticker import FuncFormatter
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{10 ** v:,.0f}"))
+            if dropped:
+                _panel_note(ax, f"{dropped:,} value(s) at or below zero are not on this log "
+                                f"axis", loc="lower right", wrap=28)
+        _tidy(ax)
+
+    for k, (label, reason) in enumerate(sorted(gone.items())):
+        ax = fig.add_subplot(rows, cols, len(specs) + k + 1)
+        _blank_panel(ax, f"{label}\n\n{reason}")
+
+    pop = label_text(population, f"population {NOT_SUPPLIED}")
+    cap_words = ("" if _unknown(cap) else
+                 f"; a violin is drawn from at most {int(cap):,} nuclei per arm, taken at an "
+                 f"even stride")
+    _finish(fig, "F17 - every QC metric across the confounded arms",
+            f"grey violin: every nucleus of the arm. black dots: each library's OWN median. "
+            f"amber band: the span those medians cover. blue rule: the arm's median of them. "
+            f"Over {pop}{cap_words}")
+    return fig
+
+
+def fig_f18_removal_by_arm(rates, *, arms=None, overall=None, criteria=None,
+                           dpi: int = DEFAULT_DPI):
+    """F18 - did the filter remove the same share from each confounded arm?
+
+    `rates` maps an arm to `{criterion: percent of that arm's barcodes the criterion fired on}`;
+    `overall` maps an arm to `{"n_in", "n_removed", "pct"}`.
+
+    A REMOVAL RATE THAT DIFFERS ACROSS THE ARMS OF A CONFOUNDED DESIGN IS THE ONE PART OF THE
+    CONFOUNDING THE PIPELINE ITSELF CREATES. Whatever the libraries were on arrival, if the
+    filter took twice as large a share out of one arm then the arms now differ for a reason with
+    nothing to do with the factor they are named after - and downstream neither sees it nor can
+    undo it.
+
+    The ratio between the extreme arms is printed on the left panel, because it is the number a
+    reader has come here for.
+    """
+    by_arm = _mapping(rates)
+    if not by_arm:
+        raise TaskFailure("F18 needs a per-arm removal rate for at least one arm")
+    order = list(arms or sorted(by_arm))
+    crits = list(criteria or sorted({c for m in by_arm.values() for c in _mapping(m)}))
+    tot = _mapping(overall)
+
+    fig = _new_fig((max(8.0, 0.62 * len(crits) * max(1, len(order)) + 4.6), 4.0), dpi)
+    gs = fig.add_gridspec(1, 2, width_ratios=(1.0, 2.4), wspace=0.32)
+
+    # --- left: the whole filter, per arm
+    ax = fig.add_subplot(gs[0, 0])
+    drawn = []
+    for i, a in enumerate(order):
+        entry = _mapping(tot.get(a))
+        if not _unknown(entry.get("pct")):
+            drawn.append((i, float(entry["pct"])))
+    if drawn:
+        ax.bar([i for i, _ in drawn], [p for _, p in drawn], width=0.58,
+               color=PALETTE["after"], zorder=3)
+        for i, p in drawn:
+            entry = _mapping(tot.get(order[i]))
+            ax.annotate(f"{p:.2f}%\n{_count(entry.get('n_removed'))} of "
+                        f"{_count(entry.get('n_in'))}", (i, p), textcoords="offset points",
+                        xytext=(0, 4), ha="center", fontsize=6.4, fontweight="bold")
+        vals = [p for _, p in drawn]
+        lo, hi = min(vals), max(vals)
+        ratio = ("not computable - an arm removed nothing" if lo <= 0 else f"{hi / lo:,.2f}x")
+        _panel_note(ax, f"widest ratio across the arms: {ratio}", loc="upper left", wrap=24,
+                    colour=PALETTE["refuse"])
+    else:
+        _blank_panel(ax, "no per-arm removal total was supplied")
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels([str(a) for a in order], fontsize=6.4)
+    ax.set_ylabel("removed (% of the arm's barcodes)", fontsize=7.5)
+    ax.margins(y=0.26)
+    ax.set_title("the filter as a whole", fontsize=8)
+    _tidy(ax)
+
+    # --- right: each criterion on its own
+    ax2 = fig.add_subplot(gs[0, 1])
+    if not crits:
+        _blank_panel(ax2, "no criterion rates were supplied")
+    else:
+        width = 0.8 / max(len(order), 1)
+        pal = _level_colours(order)
+        for k, a in enumerate(order):
+            row = _mapping(by_arm.get(a))
+            xs = [i - 0.4 + width * (k + 0.5) for i in range(len(crits))]
+            ys = [(0.0 if _unknown(row.get(c)) else float(row[c])) for c in crits]
+            ax2.bar(xs, ys, width=width * 0.9, label=str(a).replace("\n", " / "), color=pal[a],
+                    zorder=3, edgecolor="white", linewidth=0.4)
+            # A criterion the arm has no value for is NOT a criterion that fired on nothing.
+            # It is drawn in the never-examined colour, hatched, at the top of the axis.
+            for i, c in enumerate(crits):
+                if _unknown(row.get(c)):
+                    _annot(ax2, "no value", (xs[i], 0.0), textcoords="offset points",
+                           xytext=(0, 3), ha="center", fontsize=5.4,
+                           color=PALETTE["unknown"], rotation=90)
+        ax2.set_xticks(range(len(crits)))
+        ax2.set_xticklabels([str(c).replace("fail_", "").replace("_", " ") for c in crits],
+                            fontsize=6.8, rotation=22, ha="right")
+        ax2.set_ylabel("fired on (% of the arm's barcodes)", fontsize=7.5)
+        ax2.legend(fontsize=6.0, frameon=False, ncol=min(len(order), 2), loc="upper right")
+        ax2.set_title("each criterion on its own - criteria overlap, so these do not sum",
+                      fontsize=8)
+        _tidy(ax2)
+
+    _finish(fig, "F18 - what the filter removed from each confounded arm",
+            "a share that differs across the arms is a technical removal that will read as the "
+            "design downstream; the denominator is every barcode the arm held")
+    return fig
+
+
 #: Figure id -> the function that draws it.
 #:
 #: TWO IDS MAY SHARE A FUNCTION. The id is what the report positions, numbers and captions, so
@@ -1511,4 +1974,9 @@ FIGURE_FUNCTIONS = {
     # panels is the filter and not the chart.
     "F14": fig_f7_before_after,
     "F15": fig_f7_before_after,
+    # THE CONFOUNDING BLOCK. Not attached to a step: these three describe the DESIGN and
+    # what the filter did to it, neither of which belongs to one stage of the pipeline.
+    "F16": fig_f16_design_map,
+    "F17": fig_f17_metrics_by_arm,
+    "F18": fig_f18_removal_by_arm,
 }
