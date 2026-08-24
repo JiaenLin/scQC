@@ -1542,60 +1542,149 @@ def fig_f16_design_grid(design, *, order=None, dpi: int = DEFAULT_DPI):
     return fig
 
 
-def fig_f17_confounded_metrics(metrics, *, pair=None, dpi: int = DEFAULT_DPI):
-    """F17 - how far apart are the arms, on quantities the biology did not set?
+def fig_f18_removal_by_arm(arms, *, pair=None, dpi: int = DEFAULT_DPI):
+    """F18 - did the filter itself fall harder on one arm than the other?
 
-    `metrics` is a list of `{"label": str, "arms": {level: [values]}}`, one entry per metric,
-    values one per library.
+    `arms` maps an arm label to `{"removed": int, "n": int, "libraries": {sample: (removed, n)}}`.
 
-    Each panel is one metric, one point per library, arms side by side with the arm median as a
-    bar. Read together with F16: F16 shows that two factors are the same split, this shows how
-    far apart that split's arms are on quantities dissociation and chemistry set rather than the
-    condition under test.
+    THE SURVIVORS DIFFER BEFORE ANY BIOLOGY IS MEASURED. A gate that takes half of one arm and a
+    twentieth of another has put a technical gradient exactly where the comparison will be made,
+    and every downstream difference inherits it. That is a fact about this filter on this cohort,
+    it is computable before anything is interpreted, and it belongs in front of a reader rather
+    than in a log.
 
-    IT DOES NOT APPORTION, and no arrangement of these points could. When two factors partition
-    the libraries identically, a separation here belongs to both of them jointly - the figure
-    shows the SIZE of a difference whose cause is not identifiable from this cohort.
+    Bars are the arm rate; the points are each library, because an arm rate is a mean over
+    libraries and one library removed at 80% inside an otherwise ordinary arm is a different
+    finding from every library removed at 50%.
     """
-    usable = [m for m in (metrics or [])
-              if len([v for arm in m.get("arms", {}).values() for v in arm]) >= 2
-              and len(m.get("arms", {})) >= 2]
-    if not usable:
-        raise TaskFailure("F17 needs at least one metric with values in two or more arms")
+    if len(arms or {}) < 2:
+        raise TaskFailure("F18 needs two or more arms to compare removal between")
     plt = _mpl()
-    rows, cols = grid_shape(len(usable))
-    fig = _new_fig((3.3 * cols, 2.9 * rows), dpi)
+    levels = sorted(arms)
+    fig = _new_fig((1.7 * len(levels) + 3.0, 3.6), dpi)
+    ax = fig.add_subplot(111)
+    cmap = plt.get_cmap("tab10")
 
-    for i, m in enumerate(usable, 1):
+    rates = []
+    for xi, lv in enumerate(levels):
+        a = arms[lv]
+        n = float(a.get("n") or 0)
+        rate = 100.0 * float(a.get("removed") or 0) / n if n else None
+        rates.append(rate)
+        if rate is not None:
+            ax.bar(xi, rate, width=0.56, color=cmap(xi % 10), alpha=0.5, zorder=2)
+        per = a.get("libraries") or {}
+        pts = [100.0 * r / t for r, t in per.values() if t]
+        if pts:
+            step = 0.055
+            xs = [xi + (k - (len(pts) - 1) / 2) * step for k in range(len(pts))]
+            ax.scatter(xs, pts, s=20, color="#222", zorder=4, linewidth=0)
+
+    ax.set_xticks(range(len(levels)))
+    ax.set_xticklabels(levels, fontsize=8)
+    ax.set_ylabel("% of the arm removed by the filter", fontsize=9)
+    ax.tick_params(labelsize=8)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.grid(axis="y", alpha=0.22, linewidth=0.6)
+    ax.set_axisbelow(True)
+
+    known = [r for r in rates if r is not None]
+    sub = "bar is the arm, each dot one library"
+    if len(known) >= 2 and min(known) > 0:
+        sub = f"{max(known) / min(known):.2f}x between arms - " + sub
+    ax.set_title(f"{pair + ' - ' if pair else ''}{sub}", fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def fig_f17_confounded_metrics(distributions, *, arms, arm_labels=None, per_library=None,
+                               pair=None, dpi: int = DEFAULT_DPI):
+    """F17 - how the arms of a confounded split differ, as DISTRIBUTIONS.
+
+    `distributions` maps a metric label to `{sample: [per-cell values]}`. `arms` maps a level of
+    the confounded factor to the samples in it. `arm_labels` maps that level to the full label -
+    every factor that shares the partition - and `per_library` to per-library medians.
+
+    A SUMMARY OF A SUMMARY CANNOT BE READ. The first version drew ten per-library points, which
+    shows neither the shape of a distribution nor its spread: two arms whose medians differ by a
+    third can overlap almost completely, and nothing in a dot plot says so. Violins over the
+    per-cell values do, which is why every QC tool draws them.
+
+    TWO THINGS A PLAIN VIOLIN CANNOT SHOW, and both matter here:
+
+    The x axis carries EVERY factor that shares the partition, not just the one being grouped on.
+    A figure labelled `aged` / `young` invites the reading that age is what differs; when age,
+    chemistry and batch are the same split, the axis cannot honestly name one of them. Writing
+    all three under each violin is the confounding, stated where it cannot be missed.
+
+    And the per-library medians are drawn over the violin. A violin pools every cell from every
+    library in an arm, so ONE aberrant library can manufacture an arm difference that no other
+    library shows. The dots say whether the separation is consistent across libraries or carried
+    by one - which is the difference between a finding and an artefact, and is invisible in the
+    violin alone.
+    """
+    usable = {k: v for k, v in (distributions or {}).items()
+              if sum(len(x) for x in v.values()) >= 10}
+    if not usable:
+        raise TaskFailure("F17 needs at least one metric with per-cell values")
+    if len(arms or {}) < 2:
+        raise TaskFailure("F17 needs two or more arms of a design factor to compare")
+    plt = _mpl()
+    arm_labels = _mapping(arm_labels)
+    per_library = _mapping(per_library)
+
+    levels = sorted(arms)
+    rows, cols = grid_shape(len(usable))
+    fig = _new_fig((3.5 * cols, 3.4 * rows), dpi)
+    cmap = plt.get_cmap("tab10")
+
+    for i, (label, by_sample) in enumerate(sorted(usable.items()), 1):
         ax = fig.add_subplot(rows, cols, i)
-        arms = sorted(m["arms"])
-        cmap = plt.get_cmap("tab10")
-        for xi, arm in enumerate(arms):
-            vals = [float(v) for v in m["arms"][arm] if v is not None]
+        data, positions, colours = [], [], []
+        for xi, lv in enumerate(levels):
+            vals = [v for s in arms[lv] for v in by_sample.get(s, []) if v is not None]
             if not vals:
                 continue
-            # the individual libraries, jittered only enough to stop exact overlap hiding one
-            step = 0.055
-            xs = [xi + (j - (len(vals) - 1) / 2) * step for j in range(len(vals))]
-            ax.scatter(xs, vals, s=26, color=cmap(xi % 10), zorder=3,
-                       edgecolor="white", linewidth=0.6)
-            med = _median(vals)
-            if med is not None:
-                ax.plot([xi - 0.26, xi + 0.26], [med, med], color=cmap(xi % 10),
-                        linewidth=2.4, zorder=2)
-        ax.set_xticks(range(len(arms)))
-        ax.set_xticklabels(arms, fontsize=8)
-        ax.set_xlim(-0.6, len(arms) - 0.4)
-        ax.set_title(m["label"], fontsize=9)
+            data.append(vals)
+            positions.append(xi)
+            colours.append(cmap(xi % 10))
+        if not data:
+            continue
+        parts = ax.violinplot(data, positions=positions, widths=0.72,
+                              showmeans=False, showmedians=True, showextrema=False)
+        for body, colour in zip(parts["bodies"], colours):
+            body.set_facecolor(colour)
+            body.set_alpha(0.45)
+            body.set_edgecolor(colour)
+            body.set_linewidth(1.0)
+        if "cmedians" in parts:
+            parts["cmedians"].set_color("#222")
+            parts["cmedians"].set_linewidth(1.4)
+
+        # ONE POINT PER LIBRARY, over the pooled shape. This is the check on the violin.
+        med = per_library.get(label) or {}
+        for xi, lv in enumerate(levels):
+            pts = [med.get(s) for s in arms[lv] if med.get(s) is not None]
+            if not pts:
+                continue
+            step = 0.05
+            xs = [xi + (k - (len(pts) - 1) / 2) * step for k in range(len(pts))]
+            ax.scatter(xs, pts, s=17, color="#222", zorder=4, linewidth=0)
+
+        ax.set_xticks(range(len(levels)))
+        ax.set_xticklabels([arm_labels.get(lv, lv) for lv in levels], fontsize=7.5)
+        ax.set_ylabel(label, fontsize=9)
         ax.tick_params(labelsize=8)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
-        ax.grid(axis="y", alpha=0.25, linewidth=0.6)
+        ax.grid(axis="y", alpha=0.22, linewidth=0.6)
         ax.set_axisbelow(True)
 
+    title = "Each violin is every nucleus in that arm; each dot is one library's median."
     if pair:
-        fig.suptitle(f"Arms of {pair} - one point per library, bar is the arm median",
-                     fontsize=9, y=0.99)
+        title = f"{pair} are the same split of the libraries. " + title
+    fig.suptitle(title, fontsize=8.5, y=0.995)
     fig.tight_layout()
     return fig
 
@@ -1630,4 +1719,5 @@ FIGURE_FUNCTIONS = {
     # see the entanglement and its size without being told either.
     "F16": fig_f16_design_grid,
     "F17": fig_f17_confounded_metrics,
+    "F18": fig_f18_removal_by_arm,
 }

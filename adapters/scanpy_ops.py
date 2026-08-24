@@ -3121,14 +3121,25 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                 f"read as having passed the doublet criterion. Raise the UMI floor to the light "
                 f"floor or above, or score the detector over the lower population.")
 
+    # None when this object carries no pct_counts_ribo - an object written before the metric
+    # existed, or a reference whose symbols matched none. The column is then blank on every row,
+    # which is what "not measured" looks like and what 0 would not.
+    ribo = (_float_array(adata.obs["pct_counts_ribo"])
+            if "pct_counts_ribo" in adata.obs.columns else None)
+
     path = Path(str(out_prefix) + ".percell.csv")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = _csv.writer(fh)
         # `nuclear_fraction` sits beside `pct_counts_mt` because the two are the criterion's two
         # axes and a reader checking `fail_mito_nf` needs both. BLANK where undefined - never 0.
+        # `pct_counts_ribo` sits beside `pct_counts_mt` because they are read together: both are
+        # properties of the PREPARATION rather than of the condition under test, which is what
+        # makes them readable across a design whose factors cannot be separated. It is reported
+        # and never filtered on - no criterion below uses it. BLANK where absent, never 0: a
+        # library whose reference matched no ribosomal gene must not read as one with none.
         w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
-                    "pct_counts_mt", "nuclear_fraction",
+                    "pct_counts_mt", "pct_counts_ribo", "nuclear_fraction",
                     "doublet_score", "doublet_class", "doublet_scored",
                     *APPLY_CRITERIA, "removed", "keep"])
         for i, b in enumerate(adata.obs_names):
@@ -3136,6 +3147,7 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                         "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
                         "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
                         "" if mt[i] != mt[i] else f"{mt[i]:.6f}",
+                        "" if ribo is None or ribo[i] != ribo[i] else f"{ribo[i]:.6f}",
                         "" if nf_values[i] is None else f"{float(nf_values[i]):.6f}",
                         "" if _unknown(dbl_score[i]) else f"{float(dbl_score[i]):.6f}",
                         "" if _unknown(dbl_class[i]) else str(dbl_class[i]),

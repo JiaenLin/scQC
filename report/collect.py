@@ -538,19 +538,41 @@ _F17_METRICS = (("ribo_median", "ribosomal %, median"),
                 ("cells_lost", "cells lost at the call"))
 
 
-def _f17(sheet, thresholds):
-    """Per-arm values of the technical columns, for the most entangled pair of factors."""
+def _median(values):
+    """The middle value, or None. Local rather than imported from `figures`, which is the module
+    that needs matplotlib; this one must stay importable without it."""
+    v = sorted(x for x in values if x is not None)
+    if not v:
+        return None
+    mid = len(v) // 2
+    return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2.0
+
+
+#: The per-cell columns F17 draws. Every one is set by dissociation, chemistry or sequencing
+#: depth rather than by the condition under test, which is what makes them readable across a
+#: split whose factors cannot be told apart. NOT a list of factor names - these are scQC's own
+#: measurement columns and exist on every cohort.
+_F17_COLUMNS = (("pct_counts_ribo", "ribosomal % per nucleus"),
+                ("n_genes", "genes detected per nucleus"),
+                ("pct_counts_mt", "mitochondrial % per nucleus"),
+                ("total_counts", "UMI per nucleus"),
+                ("nuclear_fraction", "nuclear fraction"))
+
+
+def _confounded_pair(sheet):
+    """The two factors whose levels determine each other for the most libraries, and by how much.
+
+    FOUND, NOT NAMED. `_design()` discovers the factors - the same routine the gates use - and
+    the pair is chosen by measurement. A fixed list of factor names is how the ambient design
+    panel came to render empty on every cohort but the one it was written beside.
+    """
     from engine.steps import _design  # noqa: PLC0415
 
     factors = list(_design(sheet))
     of_sample = {r.get("sample"): r for r in sheet}
-    # THE PAIR THAT IS ACTUALLY CONFOUNDED, found rather than named: the two factors whose levels
-    # determine each other for the most libraries. On a cohort with none, the best pair is a poor
-    # one and the figure still draws the arms of the strongest factor - which is the honest
-    # answer to "how far apart are these groups" when nothing is entangled.
-    best, best_score = None, -1
-    for i, a in enumerate(factors):
-        for b in factors[i + 1:]:
+    best, best_score = None, -1.0
+    for i_, a in enumerate(factors):
+        for b in factors[i_ + 1:]:
             both = [s for s in of_sample if of_sample[s].get(a) and of_sample[s].get(b)]
             if len(both) < 2:
                 continue
@@ -560,28 +582,84 @@ def _f17(sheet, thresholds):
             score = sum(1 for s in both if len(fwd[of_sample[s][a]]) == 1) / len(both)
             if score > best_score:
                 best, best_score = (a, b), score
+    return best, best_score, factors, of_sample
+
+
+def _arm_label(level, factor, partners, of_sample, samples):
+    """`aged - V2 - batch A`: every factor that shares this partition, under one violin.
+
+    An axis reading `aged` / `young` invites the reading that AGE is what differs. When three
+    factors are the same split of the libraries, no honest axis can name one of them, and this
+    is the whole reason the panel exists.
+    """
+    parts = [str(level)]
+    for other in partners:
+        vals = {str(of_sample[s].get(other)) for s in samples if of_sample[s].get(other)}
+        if len(vals) == 1:
+            parts.append(vals.pop())
+    return "\n".join(parts)
+
+
+def _f17(sheet, percell):
+    """Per-cell distributions by arm, plus each library's median over them."""
+    best, score, _factors, of_sample = _confounded_pair(sheet)
     if not best:
         raise TaskFailure("fewer than two design factors carry a level on two or more libraries")
-
     a, b = best
-    by_level = {}
-    for r in thresholds:
-        lv = (of_sample.get(r.get("sample")) or {}).get(a)
+    arms = {}
+    for s in percell:
+        lv = (of_sample.get(s) or {}).get(a)
         if lv:
-            by_level.setdefault(str(lv), []).append(r)
-    metrics = []
-    for key, label in _F17_METRICS:
-        arms = {lv: [_num(r.get(key)) for r in rs] for lv, rs in sorted(by_level.items())}
-        arms = {lv: [v for v in vs if v is not None] for lv, vs in arms.items()}
-        if sum(len(v) for v in arms.values()) >= 2 and sum(1 for v in arms.values() if v) >= 2:
-            metrics.append({"label": label, "arms": arms})
-    if not metrics:
+            arms.setdefault(str(lv), []).append(s)
+    if len(arms) < 2:
+        raise TaskFailure(f"{a!r} has fewer than two levels among the libraries with per-cell "
+                          f"tables, so there is nothing to compare across")
+
+    distributions, per_library, present = {}, {}, []
+    for col, label in _F17_COLUMNS:
+        by_sample, meds = {}, {}
+        for s, rows in percell.items():
+            vals = [_num(r.get(col)) for r in rows]
+            vals = [v for v in vals if v is not None]
+            if vals:
+                by_sample[s] = vals
+                meds[s] = _median(vals)
+        if sum(len(v) for v in by_sample.values()) >= 10:
+            distributions[label] = by_sample
+            per_library[label] = meds
+            present.append(col)
+    if not distributions:
         raise TaskFailure(
-            f"no technical column in tables/thresholds_per_sample.csv has values in two arms of "
-            f"{a!r}. Ribosomal content is summarised per library only on runs made after that "
-            f"column was added.")
-    return {"metrics": metrics, "pair": f"{a} / {b}",
-            "agreement": round(best_score, 3)}
+            "no per-cell column in tables/<sample>.percell.csv carries values. Ribosomal content "
+            "is written per cell only on runs made after that column was added.")
+
+    partners = [f for f in (b,) if f]
+    labels = {lv: _arm_label(lv, a, partners, of_sample, ss) for lv, ss in arms.items()}
+    return {"distributions": distributions, "arms": arms, "arm_labels": labels,
+            "per_library": per_library, "pair": f"{a} / {b}",
+            "agreement": round(score, 3), "columns": present}
+
+
+def _f18(sheet, percell):
+    """What fraction of each arm the filter removed, and each library inside it."""
+    best, _score, _factors, of_sample = _confounded_pair(sheet)
+    if not best:
+        raise TaskFailure("fewer than two design factors carry a level on two or more libraries")
+    a, b = best
+    arms = {}
+    for s, rows in percell.items():
+        lv = (of_sample.get(s) or {}).get(a)
+        if not lv:
+            continue
+        removed = sum(1 for r in rows if _flag(r.get("removed")))
+        entry = arms.setdefault(str(lv), {"removed": 0, "n": 0, "libraries": {}})
+        entry["removed"] += removed
+        entry["n"] += len(rows)
+        entry["libraries"][s] = (removed, len(rows))
+    if len(arms) < 2:
+        raise TaskFailure(f"{a!r} has fewer than two levels among the libraries with per-cell "
+                          f"tables, so removal cannot be compared across arms")
+    return {"arms": arms, "pair": f"{a} / {b}"}
 
 
 def collect(tables, *, samplesheet_rows=None, samplesheet=None,
@@ -716,10 +794,12 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     # `_design()` DISCOVERS the factors - the same routine the gates use. A fixed list of factor
     # names is how the ambient design panel came to render empty on every cohort but the one it
     # was written beside, and this is the same trap one figure over.
-    if sheet and thresholds:
+    if sheet:
         _try("F16", "the samplesheet", lambda: _f16(sheet))
-        _try("F17", "the samplesheet + tables/thresholds_per_sample.csv",
-             lambda: _f17(sheet, thresholds))
+    if sheet and percell:
+        src16 = "the samplesheet + tables/<sample>.percell.csv"
+        _try("F17", src16, lambda: _f17(sheet, percell))
+        _try("F18", src16, lambda: _f18(sheet, percell))
 
     # After the per-cell tables, because that is where the denominator comes from: F9 draws each
     # criterion's unique removals against the population they were removed FROM, and a bar chart
