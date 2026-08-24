@@ -1498,10 +1498,17 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
 #   F18  WHETHER THE FILTER made it worse - per criterion, per arm. This is the one part of the
 #        confounding the pipeline itself creates, and therefore the one it must show.
 
-#: How two design factors sit against each other. The colour AND the word are drawn in every
-#: cell, so the matrix survives greyscale and a reader who has not read the legend.
+#: How two design factors sit against each other.
+#:
+#: ONLY THE PROBLEM IS INKED. `crossed` - the outcome a reader wants - is left white, so the eye
+#: goes to the coloured cells and finds exactly the pairs that make a claim impossible. Filling
+#: all three would also have collided with the level colours in the panel beside it, where the
+#: same two hues mean two arbitrary levels of some factor and nothing about a verdict.
+#:
+#: The word is drawn in every cell as well as the colour, so the matrix survives greyscale and a
+#: reader who has not read the legend.
 RELATION_COLOURS = {"aliased": PALETTE["refuse"], "nested": PALETTE["review"],
-                    "crossed": PALETTE["ok"]}
+                    "crossed": "#FFFFFF"}
 
 #: What each relationship entails for a claim. Printed on the figure: the word on its own does
 #: not tell a reader what they may and may not conclude, which is the only thing they need.
@@ -1661,7 +1668,10 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
             kind = kind_of.get((a, b))
             known = kind in RELATION_COLOURS
             colour = RELATION_COLOURS.get(kind, PALETTE["unknown"])
-            ax2.add_patch(Rectangle((j, y), 1, 1, facecolor=colour, edgecolor="white",
+            # A white cell still needs an outline, or the matrix loses its shape where the news
+            # is good and a reader cannot tell an empty cell from an absent one.
+            ax2.add_patch(Rectangle((j, y), 1, 1, facecolor=colour,
+                                    edgecolor="#CCCCCC" if colour == "#FFFFFF" else "white",
                                     linewidth=1.2, hatch=None if known else UNKNOWN_HATCH))
             ax2.text(j + 0.5, y + 0.5, kind if known else NOT_SUPPLIED, ha="center",
                      va="center", fontsize=6.2, color=_ink_on(colour), fontweight="bold")
@@ -1676,20 +1686,38 @@ def fig_f16_design_map(levels, *, samples=None, factors=None, relations=None, ar
         ax2.spines[side].set_visible(False)
     ax2.set_title("every pair of factors, compared exactly", fontsize=8)
 
+    # THE LEGEND IS THE FIGURE'S POINT, so it is placed on the FIGURE and not inside an axes.
+    # Drawn in data coordinates below the matrix it was clipped away entirely by `bbox_inches`,
+    # leaving a colour-coded matrix with nothing on the page saying what the colours entail -
+    # which is the one thing a reader cannot supply for themselves.
     present = [k for k in ("aliased", "nested", "crossed")
                if any(str(r.get("kind")) == k for r in rels)]
-    if present:
-        _label(ax2, 0.0, -0.6,
-               _wrapped("   ".join(f"{k} = {RELATION_MEANING[k]}" for k in present), 96),
-               fontsize=6.4, color=PALETTE["muted"], ha="left", va="top")
-
     n_aliased = sum(1 for r in rels if str(r.get("kind")) == "aliased")
     _finish(fig, "F16 - what is confounded with what",
-            (f"{n_aliased} pair(s) of design factors partition the libraries identically"
-             if n_aliased else
-             "no pair of design factors partitions the libraries identically")
-            + " - computed from the samplesheet by exact comparison, not estimated")
+            _wrapped((f"{n_aliased} pair(s) of design factors partition the libraries identically"
+                      if n_aliased else
+                      "no pair of design factors partitions the libraries identically")
+                     + " - computed from the samplesheet by exact comparison, not estimated", 110))
+    if present:
+        fig.text(0.5, 0.005,
+                 _wrapped("   ·   ".join(f"{k.upper()}: {RELATION_MEANING[k]}" for k in present),
+                          150),
+                 ha="center", va="bottom", fontsize=6.6, color=PALETTE["muted"])
+        fig.subplots_adjust(bottom=0.20)
     return fig
+
+
+#: The marker a library's own median is drawn with. TEN LIBRARIES IS COMMON AND TEN
+#: DISTINGUISHABLE HUES ARE NOT, so identity is carried by colour AND shape together: the colour
+#: cycles every five libraries and the shape changes when it wraps, which keeps every pair unique
+#: up to thirty. Yellow is excluded - a 4-point yellow marker on white is not a mark.
+MEDIAN_COLOURS = ("#0072B2", "#E69F00", "#009E73", "#D55E00", "#56B4E9")
+MEDIAN_MARKERS = ("o", "s", "^", "D", "v", "P")
+
+
+def _median_style(i: int) -> tuple:
+    return MEDIAN_COLOURS[i % len(MEDIAN_COLOURS)], MEDIAN_MARKERS[
+        (i // len(MEDIAN_COLOURS)) % len(MEDIAN_MARKERS)]
 
 
 def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, absent=None,
@@ -1709,11 +1737,18 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
     each other as the arms sit from each other, the arm difference is not evidence about the
     factor, whatever a test of it would report.
 
-    So every panel draws and prints two quantities - the GAP between the arms' library-median
-    centres, and the widest WITHIN-ARM span of library medians. Their ratio is this panel's
-    estimate of how much of the metric the design could even in principle account for. IT IS AN
-    ESTIMATE AND THE FIGURE SAYS SO. There is no test here and no p-value: a confounded factor
-    cannot be tested, which is the whole reason this section exists.
+    So every panel states two quantities in its own heading - the GAP between the arms' median
+    library medians, and the widest WITHIN-ARM span of them. Their ratio is this panel's estimate
+    of how much of the metric the design could even in principle account for. IT IS AN ESTIMATE
+    AND THE FIGURE SAYS SO. There is no test here and no p-value: a confounded factor cannot be
+    tested, which is the whole reason this section exists.
+
+    THE NUMBERS ARE IN THE HEADING AND THE LIBRARIES ARE IN ONE LEGEND, and both were learned by
+    drawing it the other way. Printed inside the panel the numbers sat on top of the violin;
+    written beside each dot the library names overplotted into an unreadable smear the moment two
+    libraries had similar medians - which, in the case this figure exists for, they do. Every
+    library keeps the same colour, the same marker and the same horizontal offset in EVERY panel,
+    so a library that is an outlier on one metric can be found on the others.
 
     `absent` maps a metric label to the reason it could not be drawn, and those panels are drawn
     as stated absences - a panel silently left out reads as a metric nobody thought worth showing.
@@ -1730,9 +1765,21 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
         raise TaskFailure("F17 needs the confounded arms to compare")
     arm_x = {a: float(i) for i, a in enumerate(order)}
 
+    # Every library, in arm order then name order, with its style and its offset fixed ONCE for
+    # the whole figure. A library that moved between panels could not be compared across them.
+    libraries, offset_of, style_of = [], {}, {}
+    for arm in order:
+        here = sorted({s for m in specs
+                       for s in _mapping(_mapping(m.get("library_medians")).get(arm))})
+        for j, s in enumerate(here):
+            offset_of[s] = (arm_x[arm] - 0.26 + (0.52 * j / max(len(here) - 1, 1))
+                            if len(here) > 1 else arm_x[arm])
+            style_of[s] = _median_style(len(libraries))
+            libraries.append(s)
+
     total = len(specs) + len(gone)
     rows, cols = grid_shape(total)
-    fig = _new_fig((3.5 * cols + 0.6, 3.05 * rows + 1.1), dpi)
+    fig = _new_fig((3.6 * cols + 0.5, 3.25 * rows + 1.35), dpi)
 
     for idx, spec in enumerate(specs):
         ax = fig.add_subplot(rows, cols, idx + 1)
@@ -1756,14 +1803,13 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
             _blank_panel(ax, f"{label}\n\nno values in any arm")
             continue
 
-        parts = ax.violinplot(data, positions=positions, widths=0.62, showextrema=False,
+        parts = ax.violinplot(data, positions=positions, widths=0.66, showextrema=False,
                               showmedians=False)
         for body in parts["bodies"]:
             body.set_facecolor(PALETTE["before"])
             body.set_alpha(0.95)
             body.set_edgecolor("none")
 
-        # --- every library's own median, inside its own arm. This is the comparison.
         centres, spans = {}, {}
         for arm in order:
             meds = {s: float(v) for s, v in _mapping(med_by_arm.get(arm)).items()
@@ -1774,61 +1820,43 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
             ordered = sorted(y.values())
             centres[arm] = ordered[len(ordered) // 2]
             spans[arm] = (ordered[0], ordered[-1])
-            x0 = arm_x[arm]
-            ax.add_patch(Rectangle((x0 - 0.30, spans[arm][0]), 0.60,
+            ax.add_patch(Rectangle((arm_x[arm] - 0.33, spans[arm][0]), 0.66,
                                    max(spans[arm][1] - spans[arm][0], 0.0),
                                    facecolor=PALETTE["review"], alpha=0.30,
                                    edgecolor=PALETTE["review"], linewidth=0.9, zorder=3))
-            names_by_y = sorted(y, key=lambda name: y[name])
-            step = 0.0 if len(y) < 2 else 0.44 / (len(y) - 1)
-            # NAMED WHERE NAMING FITS. Above six libraries in an arm the names overplot each
-            # other into a grey smear, so only the extremes are named - which are the ones a
-            # reader is looking for anyway. The count is printed either way.
-            to_name = set(names_by_y) if len(names_by_y) <= 6 \
-                else {names_by_y[0], names_by_y[-1]}
-            for k, s in enumerate(names_by_y):
-                px = x0 - 0.22 + k * step
-                ax.plot([px], [y[s]], marker="o", markersize=3.8, color=PALETTE["after"],
-                        markeredgecolor="white", markeredgewidth=0.5, zorder=5)
-                if s in to_name:
-                    _annot(ax, str(s), (px, y[s]), textcoords="offset points", xytext=(4.5, 0),
-                           fontsize=5.4, color=PALETTE["muted"], va="center", zorder=6)
-            ax.hlines(centres[arm], x0 - 0.32, x0 + 0.32, color=PALETTE["ok"], linewidth=2.2,
-                      zorder=6)
+            for s, v in y.items():
+                colour, marker = style_of.get(s, (PALETTE["after"], "o"))
+                ax.plot([offset_of.get(s, arm_x[arm])], [v], marker=marker, markersize=4.6,
+                        color=colour, markeredgecolor="white", markeredgewidth=0.6,
+                        linestyle="none", zorder=5)
+            ax.hlines(centres[arm], arm_x[arm] - 0.35, arm_x[arm] + 0.35, color=PALETTE["ok"],
+                      linewidth=2.4, zorder=6)
 
-        # --- the two quantities, drawn and printed
-        note = None
+        # --- the two quantities, in the heading where nothing overlaps them
         if len(centres) >= 2:
             cs = [centres[a] for a in order if a in centres]
-            lo, hi = min(cs), max(cs)
-            gap = hi - lo
+            gap = max(cs) - min(cs)
             widest = max((spans[a][1] - spans[a][0]) for a in spans)
-            xb = max(arm_x.values()) + 0.46
-            ax.annotate("", xy=(xb, lo), xytext=(xb, hi), annotation_clip=False,
-                        arrowprops={"arrowstyle": "<->", "linewidth": 1.2,
-                                    "color": PALETTE["refuse"]})
             if log:
-                shown_gap = f"{10 ** gap:,.2f}x"
-                shown_span = f"{10 ** widest:,.2f}x"
+                shown_gap, shown_span = f"{10 ** gap:,.2f}x", f"{10 ** widest:,.2f}x"
             else:
                 shown_gap, shown_span = f"{gap:,.3g}", f"{widest:,.3g}"
-            ratio = ("one library in every arm - not computable" if widest <= 0
-                     else f"gap / spread = {gap / widest:,.2f}")
-            note = (f"between the arms: {shown_gap}\n"
-                    f"widest spread WITHIN an arm: {shown_span}\n{ratio}")
+            head = (f"between arms {shown_gap}   ·   widest within an arm {shown_span}\n"
+                    + ("one library in every arm - ratio not computable" if widest <= 0
+                       else f"ratio {gap / widest:,.2f}"))
         elif centres:
-            note = "only one arm has library medians - there is nothing to compare it with"
-        if note:
-            _panel_note(ax, note, loc="upper left", wrap=32)
-
+            head = "only one arm has library medians\nthere is nothing to compare it with"
+        else:
+            head = "no library median in any arm"
         n_drawn = sum(len(v) for v in data)
-        _panel_note(ax, n_label(n_drawn, "nuclei drawn"), loc="lower left", wrap=30)
+        ax.set_title(f"{head}   ·   {n_label(n_drawn, 'nuclei drawn')}", fontsize=6.6,
+                     color=PALETTE["muted"])
 
         ax.set_xticks([arm_x[a] for a in order])
-        ax.set_xticklabels([str(a) for a in order], fontsize=6.6)
-        ax.set_xlim(min(arm_x.values()) - 0.62, max(arm_x.values()) + 0.80)
+        ax.set_xticklabels([str(a) for a in order], fontsize=6.8)
+        ax.set_xlim(min(arm_x.values()) - 0.55, max(arm_x.values()) + 0.55)
         ax.set_ylabel(label, fontsize=7.5)
-        ax.margins(y=0.20)
+        ax.margins(y=0.12)
         if log:
             from matplotlib.ticker import FuncFormatter
             ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{10 ** v:,.0f}"))
@@ -1843,12 +1871,24 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
 
     pop = label_text(population, f"population {NOT_SUPPLIED}")
     cap_words = ("" if _unknown(cap) else
-                 f"; a violin is drawn from at most {int(cap):,} nuclei per arm, taken at an "
-                 f"even stride")
+                 f"; a violin is drawn from at most {int(cap):,} nuclei per arm, at an even "
+                 f"stride")
     _finish(fig, "F17 - every QC metric across the confounded arms",
-            f"grey violin: every nucleus of the arm. black dots: each library's OWN median. "
-            f"amber band: the span those medians cover. blue rule: the arm's median of them. "
-            f"Over {pop}{cap_words}")
+            _wrapped(f"grey violin: every nucleus of the arm. marker: one library's OWN median, "
+                     f"at the same colour, shape and offset in every panel. amber band: the span "
+                     f"those medians cover. blue rule: the arm's median of them. Drawn over "
+                     f"{pop}{cap_words}", 118))
+
+    # ONE LEGEND FOR THE WHOLE FIGURE, at the foot, because the markers mean the same thing in
+    # every panel. Per-panel legends would repeat it up to nine times and cover the data doing so.
+    if libraries:
+        from matplotlib.lines import Line2D
+        handles = [Line2D([], [], linestyle="none", marker=style_of[s][1], markersize=4.6,
+                          color=style_of[s][0], markeredgecolor="white", markeredgewidth=0.6,
+                          label=str(s)) for s in libraries]
+        fig.legend(handles=handles, loc="lower center", ncol=min(len(libraries), 6),
+                   fontsize=6.6, frameon=False, handletextpad=0.4, columnspacing=1.4)
+        fig.subplots_adjust(bottom=0.10 + 0.028 * -(-len(libraries) // 6))
     return fig
 
 
@@ -1896,15 +1936,17 @@ def fig_f18_removal_by_arm(rates, *, arms=None, overall=None, criteria=None,
         vals = [p for _, p in drawn]
         lo, hi = min(vals), max(vals)
         ratio = ("not computable - an arm removed nothing" if lo <= 0 else f"{hi / lo:,.2f}x")
-        _panel_note(ax, f"widest ratio across the arms: {ratio}", loc="upper left", wrap=24,
-                    colour=PALETTE["refuse"])
+        # IN THE HEADING, not on the panel. Inside the axes it sat across the top of the tallest
+        # bar, which is the arm the reader is being asked to look at.
+        ax.set_title(f"the filter as a whole\nwidest ratio across the arms: {ratio}",
+                     fontsize=7.4, color=PALETTE["refuse"])
     else:
         _blank_panel(ax, "no per-arm removal total was supplied")
+        ax.set_title("the filter as a whole", fontsize=8)
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels([str(a) for a in order], fontsize=6.4)
     ax.set_ylabel("removed (% of the arm's barcodes)", fontsize=7.5)
-    ax.margins(y=0.26)
-    ax.set_title("the filter as a whole", fontsize=8)
+    ax.margins(y=0.20)
     _tidy(ax)
 
     # --- right: each criterion on its own
@@ -1921,12 +1963,29 @@ def fig_f18_removal_by_arm(rates, *, arms=None, overall=None, criteria=None,
             ax2.bar(xs, ys, width=width * 0.9, label=str(a).replace("\n", " / "), color=pal[a],
                     zorder=3, edgecolor="white", linewidth=0.4)
             # A criterion the arm has no value for is NOT a criterion that fired on nothing.
-            # It is drawn in the never-examined colour, hatched, at the top of the axis.
+            # It is named in the never-examined colour rather than drawn as a zero-height bar,
+            # which is indistinguishable from a criterion that fired on nobody.
             for i, c in enumerate(crits):
                 if _unknown(row.get(c)):
                     _annot(ax2, "no value", (xs[i], 0.0), textcoords="offset points",
                            xytext=(0, 3), ha="center", fontsize=5.4,
                            color=PALETTE["unknown"], rotation=90)
+        # THE RATIO PER CRITERION, which is the question the grouped bars are asked. Eyeballing
+        # two bar heights answers "which is taller"; the number answers "by how much", and it is
+        # the same arithmetic the whole section turns on.
+        top = max([0.0] + [float(v) for a in order for v in _mapping(by_arm.get(a)).values()
+                           if not _unknown(v)])
+        for i, c in enumerate(crits):
+            vals = [float(_mapping(by_arm.get(a))[c]) for a in order
+                    if not _unknown(_mapping(by_arm.get(a)).get(c))]
+            if len(vals) < 2:
+                continue
+            lo, hi = min(vals), max(vals)
+            txt = "-" if lo <= 0 else f"{hi / lo:,.2f}x"
+            _annot(ax2, txt, (i, max(vals)), textcoords="offset points", xytext=(0, 5),
+                   ha="center", fontsize=6.2, fontweight="bold",
+                   color=PALETTE["muted"] if lo > 0 else PALETTE["unknown"])
+        ax2.set_ylim(0, top * 1.16 if top > 0 else 1.0)
         ax2.set_xticks(range(len(crits)))
         ax2.set_xticklabels([str(c).replace("fail_", "").replace("_", " ") for c in crits],
                             fontsize=6.8, rotation=22, ha="right")
@@ -1937,8 +1996,9 @@ def fig_f18_removal_by_arm(rates, *, arms=None, overall=None, criteria=None,
         _tidy(ax2)
 
     _finish(fig, "F18 - what the filter removed from each confounded arm",
-            "a share that differs across the arms is a technical removal that will read as the "
-            "design downstream; the denominator is every barcode the arm held")
+            _wrapped("a share that differs across the arms is a technical removal that will read "
+                     "as the design downstream; the number over each pair is that ratio, and the "
+                     "denominator throughout is every barcode the arm held", 118))
     return fig
 
 
