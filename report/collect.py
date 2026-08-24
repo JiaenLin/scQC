@@ -382,8 +382,48 @@ def _f3(tables: Path) -> dict:
     return {"calls": calls}
 
 
-def _percell(tables: Path, samples) -> dict:
-    return {s: _rows(tables / f"{s}.percell.csv") for s in samples}
+def _percell(tables: Path, samples, objects=None, want=()) -> dict:
+    """The per-cell rows, optionally completed from the objects the run itself wrote.
+
+    A COLUMN THE TABLES LACK IS NOT A COLUMN THE RUN LACKS. `pct_counts_ribo` is computed into
+    `obs` by the metrics step on every run and was written to the per-cell table only after that
+    column was added, so a finished run holds the values while its CSV does not. Re-running the
+    pipeline to recover a number it already computed is the expensive answer to the wrong
+    question.
+
+    OPT-IN and READ-ONLY: nothing is written back, the tables are not modified, and without
+    `--objects` this behaves exactly as it did. `anndata` is imported only when the flag is used,
+    so a report of a run whose columns are all present needs nothing extra installed.
+    """
+    per = {s: _rows(tables / f"{s}.percell.csv") for s in samples}
+    missing = [c for c in want if not any(c in (r or {}) for rows in per.values() for r in rows[:1])]
+    if not objects or not missing:
+        return per
+
+    import anndata as ad  # noqa: PLC0415  (only when the caller asked for this)
+
+    found = sorted(Path(objects).glob("*.h5ad"))
+    if not found:
+        return per
+    for path in found:
+        try:
+            obs = ad.read_h5ad(path, backed="r").obs
+        except Exception:                                                   # noqa: BLE001
+            continue
+        have = [c for c in missing if c in obs.columns]
+        if not have:
+            continue
+        # BY BARCODE, never by position. The per-cell table and the object are both ordered by
+        # the run, and "both were written by the same run" is not a guarantee that a filter did
+        # not reorder one of them.
+        for col in have:
+            lookup = dict(zip(obs.index.astype(str), obs[col].tolist()))
+            for rows in per.values():
+                for r in rows:
+                    if col not in r:
+                        v = lookup.get(str(r.get("barcode")))
+                        r[col] = "" if v is None else v
+    return per
 
 
 def _f4(percell: dict, floors: dict) -> dict:
@@ -662,7 +702,7 @@ def _f18(sheet, percell):
     return {"arms": arms, "pair": f"{a} / {b}"}
 
 
-def collect(tables, *, samplesheet_rows=None, samplesheet=None,
+def collect(tables, *, samplesheet_rows=None, samplesheet=None, objects=None,
             n_in=None, n_removed=None) -> tuple:
     """Every figure this run's files can support, plus a note for every one they cannot.
 
@@ -753,7 +793,8 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
 
     if samples:
         try:
-            percell = _percell(tables, samples)
+            percell = _percell(tables, samples, objects=objects,
+                               want=[c for c, _l in _F17_COLUMNS])
         except Exception as exc:                                            # noqa: BLE001
             for fid in ("F4", "F7", "F12"):
                 notes[fid] = (f"needs the per-cell tables, which could not be read - "

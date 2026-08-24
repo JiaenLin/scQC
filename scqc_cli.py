@@ -419,7 +419,8 @@ def cmd_report(a) -> int:
     # Read back, not rebuilt: this is the payload report_payload() produced during the run, so
     # the document below is the same one that run would have written, with the figures added.
     payload = json.loads((reports / "payload.json").read_text(encoding="utf-8"))
-    figures, notes = collect_figures(tables, samplesheet=a.samplesheet)
+    figures, notes = collect_figures(tables, samplesheet=a.samplesheet,
+                                     objects=getattr(a, "objects", None))
     payload["figures"] = figures
     payload["figure_notes"] = notes
     print(f"figures assembled: {len(figures)}  ({', '.join(sorted(figures)) or 'none'})")
@@ -742,6 +743,10 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("results", help="a results/<digest> directory written by `scqc run`")
     rp.add_argument("--samplesheet", default=None,
                     help="the run's samplesheet, for the design panel of F2")
+    rp.add_argument("--objects", default=None, metavar="DIR",
+                    help="the run's objects/ directory. Only used to COMPLETE a per-cell column "
+                         "the tables lack but the run computed - pct_counts_ribo on a run made "
+                         "before it was written to the table. Read-only: nothing is written back")
     rp.set_defaults(fn=cmd_report)
 
     st = sub.add_parser("stamp",
