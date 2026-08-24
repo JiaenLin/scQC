@@ -404,25 +404,38 @@ def _percell(tables: Path, samples, objects=None, want=()) -> dict:
 
     found = sorted(Path(objects).glob("*.h5ad"))
     if not found:
+        print(f"scqc: --objects {objects} holds no .h5ad, so {', '.join(missing)} stays absent")
         return per
     for path in found:
         try:
             obs = ad.read_h5ad(path, backed="r").obs
-        except Exception:                                                   # noqa: BLE001
+        except Exception as exc:                                            # noqa: BLE001
+            # SAID, NOT SWALLOWED. `except: continue` turned every reason this can fail into the
+            # same silent absence - the column simply did not appear and nothing said why, which
+            # is the failure this whole report is written against.
+            print(f"scqc: could not read {path.name} - {type(exc).__name__}: {exc}")
             continue
         have = [c for c in missing if c in obs.columns]
         if not have:
+            print(f"scqc: {path.name} carries none of {', '.join(missing)}; its obs has "
+                  f"{len(obs.columns)} column(s): {', '.join(map(str, list(obs.columns)[:12]))}")
             continue
+        print(f"scqc: completing {', '.join(have)} from {path.name} ({obs.shape[0]:,} cells)")
         # BY BARCODE, never by position. The per-cell table and the object are both ordered by
         # the run, and "both were written by the same run" is not a guarantee that a filter did
         # not reorder one of them.
         for col in have:
             lookup = dict(zip(obs.index.astype(str), obs[col].tolist()))
+            total = 0
             for rows in per.values():
+                filled = 0
                 for r in rows:
                     if col not in r:
                         v = lookup.get(str(r.get("barcode")))
                         r[col] = "" if v is None else v
+                        filled += 1 if v is not None else 0
+                total += filled
+            print(f"scqc: {col} filled for {total:,} barcode(s) by matching on barcode")
     return per
 
 
