@@ -1352,15 +1352,18 @@ def build_confounding(payload, defects: list) -> dict:
         severity = "ok"
     elif aliased:
         pairs = ", ".join(f"{r['a']} = {r['b']}" for r in rows if r["kind"] == "aliased")
-        headline = (f"{len(aliased)} pair(s) of design factors partition these libraries "
-                    f"identically: {pairs}. No analysis of these data can attribute a difference "
-                    f"to one of an aliased pair rather than the other. This is a property of the "
-                    f"experiment; nothing downstream can separate them.")
+        headline = (f"{len(aliased)} pair{'' if len(aliased) == 1 else 's'} of design factors "
+                    f"partition{'s' if len(aliased) == 1 else ''} these libraries identically: "
+                    f"{pairs}. No analysis of these data can attribute a difference to one of an "
+                    f"aliased pair rather than the other. This is a property of the experiment; "
+                    f"nothing downstream can separate them.")
         severity = "REFUSE"
     elif nested:
-        headline = (f"No pair is fully aliased, but {len(nested)} pair(s) are nested: one factor "
-                    f"is fixed once the other is known, so its effect sits inside the other's "
-                    f"and cannot be taken back out.")
+        headline = (f"No pair is fully aliased, but {len(nested)} pair"
+                    f"{'' if len(nested) == 1 else 's'} "
+                    f"{'is' if len(nested) == 1 else 'are'} nested: one factor is fixed once the "
+                    f"other is known, so its effect sits inside the other's and cannot be taken "
+                    f"back out.")
         severity = "REVIEW"
     else:
         headline = (f"None of the {len(factors)} design factors is aliased with or nested in "
@@ -1368,10 +1371,17 @@ def build_confounding(payload, defects: list) -> dict:
                     f"separately from the others.")
         severity = "ok"
 
+    # THE WORD IS NOT THE RUN'S VERDICT. `severity` picks the colour, and reusing the verdict
+    # vocabulary for the badge printed "REFUSE" over a run that had refused nothing - a design is
+    # confounded whether or not the pipeline had any trouble with it, and the two mean different
+    # things to a reader deciding whether to use the deliverable.
     return {"stated": bool(relations) or bool(factors),
             "factors": factors, "arms": arms, "rows": rows, "figures": blocks,
             "n_aliased": len(aliased), "n_nested": len(nested),
             "headline": headline, "severity": severity,
+            "badge": ("confounded" if aliased else
+                      "nested" if nested else
+                      "no factors" if not factors else "separable"),
             "source": "the run's samplesheet + tables/<sample>.percell.csv"}
 
 
@@ -1993,6 +2003,7 @@ def _confounding_section(block, uri) -> str:
     if not block or not block.get("stated"):
         return ""
     chip = {"REFUSE": "refuse", "REVIEW": "review"}.get(str(block.get("severity")), "ok")
+    badge = _text(_get(block, "badge"), chip)
     rows = block.get("rows") or []
     table = ""
     if rows:
@@ -2023,7 +2034,7 @@ def _confounding_section(block, uri) -> str:
             "each factor induces over the libraries. Not a statistic and not a test: a "
             "confounded factor cannot be tested, which is why it is reported here instead.</p>"
             "</div>"
-            f"<div class='card'><p><span class='chip c-{chip}'>{_e(chip)}</span> "
+            f"<div class='card'><p><span class='chip c-{chip}'>{_e(badge)}</span> "
             f"{_e(block.get('headline', ''))}</p>{table}{arms_line}"
             f"<p class='src'>source: {_e(str(block.get('source', '')))}</p></div>"
             f"{panels}</section>")
