@@ -1486,39 +1486,6 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
 #: referring to "F12" means the linear axis and nothing else. Each entry passes its own arguments,
 #: and each function is told which id it is drawing under so its title cannot disagree with the
 #: block around it.
-FIGURE_FUNCTIONS = {
-    "F1": fig_f1_barcode_rank,
-    "F2": fig_f2_ambient_removal,
-    "F3": fig_f3_cell_calls,
-    "F4": fig_f4_scoring_coverage,
-    "F5": fig_f5_doublet_sweep,
-    "F6": fig_f6_quality_density,
-    "F7": fig_f7_before_after,
-    "F8": fig_f8_cluster_flags,
-    "F9": fig_f9_criterion_contributions,
-    "F10": fig_f10_umap_per_library,
-    "F11": fig_f10_umap_per_library,
-    "F12": fig_f7_before_after,
-    # The gene axis gets its own id for the same reason F12 does. Step 5 derives TWO count floors
-    # from two densities and applies both, and one F6 can carry only one metric: `cut` is a single
-    # cohort constant drawn on every panel, and the UMI floor drawn over a gene density would be a
-    # line in the wrong units on ten panels. Folding both into one figure under one id would also
-    # make "the density figure" ambiguous in a report whose whole point is that a reader can name
-    # what they looked at.
-    "F13": fig_f6_quality_density,
-    # The other two applied axes, same function as F7 for the same reason F12 shares it: the
-    # three criteria step 7 applies should be read in one form, so a difference between the
-    # panels is the filter and not the chart.
-    "F14": fig_f7_before_after,
-    "F15": fig_f7_before_after,
-    # The confounding panel. F16 is the design itself - which factors are the same
-    # partition - and F17 is how far apart that partition's arms sit on quantities
-    # dissociation and chemistry set. Neither apportions; together they let a reader
-    # see the entanglement and its size without being told either.
-    "F16": fig_f16_design_grid,
-    "F17": fig_f17_confounded_metrics,
-}
-
 
 def fig_f16_design_grid(design, *, order=None, dpi: int = DEFAULT_DPI):
     """F16 - which factors are the same partition of the libraries?
@@ -1631,3 +1598,36 @@ def fig_f17_confounded_metrics(metrics, *, pair=None, dpi: int = DEFAULT_DPI):
                      fontsize=9, y=0.99)
     fig.tight_layout()
     return fig
+
+FIGURE_FUNCTIONS = {
+    "F1": fig_f1_barcode_rank,
+    "F2": fig_f2_ambient_removal,
+    "F3": fig_f3_cell_calls,
+    "F4": fig_f4_scoring_coverage,
+    "F5": fig_f5_doublet_sweep,
+    "F6": fig_f6_quality_density,
+    "F7": fig_f7_before_after,
+    "F8": fig_f8_cluster_flags,
+    "F9": fig_f9_criterion_contributions,
+    "F10": fig_f10_umap_per_library,
+    "F11": fig_f10_umap_per_library,
+    "F12": fig_f7_before_after,
+    # The gene axis gets its own id for the same reason F12 does. Step 5 derives TWO count floors
+    # from two densities and applies both, and one F6 can carry only one metric: `cut` is a single
+    # cohort constant drawn on every panel, and the UMI floor drawn over a gene density would be a
+    # line in the wrong units on ten panels. Folding both into one figure under one id would also
+    # make "the density figure" ambiguous in a report whose whole point is that a reader can name
+    # what they looked at.
+    "F13": fig_f6_quality_density,
+    # The other two applied axes, same function as F7 for the same reason F12 shares it: the
+    # three criteria step 7 applies should be read in one form, so a difference between the
+    # panels is the filter and not the chart.
+    "F14": fig_f7_before_after,
+    "F15": fig_f7_before_after,
+    # The confounding panel. F16 is the design itself - which factors are the same
+    # partition - and F17 is how far apart that partition's arms sit on quantities
+    # dissociation and chemistry set. Neither apportions; together they let a reader
+    # see the entanglement and its size without being told either.
+    "F16": fig_f16_design_grid,
+    "F17": fig_f17_confounded_metrics,
+}
