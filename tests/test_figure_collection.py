@@ -157,7 +157,24 @@ with tempfile.TemporaryDirectory() as tmp:
               notes.get(fid, "absent with no note, which is worse"))
     for fid in ("F2", "F3", "F4", "F7", "F8", "F9", "F12"):
         check(f"{fid} still assembles", fid in figures, notes.get(fid, ""))
-    check("no figure is left with a note", not notes, str(sorted(notes)))
+    # THE CONFOUNDING FIGURES NEED A DESIGN THIS FIXTURE CANNOT HAVE. Two libraries with one
+    # sample per level of every factor is exactly what `_design()` refuses to call a design - a
+    # column with one sample per level is an identifier, and a differential computed across it is
+    # arithmetic with no evidence in it. So F16-F18 are correctly unavailable here, and the
+    # blanket "no note" assertion was written when every figure could be built from any run.
+    #
+    # The property it protected is kept: absence must be EXPLAINED. That is asserted below
+    # against these three specifically, rather than dropped.
+    design_led = {"F16", "F17", "F18"}
+    check("no figure other than the design-led ones is left with a note",
+          not (set(notes) - design_led), str(sorted(set(notes) - design_led)))
+    for fid in sorted(design_led):
+        check(f"{fid} is absent WITH a reason on a cohort that has no design",
+              fid not in figures and str(notes.get(fid, "")).strip() != "",
+              f"in figures={fid in figures} note={notes.get(fid, '(none)')!r}")
+    check("and the reason names the design, not a missing file",
+          any("design factor" in str(notes.get(f, "")) for f in design_led),
+          "; ".join(f"{f}: {notes.get(f, '')}" for f in sorted(design_led)))
 
     print("\nthe applied axes carry values, not empty panels")
     # A figure whose distributions are all empty still RENDERS - as a blank panel saying so - and
