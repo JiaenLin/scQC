@@ -107,12 +107,20 @@ Read it in this order — it is arranged as an argument, not as a log:
 1. **The decision strip.** Observations in, kept, removed, and *evenness across the design*. That
    last number is the one a conventional QC report does not carry: a filter that falls harder on
    one arm of the design puts a technical gradient exactly where the biology is measured.
-2. **What quality control did.** One row per criterion — the distribution before the cut, what
-   survived it, and the threshold with how it was arrived at (DERIVED from this data, or DECLARED
-   before seeing it; per library, or one cohort constant).
-3. **Findings.** Every REFUSE and REVIEW, with the step that raised it. REVIEW does not stop a
+2. **Where the design is confounded.** Every pair of design factors, classified `aliased` /
+   `nested` / `crossed` by exact comparison of the partitions they induce over your libraries —
+   no statistic and no p-value, because a confounded factor cannot be tested. Where two factors
+   are aliased it draws every QC metric across the arms that leaves, with each library's own
+   median inside its arm: an arm difference no larger than the spread between libraries of the
+   same arm is a library effect, whatever it is labelled. Then what the filter removed from each
+   arm, per criterion. A cleanly crossed design says so in one line and moves on.
+3. **Where each count floor came from, and what quality control did.** The density each valley
+   was read off; then one row per criterion — the distribution before the cut, what survived it,
+   and the threshold with how it was arrived at (DERIVED from this data, or DECLARED before
+   seeing it; per library, or one cohort constant).
+4. **Findings.** Every REFUSE and REVIEW, with the step that raised it. REVIEW does not stop a
    run; it means a person has to look.
-4. **What this run could not establish.** Each step states its own limit. An omitted limit reads
+5. **What this run could not establish.** Each step states its own limit. An omitted limit reads
    as no limit.
 
 A figure that could not be produced says so, in its place, with the reason. That is not the same
