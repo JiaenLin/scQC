@@ -118,9 +118,6 @@ def _rows(path: Path) -> list:
         return list(csv.DictReader(fh))
 
 
-from engine.task import TaskFailure  # noqa: E402
-
-
 def _num(value):
     """A number, or None for a blank. Never 0.0 for a blank - that is a measurement."""
     if value is None:
@@ -382,61 +379,8 @@ def _f3(tables: Path) -> dict:
     return {"calls": calls}
 
 
-def _percell(tables: Path, samples, objects=None, want=()) -> dict:
-    """The per-cell rows, optionally completed from the objects the run itself wrote.
-
-    A COLUMN THE TABLES LACK IS NOT A COLUMN THE RUN LACKS. `pct_counts_ribo` is computed into
-    `obs` by the metrics step on every run and was written to the per-cell table only after that
-    column was added, so a finished run holds the values while its CSV does not. Re-running the
-    pipeline to recover a number it already computed is the expensive answer to the wrong
-    question.
-
-    OPT-IN and READ-ONLY: nothing is written back, the tables are not modified, and without
-    `--objects` this behaves exactly as it did. `anndata` is imported only when the flag is used,
-    so a report of a run whose columns are all present needs nothing extra installed.
-    """
-    per = {s: _rows(tables / f"{s}.percell.csv") for s in samples}
-    missing = [c for c in want if not any(c in (r or {}) for rows in per.values() for r in rows[:1])]
-    if not objects or not missing:
-        return per
-
-    import anndata as ad  # noqa: PLC0415  (only when the caller asked for this)
-
-    found = sorted(Path(objects).glob("*.h5ad"))
-    if not found:
-        print(f"scqc: --objects {objects} holds no .h5ad, so {', '.join(missing)} stays absent")
-        return per
-    for path in found:
-        try:
-            obs = ad.read_h5ad(path, backed="r").obs
-        except Exception as exc:                                            # noqa: BLE001
-            # SAID, NOT SWALLOWED. `except: continue` turned every reason this can fail into the
-            # same silent absence - the column simply did not appear and nothing said why, which
-            # is the failure this whole report is written against.
-            print(f"scqc: could not read {path.name} - {type(exc).__name__}: {exc}")
-            continue
-        have = [c for c in missing if c in obs.columns]
-        if not have:
-            print(f"scqc: {path.name} carries none of {', '.join(missing)}; its obs has "
-                  f"{len(obs.columns)} column(s): {', '.join(map(str, list(obs.columns)[:12]))}")
-            continue
-        print(f"scqc: completing {', '.join(have)} from {path.name} ({obs.shape[0]:,} cells)")
-        # BY BARCODE, never by position. The per-cell table and the object are both ordered by
-        # the run, and "both were written by the same run" is not a guarantee that a filter did
-        # not reorder one of them.
-        for col in have:
-            lookup = dict(zip(obs.index.astype(str), obs[col].tolist()))
-            total = 0
-            for rows in per.values():
-                filled = 0
-                for r in rows:
-                    if col not in r:
-                        v = lookup.get(str(r.get("barcode")))
-                        r[col] = "" if v is None else v
-                        filled += 1 if v is not None else 0
-                total += filled
-            print(f"scqc: {col} filled for {total:,} barcode(s) by matching on barcode")
-    return per
+def _percell(tables: Path, samples) -> dict:
+    return {s: _rows(tables / f"{s}.percell.csv") for s in samples}
 
 
 def _f4(percell: dict, floors: dict) -> dict:
@@ -563,159 +507,7 @@ def _f9(tables: Path, n_in, n_removed) -> dict:
     return data
 
 
-def _f16(sheet):
-    """{factor: {sample: level}} for every factor the samplesheet actually carries."""
-    from engine.steps import _design  # noqa: PLC0415  (circular import at module load)
-    factors = list(_design(sheet))
-    if not factors:
-        raise TaskFailure(
-            "the samplesheet carries no design factor with two or more levels, so there is no "
-            "pair of factors that could be confounded. That is a property of this cohort, not "
-            "a failure.")
-    of_sample = {r.get("sample"): r for r in sheet}
-    out = {}
-    for f in factors:
-        levels = {s: (r or {}).get(f) for s, r in of_sample.items() if (r or {}).get(f)}
-        if levels:
-            out[f] = levels
-    return {"design": out}
-
-
-#: The per-library columns F17 draws, and why each one is readable across a confounded split:
-#: every one is set by dissociation, chemistry or the cell call rather than by the condition
-#: under test. NOT a fixed list of factor names - these are scQC's own metric columns, which
-#: exist on every cohort.
-_F17_METRICS = (("ribo_median", "ribosomal %, median"),
-                ("mito_q3", "mitochondrial %, Q3"),
-                ("doublet_rate_pct", "doublet rate %"),
-                ("cells_lost", "cells lost at the call"))
-
-
-def _median(values):
-    """The middle value, or None. Local rather than imported from `figures`, which is the module
-    that needs matplotlib; this one must stay importable without it."""
-    v = sorted(x for x in values if x is not None)
-    if not v:
-        return None
-    mid = len(v) // 2
-    return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2.0
-
-
-#: The per-cell columns F17 draws. Every one is set by dissociation, chemistry or sequencing
-#: depth rather than by the condition under test, which is what makes them readable across a
-#: split whose factors cannot be told apart. NOT a list of factor names - these are scQC's own
-#: measurement columns and exist on every cohort.
-_F17_COLUMNS = (("pct_counts_ribo", "ribosomal % per nucleus"),
-                ("n_genes", "genes detected per nucleus"),
-                ("pct_counts_mt", "mitochondrial % per nucleus"),
-                ("total_counts", "UMI per nucleus"),
-                ("nuclear_fraction", "nuclear fraction"))
-
-
-def _confounded_pair(sheet):
-    """The two factors whose levels determine each other for the most libraries, and by how much.
-
-    FOUND, NOT NAMED. `_design()` discovers the factors - the same routine the gates use - and
-    the pair is chosen by measurement. A fixed list of factor names is how the ambient design
-    panel came to render empty on every cohort but the one it was written beside.
-    """
-    from engine.steps import _design  # noqa: PLC0415
-
-    factors = list(_design(sheet))
-    of_sample = {r.get("sample"): r for r in sheet}
-    best, best_score = None, -1.0
-    for i_, a in enumerate(factors):
-        for b in factors[i_ + 1:]:
-            both = [s for s in of_sample if of_sample[s].get(a) and of_sample[s].get(b)]
-            if len(both) < 2:
-                continue
-            fwd = {}
-            for s in both:
-                fwd.setdefault(of_sample[s][a], set()).add(of_sample[s][b])
-            score = sum(1 for s in both if len(fwd[of_sample[s][a]]) == 1) / len(both)
-            if score > best_score:
-                best, best_score = (a, b), score
-    return best, best_score, factors, of_sample
-
-
-def _arm_label(level, factor, partners, of_sample, samples):
-    """`aged - V2 - batch A`: every factor that shares this partition, under one violin.
-
-    An axis reading `aged` / `young` invites the reading that AGE is what differs. When three
-    factors are the same split of the libraries, no honest axis can name one of them, and this
-    is the whole reason the panel exists.
-    """
-    parts = [str(level)]
-    for other in partners:
-        vals = {str(of_sample[s].get(other)) for s in samples if of_sample[s].get(other)}
-        if len(vals) == 1:
-            parts.append(vals.pop())
-    return "\n".join(parts)
-
-
-def _f17(sheet, percell):
-    """Per-cell distributions by arm, plus each library's median over them."""
-    best, score, _factors, of_sample = _confounded_pair(sheet)
-    if not best:
-        raise TaskFailure("fewer than two design factors carry a level on two or more libraries")
-    a, b = best
-    arms = {}
-    for s in percell:
-        lv = (of_sample.get(s) or {}).get(a)
-        if lv:
-            arms.setdefault(str(lv), []).append(s)
-    if len(arms) < 2:
-        raise TaskFailure(f"{a!r} has fewer than two levels among the libraries with per-cell "
-                          f"tables, so there is nothing to compare across")
-
-    distributions, per_library, present = {}, {}, []
-    for col, label in _F17_COLUMNS:
-        by_sample, meds = {}, {}
-        for s, rows in percell.items():
-            vals = [_num(r.get(col)) for r in rows]
-            vals = [v for v in vals if v is not None]
-            if vals:
-                by_sample[s] = vals
-                meds[s] = _median(vals)
-        if sum(len(v) for v in by_sample.values()) >= 10:
-            distributions[label] = by_sample
-            per_library[label] = meds
-            present.append(col)
-    if not distributions:
-        raise TaskFailure(
-            "no per-cell column in tables/<sample>.percell.csv carries values. Ribosomal content "
-            "is written per cell only on runs made after that column was added.")
-
-    partners = [f for f in (b,) if f]
-    labels = {lv: _arm_label(lv, a, partners, of_sample, ss) for lv, ss in arms.items()}
-    return {"distributions": distributions, "arms": arms, "arm_labels": labels,
-            "per_library": per_library, "pair": f"{a} / {b}",
-            "agreement": round(score, 3), "columns": present}
-
-
-def _f18(sheet, percell):
-    """What fraction of each arm the filter removed, and each library inside it."""
-    best, _score, _factors, of_sample = _confounded_pair(sheet)
-    if not best:
-        raise TaskFailure("fewer than two design factors carry a level on two or more libraries")
-    a, b = best
-    arms = {}
-    for s, rows in percell.items():
-        lv = (of_sample.get(s) or {}).get(a)
-        if not lv:
-            continue
-        removed = sum(1 for r in rows if _flag(r.get("removed")))
-        entry = arms.setdefault(str(lv), {"removed": 0, "n": 0, "libraries": {}})
-        entry["removed"] += removed
-        entry["n"] += len(rows)
-        entry["libraries"][s] = (removed, len(rows))
-    if len(arms) < 2:
-        raise TaskFailure(f"{a!r} has fewer than two levels among the libraries with per-cell "
-                          f"tables, so removal cannot be compared across arms")
-    return {"arms": arms, "pair": f"{a} / {b}"}
-
-
-def collect(tables, *, samplesheet_rows=None, samplesheet=None, objects=None,
+def collect(tables, *, samplesheet_rows=None, samplesheet=None,
             n_in=None, n_removed=None) -> tuple:
     """Every figure this run's files can support, plus a note for every one they cannot.
 
@@ -806,8 +598,7 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None, objects=None,
 
     if samples:
         try:
-            percell = _percell(tables, samples, objects=objects,
-                               want=[c for c, _l in _F17_COLUMNS])
+            percell = _percell(tables, samples)
         except Exception as exc:                                            # noqa: BLE001
             for fid in ("F4", "F7", "F12"):
                 notes[fid] = (f"needs the per-cell tables, which could not be read - "
@@ -839,21 +630,6 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None, objects=None,
         emb_src = "tables/<sample>.embedding.csv + " + src
         _try("F10", emb_src, lambda: _f10(tables, percell, colour_by="doublet", fig_id="F10"))
         _try("F11", emb_src, lambda: _f10(tables, percell, colour_by="removed", fig_id="F11"))
-
-    # THE CONFOUNDING PAIR, from the samplesheet and the per-library table this report already
-    # reads. F16 is the design itself; F17 is how far apart its arms sit on quantities the
-    # condition under test did not set. Both come from files a finished run has, so a reader can
-    # get them from `scqc report` without the pipeline running again.
-    #
-    # `_design()` DISCOVERS the factors - the same routine the gates use. A fixed list of factor
-    # names is how the ambient design panel came to render empty on every cohort but the one it
-    # was written beside, and this is the same trap one figure over.
-    if sheet:
-        _try("F16", "the samplesheet", lambda: _f16(sheet))
-    if sheet and percell:
-        src16 = "the samplesheet + tables/<sample>.percell.csv"
-        _try("F17", src16, lambda: _f17(sheet, percell))
-        _try("F18", src16, lambda: _f18(sheet, percell))
 
     # After the per-cell tables, because that is where the denominator comes from: F9 draws each
     # criterion's unique removals against the population they were removed FROM, and a bar chart

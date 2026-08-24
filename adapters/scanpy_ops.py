@@ -1191,23 +1191,6 @@ def qc_metrics(adata, mt_prefix, ribo_pattern, *, allow_empty_mt=False, allow_em
             f"{', '.join(map(str, names[:8]))}. Pass allow_empty_ribo=True to declare the "
             f"absence deliberate.")
 
-    # A RIBOSOMAL PATTERN THAT CATCHES KINASES IS THE ONE MISTAKE THIS METRIC HAS. `^Rp[sl]`
-    # also matches Rps6ka1-6, Rps6kb1-2, Rps6kc1 and Rps6kl1 - the S6 kinases, which are mTOR
-    # SIGNALLING genes and not ribosomal proteins. This tool's own documentation suggested that
-    # pattern, so every samplesheet copied from it counted ten signalling genes as ribosome.
-    #
-    # It is not caught by the empty-match check above, and it never fails: it returns a
-    # plausible percentage that is slightly wrong in a direction nobody can see. Named here
-    # rather than left to the reader, because a count cannot be audited and a percentage cannot
-    # be un-published.
-    _kin = [g for g in ribo_genes if re.match(r"^(?:Rps6k|RPS6K)", str(g))]
-    if _kin:
-        notes.append(
-            f"ribo_pattern {ribo_pattern!r} matched {len(_kin)} S6 KINASE(S) - "
-            f"{', '.join(map(str, _kin[:6]))}{' ...' if len(_kin) > 6 else ''} - which are mTOR "
-            f"signalling genes, not ribosomal proteins. pct_counts_ribo therefore includes them. "
-            f"Use '^Rp[sl](?!6k)' (mouse) or '^RP[SL](?!6K)' (human) to exclude them.")
-
     adata.var["mt"] = mt_mask
     adata.var["ribo"] = ribo_mask
 
@@ -2405,18 +2388,6 @@ def _op_valley(adata, params, out_prefix) -> tuple:
             _float_array(adata.obs["total_counts"]),
             floor_umi=mito_floor, derivation_max=mito_max)
 
-    # RIBOSOMAL CONTENT, SUMMARISED HERE BECAUSE THE MATRIX IS ALREADY OPEN. It is reported and
-    # never filtered on - no threshold is derived from it. It exists in `obs` on every run and
-    # was summarised only per CLUSTER, so a per-library figure could not be read at all, and the
-    # confounding panel needs one: ribosomal fraction tracks the preparation, so a difference in
-    # it across a confounded split is a technical difference far more readily than a biological
-    # one.
-    ribo = None
-    if "pct_counts_ribo" in adata.obs.columns and "total_counts" in adata.obs.columns:
-        ribo = ribo_summary(_float_array(adata.obs["pct_counts_ribo"]),
-                            _float_array(adata.obs["total_counts"]),
-                            floor_umi=mito_floor)
-
     # THE DENOISER'S CELL CALL, read from THIS object rather than from a file beside it.
     #
     # Step 2 compares the aligner's call with the denoiser's. It took the denoiser's from a
@@ -2506,10 +2477,7 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                # None when obs carries no pct_counts_mt, or the library is too small to place a
                # quartile. Absent is reported as absent; step 5 refuses rather than defaulting.
                "mito_quartiles": mito,
-               "mito_population": mito_pop,
-               # None when obs carries no pct_counts_ribo - which is every run made before this
-               # was summarised per library. Absent is reported as absent, never as zero.
-               "ribo_quartiles": ribo}
+               "mito_population": mito_pop}
     metrics["n_called_by_denoiser"] = len(called)
     metrics.update(nf_metrics)
     outs = [valleys, density, jpath, cells_path]
@@ -2576,35 +2544,6 @@ def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIV
     return ({"n": len(v), "median": med, "q1": q(0.25), "q3": q(0.75),
              "mad": dev[lo_i] + (h - lo_i) * (dev[hi_i] - dev[lo_i]),
              "max": v[-1], "max_above_floor": max_above}, pop)
-
-
-def ribo_summary(pct_ribo, total_counts, *, floor_umi):
-    """Median and quartiles of `pct_counts_ribo`, over the barcodes above the UMI floor.
-
-    DELIBERATELY NOT `mito_quartiles`. That function derives a CEILING - it excludes high-mito
-    barcodes so the derivation population is cells rather than debris, and carries a MAD because
-    a threshold is computed from it. Nothing here decides a threshold: ribosomal content is
-    reported, never filtered on, and reusing the mito machinery would import an exclusion rule
-    that has no meaning for this metric.
-
-    The UMI floor is shared, and only that: a summary taken over every droplet describes the
-    ambient soup as much as the cells.
-
-    Returns None when the population is too small to place quartiles in - the same rule the mito
-    derivation uses - rather than a number computed from three points.
-    """
-    v = sorted(float(r) for r, t in zip(pct_ribo, total_counts)
-               if r == r and t == t and float(t) >= float(floor_umi))
-    if len(v) < 4:
-        return None
-
-    def q(pr):
-        h = (len(v) - 1) * pr
-        lo_i = int(h)
-        hi_i = min(lo_i + 1, len(v) - 1)
-        return v[lo_i] + (h - lo_i) * (v[hi_i] - v[lo_i])
-
-    return {"n": len(v), "median": q(0.5), "q1": q(0.25), "q3": q(0.75), "max": v[-1]}
 
 
 #: The declared population's threshold criteria, as (declared key, obs column, comparison).
@@ -3121,25 +3060,14 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                 f"read as having passed the doublet criterion. Raise the UMI floor to the light "
                 f"floor or above, or score the detector over the lower population.")
 
-    # None when this object carries no pct_counts_ribo - an object written before the metric
-    # existed, or a reference whose symbols matched none. The column is then blank on every row,
-    # which is what "not measured" looks like and what 0 would not.
-    ribo = (_float_array(adata.obs["pct_counts_ribo"])
-            if "pct_counts_ribo" in adata.obs.columns else None)
-
     path = Path(str(out_prefix) + ".percell.csv")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = _csv.writer(fh)
         # `nuclear_fraction` sits beside `pct_counts_mt` because the two are the criterion's two
         # axes and a reader checking `fail_mito_nf` needs both. BLANK where undefined - never 0.
-        # `pct_counts_ribo` sits beside `pct_counts_mt` because they are read together: both are
-        # properties of the PREPARATION rather than of the condition under test, which is what
-        # makes them readable across a design whose factors cannot be separated. It is reported
-        # and never filtered on - no criterion below uses it. BLANK where absent, never 0: a
-        # library whose reference matched no ribosomal gene must not read as one with none.
         w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
-                    "pct_counts_mt", "pct_counts_ribo", "nuclear_fraction",
+                    "pct_counts_mt", "nuclear_fraction",
                     "doublet_score", "doublet_class", "doublet_scored",
                     *APPLY_CRITERIA, "removed", "keep"])
         for i, b in enumerate(adata.obs_names):
@@ -3147,7 +3075,6 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                         "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
                         "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
                         "" if mt[i] != mt[i] else f"{mt[i]:.6f}",
-                        "" if ribo is None or ribo[i] != ribo[i] else f"{ribo[i]:.6f}",
                         "" if nf_values[i] is None else f"{float(nf_values[i]):.6f}",
                         "" if _unknown(dbl_score[i]) else f"{float(dbl_score[i]):.6f}",
                         "" if _unknown(dbl_class[i]) else str(dbl_class[i]),
@@ -3219,7 +3146,7 @@ def _unique_var_index(a, sample: str):
     reason - and the symbols are kept in `var["gene_symbol"]`. A reference whose symbols are
     unique is left exactly as it came in, so this changes nothing for most inputs.
 
-    Matching on symbol - `mt-`, `^Rp[sl](?!6k)` - therefore reads var["gene_symbol"] on a delivered
+    Matching on symbol - `mt-`, `^Rp[sl]` - therefore reads var["gene_symbol"] on a delivered
     object whose index was replaced. Every threshold in this pipeline was computed before this
     point, on the per-library objects, so no measurement is affected by the choice.
     """

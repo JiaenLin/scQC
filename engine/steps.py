@@ -654,9 +654,6 @@ PER_SAMPLE_COLUMNS = (
     ("mito_pop_n", "mito derived over (n)", "per library", "05_quality"),
     ("mito_q1", "mito Q1 %", "per library", "05_quality"),
     ("mito_q3", "mito Q3 %", "per library", "05_quality"),
-    ("ribo_median", "ribo median %", "per library", "05_quality"),
-    ("ribo_q1", "ribo Q1 %", "per library", "05_quality"),
-    ("ribo_q3", "ribo Q3 %", "per library", "05_quality"),
     ("mito_ceiling_pct", "MITO CEILING %", "per library", "05_quality"),
     ("mito_clamped", "ceiling clamped", "per library", "05_quality"),
     ("clusters", "clusters", "per library", "06_cluster_check"),
@@ -711,9 +708,6 @@ def _per_sample_thresholds(pipeline, samples: list) -> tuple:
         q5, d4 = metrics(f"05_quality/{s}"), metrics(f"04_doublets/{s}")
         val, bim = q5.get("valleys") or {}, q5.get("bimodal") or {}
         pop, cc, ce = (q5.get("mito_population") or {}), calls.get(s, {}), ceilings.get(s, {})
-        # None on any run made before ribosomal content was summarised per library. The row then
-        # carries empty cells, which is what an older run honestly has, rather than zeros.
-        rq = q5.get("ribo_quartiles") or {}
         rate = d4.get("rate_over_scored")
         rows.append({
             "sample": s,
@@ -734,12 +728,6 @@ def _per_sample_thresholds(pipeline, samples: list) -> tuple:
             "mito_pop_n": pop.get("n_at_or_above"),
             "mito_q1": _round(ce.get("q1"), 3),
             "mito_q3": _round(ce.get("q3"), 3),
-            # REPORTED, NEVER FILTERED ON. No threshold is derived from ribosomal content; it is
-            # here because it tracks the preparation, which is what makes it readable across a
-            # confounded design.
-            "ribo_median": _round((rq or {}).get("median"), 3),
-            "ribo_q1": _round((rq or {}).get("q1"), 3),
-            "ribo_q3": _round((rq or {}).get("q3"), 3),
             "mito_ceiling_pct": _round(ce.get("ceiling"), 3),
             "mito_clamped": ce.get("clamped") or None,
             "clusters": metrics(f"06_cluster/{s}").get("n_clusters"),
@@ -1219,12 +1207,8 @@ def _require_gene_patterns(step: str, p: dict) -> None:
                 f"mitochondrial prefix, and a wrong one gives every cell pct_counts_mt == 0, "
                 f"which is indistinguishable from a clean library and passes every mitochondrial "
                 f"gate.\n"
-                f"    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl](?!6k)\n"
-                f"    human: mt_prefix=MT-  ribo_pattern=^RP[SL](?!6K)\n"
-                f"    The (?!6k) is NOT decoration. `^Rp[sl]` also matches the ten S6 KINASES -\n"
-                f"    Rps6ka1-6, Rps6kb1-2, Rps6kc1, Rps6kl1 - which are mTOR signalling genes\n"
-                f"    and not ribosomal proteins. It keeps all 9 genuine families and drops all\n"
-                f"    ten kinases. Whatever you pass, read uns['scqc_qc_metrics']['ribo_genes'].\n"
+                f"    mouse: mt_prefix=mt-  ribo_pattern=^Rp[sl]\n"
+                f"    human: mt_prefix=MT-  ribo_pattern=^RP[SL]\n"
                 f"    Add them as samplesheet columns. Matching is case-sensitive by design.")
 
 

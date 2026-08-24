@@ -45,8 +45,8 @@ path the pipeline needs or a **design factor it discovers on its own**.
 
 ```tsv
 sample	platform	species	reference	assay	matrix	mt_prefix	ribo_pattern	condition
-S1	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S1/outs/raw	mt-	^Rp[sl](?!6k)	control
-S2	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl](?!6k)	treated
+S1	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S1/outs/raw	mt-	^Rp[sl]	control
+S2	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl]	treated
 ```
 
 | column | required | what it is |
