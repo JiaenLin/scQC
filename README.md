@@ -87,6 +87,31 @@ precedes quality filtering, as scDblFinder's documentation requires.
 📄 **[Why each step exists](docs/RATIONALE.md)** · **[How each filter is
 calculated](docs/FILTERS.md)** · **[Workflow diagrams](docs/WORKFLOW.md)**
 
+## The confounding block
+
+The report opens with what the design can and cannot support. Three figures, computed from the
+samplesheet and the per-cell tables:
+
+**F16** compares every pair of design factors and classifies the pair as `aliased` (each factor is
+fixed once the other is known), `nested` (the implication runs one way) or `crossed` (separable).
+The comparison is exact set arithmetic over the partitions each factor induces on the libraries —
+there is no statistic and no p-value, because a confounded factor cannot be tested. The samplesheet
+is redrawn beside the matrix so the classification can be checked by eye.
+
+**F17** draws every QC metric across the arms the aliasing leaves: `total_counts`, `n_genes`,
+complexity, `pct_counts_mt`, `pct_counts_ribo`, `nuclear_fraction` and `doublet_score`. A violin per
+arm over the nuclei the filter kept, with **each library's own median drawn inside its arm**. Each
+panel states the gap between the arm medians against the widest spread of library medians within a
+single arm. A gap no larger than that spread is a library effect, not an arm effect.
+
+**F18** gives the removal rate per arm, in total and per criterion, with the ratio between the
+extreme arms printed for each. This is the part of the confounding the pipeline itself introduces.
+
+Where no two factors are aliased, F17 and F18 say so instead of constructing a contrast the design
+does not support.
+
+📄 **[Report design](docs/REPORT_DESIGN.md)** — every figure, and what it is for.
+
 ## Output
 
 Apply mode writes one filtered object per library plus a cohort object merged from those files
@@ -168,10 +193,8 @@ repository.
 **0.4.0.** `scqc run` builds the task graph and executes it, locally or on PBS, invoking the
 aligner, denoiser, doublet caller and analysis stack out of process. It writes the report and, in
 apply mode, one filtered object per library plus a merged cohort object with a ledger naming every
-barcode removed and why. All eighteen report figures are drawn, three of them a confounding
-block: which design factors these libraries cannot tell apart, how far apart the arms that
-leaves sit on every QC metric, and whether the filter widened the gap. Per-step subcommands
-remain, for judging tables produced elsewhere.
+barcode removed and why. All eighteen report figures are drawn. Per-step subcommands remain, for
+judging tables produced elsewhere.
 
 Read [KNOWN_ISSUES.md](KNOWN_ISSUES.md) before quoting a number from a run.
 

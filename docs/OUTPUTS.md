@@ -90,15 +90,14 @@ nucleus survived without recomputing anything. They come from the per-cell table
 recomputed at write time, so the object provably holds the numbers the criteria were evaluated on
 — recomputing would give the same answers and could not prove it.
 
-`pct_counts_ribo` is the exception and is carried on the same terms for a different reason: it is
-measured beside `pct_counts_mt` in step 7 and no criterion reads it, so it decided nothing. It is
-here because it is the one QC axis that could not otherwise be checked without going back to the
-matrix, and because the report's confounding block (F17) draws it across the design.
+`pct_counts_ribo` is the exception: it is measured beside `pct_counts_mt` in step 7 and **no
+criterion reads it**, so it decided nothing. It is carried because it is otherwise unavailable
+without returning to the matrix, and because report figure F17 draws it across the design.
 
-> **An optional column is carried only where it holds something.** A column whose every value is
-> missing has no type to infer from, and `_annotation_column` would type it as a categorical with
-> no categories — the string path, on an object being written to h5ad. Absent is the honest state
-> and it is also the safe one.
+> **An optional column is present only where it holds a value.** The column is absent, never
+> present and empty on every row. A column with no values has no dtype to infer, and an all-empty
+> text column is built through pandas' Arrow string backend, which raises where pyarrow is not
+> installed.
 
 > **Absent is a third state and is preserved as one.** A barcode step 6 never labelled, or a
 > cluster missing from the profile, leaves these `None` — never `False`, never `0`. *"This cluster

@@ -108,12 +108,11 @@ Read it in this order — it is arranged as an argument, not as a log:
    last number is the one a conventional QC report does not carry: a filter that falls harder on
    one arm of the design puts a technical gradient exactly where the biology is measured.
 2. **Where the design is confounded.** Every pair of design factors, classified `aliased` /
-   `nested` / `crossed` by exact comparison of the partitions they induce over your libraries —
-   no statistic and no p-value, because a confounded factor cannot be tested. Where two factors
-   are aliased it draws every QC metric across the arms that leaves, with each library's own
-   median inside its arm: an arm difference no larger than the spread between libraries of the
-   same arm is a library effect, whatever it is labelled. Then what the filter removed from each
-   arm, per criterion. A cleanly crossed design says so in one line and moves on.
+   `nested` / `crossed` by exact comparison of the partitions they induce over your libraries.
+   Where two factors are aliased, every QC metric is drawn across the arms that leaves, with each
+   library's own median inside its arm — an arm difference no larger than the spread between
+   libraries of the same arm is a library effect. Then the removal rate per arm, per criterion. A
+   design with no aliased pair says so in one line.
 3. **Where each count floor came from, and what quality control did.** The density each valley
    was read off; then one row per criterion — the distribution before the cut, what survived it,
    and the threshold with how it was arrived at (DERIVED from this data, or DECLARED before
