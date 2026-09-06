@@ -1,10 +1,13 @@
 # What can be added to scQC. Read by `sch dev map`; see the harness's sch/dev/points.py.
 tool: scqc
 devpoints: 1
-terms: docs/forbidden_terms.txt
+# The word list this repository must not contain lives OUTSIDE it, in the project that owns
+# the cohort: $SCQC_FORBIDDEN_TERMS, the convention tests/test_portability.py already uses.
+# A tool that ships the vocabulary in order to check that it does not ship the vocabulary
+# has shipped it.
 
 tests:
-  command: ["{python}", "tests/run_all.py"]
+  command: ["{python}", "scqc_cli.py", "selftest"]
 
 # scQC consumes a PROJECT - a samplesheet and per-sample matrices - not a single object, so the
 # fixture's cohort object alone cannot drive its pipeline. `describe` is what the fixture tier
