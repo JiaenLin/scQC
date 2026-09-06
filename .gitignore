@@ -49,3 +49,4 @@ HANDOVER.md
 # ran. Generated, never edited, and untracked by design - but un-ignored it is permanent porcelain,
 # which makes any "clean worktree" check unsatisfiable and trains its reader to skip the check.
 HEAD.txt
+.mpl/
