@@ -1,0 +1,53 @@
+# What can be added to scQC. Read by `sch dev map`; see the harness's sch/dev/points.py.
+tool: scqc
+devpoints: 1
+terms: docs/forbidden_terms.txt
+
+tests:
+  command: ["{python}", "tests/run_all.py"]
+
+# scQC consumes a PROJECT - a samplesheet and per-sample matrices - not a single object, so the
+# fixture's cohort object alone cannot drive its pipeline. `describe` is what the fixture tier
+# can honestly run: it exercises the declaration, every criterion's mask name, the gates and
+# their thresholds. That is a real check of the contract and no check at all of the arithmetic,
+# which is what `cannot_prove` below says.
+fixture:
+  command: ["{python}", "scqc_cli.py", "describe"]
+  products: []
+
+baseline_dir: tests/baselines
+
+points:
+  criterion:
+    what: a reason a barcode may be set aside, with its own mask and its own threshold
+    lives: modules
+    register:
+      - {file: engine/declare.py, table: CRITERIA}
+    must_declare: [one mask per criterion in PROVIDES, a GATES entry with as_written,
+                   what it CANNOT show, state_version]
+    example: light_floor
+    tests: [tests/test_status_contract.py, tests/test_describe.py]
+    proves: "it declares a mask of its own, a threshold that is written down, and never deletes"
+    cannot_prove: >
+      that the threshold is right for any cohort but the one it was read from - a criterion is
+      calibrated per dataset and a default here would be that calibration escaping
+
+  step:
+    what: a stage of the pipeline, run in order over a project
+    lives: modules
+    register:
+      - {file: engine/pipeline.py, table: _STEP_MODULES}
+      - {file: engine/declare.py, table: GATES}
+    must_declare: [inputs it reads, products it writes, its entry in APPLY_REQUIRES if it removes]
+    example: 05_quality
+    tests: [tests/acceptance]
+    proves: "it is ordered, its products are named, and its removals are declared"
+    cannot_prove: "that it runs on a real project - the fixture is one object, not a project"
+
+  adapter:
+    what: a backend the engine can call for one measurement, swappable without touching a step
+    lives: adapters
+    must_declare: [what it wraps, its version, whether it is reproducible]
+    example: nuclear_fraction
+    proves: "it is importable and reports its own reproducibility rather than being assumed"
+    cannot_prove: "that two adapters for one measurement agree - that is a comparison, not a check"

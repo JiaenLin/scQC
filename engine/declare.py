@@ -32,8 +32,15 @@ NEEDS = ["matrix/{counts}", "column/{sample}"]
 # One mask per criterion, never one opaque mask: every removed observation is paired with the
 # criteria that fired (`adapters/apply.build_removal_record`), so a later split is a move and
 # not a rewrite.
-PROVIDES = [f"mask/{c}" for c in ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
-                                   "fail_mito_ceiling", "fail_doublet", "fail_mito_nf")] + [
+# ONE NAME PER REASON A BARCODE MAY BE SET ASIDE. Written as a literal tuple rather than inlined
+# into the comprehension below so that it can be READ - by a person, and by `sch dev check`,
+# which parses this file to answer "is the new criterion registered?". A registry built inside a
+# comprehension is invisible to anything but the interpreter, and a check that cannot see it
+# reports "no criteria" when it means "I cannot tell", which is a different and worse answer.
+CRITERIA = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
+            "fail_mito_ceiling", "fail_doublet", "fail_mito_nf")
+
+PROVIDES = [f"mask/{c}" for c in CRITERIA] + [
     "column/total_counts", "column/n_genes", "column/pct_counts_mt", "column/pct_counts_ribo",
     "column/nuclear_fraction", "column/doublet_score", "column/doublet_class",
     "column/cluster_FLAG", "table/removal_ledger", "table/removal_by_criterion",
