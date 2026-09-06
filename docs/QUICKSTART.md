@@ -40,7 +40,7 @@ upgrading the pipeline cannot disturb a result you already have.
 
 ## 3 · Fill in the samplesheet
 
-`~/projects/my-study/samplesheet.tsv`. Four columns are required; everything else is either a
+`<project>/samplesheet.csv` (the CLI looks for that name; `--samplesheet` names another). Four columns are required; everything else is either a
 path the pipeline needs or a **design factor it discovers on its own**.
 
 ```tsv

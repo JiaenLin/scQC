@@ -6,7 +6,7 @@ exists because its absence produces a defect that a passing test suite cannot se
 ## Before you open a pull request
 
 ```bash
-./bin/scqc selftest        # ten unit suites + the adversarial suite; non-zero exit if any failed
+./bin/scqc selftest        # every tests/test_*.py + the adversarial suite; non-zero exit if any failed
 ```
 
 Every suite but one runs on the standard library alone; `tests/test_audit_ambient.py` needs pandas

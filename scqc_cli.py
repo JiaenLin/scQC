@@ -27,6 +27,7 @@ import argparse
 import csv
 import importlib.util
 import json
+import shutil
 import subprocess
 import os
 import sys
@@ -439,6 +440,14 @@ def cmd_report(a) -> int:
     return 0
 
 
+def cmd_describe(a) -> int:
+    """The tool's declaration, for a reader or a host that will not read the code."""
+    sys.path.insert(0, str(ROOT))
+    from engine import declare
+    print(declare.dumps())
+    return 0
+
+
 def cmd_selftest(a) -> int:
     suites = sorted((ROOT / "tests").glob("test_*.py")) + [ROOT / "tests" / "adversarial.py"]
     passed, failed, skipped = [], [], []
@@ -551,9 +560,29 @@ def cmd_run(a) -> int:
                               if a.extra_resolutions else None),
     }.items() if v is not None}
     # AFTER `tools`, because the run's output directory is named from the parameters it was given.
+    # COMPUTE GOES TO THE SCHEDULER. A local executor on a machine that has one, outside any
+    # job, is a login-node run: against policy and roughly ten times slower than the same work as
+    # jobs. It is refused unless the caller says --allow-local, and the refusal names the fix.
+    # Inside a job (PBS_ENVIRONMENT / SLURM_JOB_ID set) a local executor is the compliant form.
+    if a.executor == "local" and not a.allow_local and shutil.which("qsub") \
+            and not (os.environ.get("PBS_ENVIRONMENT") or os.environ.get("SLURM_JOB_ID")):
+        raise SystemExit(
+            "scqc run: --executor local on a machine with a scheduler, outside any job.\n"
+            "       Submit this command as a job, or pass --executor pbs, or --allow-local if\n"
+            "       this really is a workstation that happens to carry qsub.")
+
     pipe = Pipeline(project=project, mode=a.mode, executor=executor, samples=rows,
                     decisions=decisions, force=a.force, jobs=jobs, tools=tools)
     python_exe = a.python or sys.executable
+
+    # THE FIRST THING THE RUN WRITES IS THAT IT IS PARTIAL. STATUS.json says `partial` and
+    # RUNNING.txt stands until the run's last act rewrites them, so a run that dies leaves a
+    # record that says so — a different fact from refused, and from ok (engine/status.py).
+    from engine import declare, status as run_status
+    from engine.provenance import git_provenance as _gp
+    run_status.begin(pipe.results, tool="scqc", version=VERSION,
+                     commit=(_gp(ROOT) or {}).get("commit"), state_version=declare.STATE_VERSION,
+                     declaration={"sees": declare.SEES, "cannot_show": declare.CANNOT_SHOW})
 
     # Which code is running, printed by scQC rather than by whatever script launched it. The job
     # script echoed `git log --oneline -1`, and a compute node has no git: the banner read
@@ -606,6 +635,30 @@ def cmd_run(a) -> int:
                   file=sys.stderr)
             print("           The run's own record is missing; treat its outcome as unrecorded.",
                   file=sys.stderr)
+        # THE LAST THING THE RUN WRITES IS WHAT IT WAS. ok, refused or failed, with the products
+        # that are actually on disk and the ones that are not; then the seal, which is SEALED only
+        # when the exit is 0 and every expected product exists. A report is expected of every run
+        # that got as far as running; the seal checks the products, not just the exit status.
+        st = {0: "ok", 2: "refused"}.get(code, "failed")
+        refusal = None
+        if st == "refused":
+            refusal = {"reason": stopped or "a gate refused",
+                       "fix": "read the refusal in reports/report.json; change the input, or record "
+                              "an adjudicated value in decisions.yml with approved_by and verbatim"}
+        escapes = []
+        try:
+            for prm in (payload.get("parameters") or []):
+                if str(prm.get("class", "")).upper() == "ADJUDICATED":
+                    escapes.append({"ask": {"gate": "05_quality", "parameter": prm.get("name"),
+                                            "derived": prm.get("basis")},
+                                    "decision": {"by": prm.get("decided_by"), "why": prm.get("verbatim"),
+                                                 "value": prm.get("value")}})
+        except NameError:
+            pass
+        run_status.finish(pipe.results, status=st, headline=stopped or {
+            "ok": f"{len(rows)} libraries; deliverable written", "refused": "a gate refused",
+            "failed": "a task failed"}[st], exit_code=code, refusal=refusal, escapes=escapes,
+            expected=["reports/report.json", "reports/payload.json"])
         return code
 
     try:
@@ -624,6 +677,13 @@ def cmd_run(a) -> int:
     except Refusal as e:
         print(f"\nREFUSED\n{e}")
         return finish(2)
+    except BaseException as e:                                        # noqa: BLE001
+        # A crash or an interrupt: the seal says FAILED and STATUS.json says failed, with the
+        # exception named, before the traceback reaches whoever launched this. Then re-raised.
+        run_status.finish(pipe.results, status="failed", exit_code=1,
+                          headline=f"{type(e).__name__}: {str(e)[:200]}",
+                          expected=["reports/report.json"])
+        raise
 
     refused = [k for k, r in pipe.results_by_key.items() if r.status is Status.REFUSED]
     failed = [k for k, r in pipe.results_by_key.items() if r.status is Status.FAILED]
@@ -693,6 +753,8 @@ def build_parser() -> argparse.ArgumentParser:
     r2.add_argument("--samplesheet")
     r2.add_argument("--decisions", help="apply mode only; evidence mode refuses it")
     r2.add_argument("--executor", choices=["local", "pbs"], default="local")
+    r2.add_argument("--allow-local", dest="allow_local", action="store_true",
+                    help="run the local executor on a machine that has a scheduler, outside a job")
     r2.add_argument("--queue"); r2.add_argument("--pbs-project", dest="pbs_project")
     r2.add_argument("--python", help="interpreter that has scanpy/anndata")
     r2.add_argument("--celescope"); r2.add_argument("--cellranger")
@@ -753,6 +815,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="re-stamp an object that already carries a declaration")
     st.add_argument("--dry-run", action="store_true", help="report, write nothing")
     st.set_defaults(fn=cmd_stamp)
+
+    d = sub.add_parser("describe", help="what this tool declares: needs, provides, sees, gates, "
+                                        "cannot_show, state_version, criteria (JSON)")
+    d.add_argument("--json", action="store_true", help="accepted for symmetry; the output is JSON")
+    d.set_defaults(fn=cmd_describe)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")
     s.add_argument("-v", "--verbose", action="store_true"); s.set_defaults(fn=cmd_selftest)

@@ -247,10 +247,9 @@ the task.
 
 ## What is not produced
 
-- **No figures.** `report/figures.py` exists and the report expects F1–F9; no step supplies one.
-  Each absence is reported as a defect rather than omitted.
-- **No freshness check.** The report can compare its own timestamp against its inputs, and no step
-  supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be
-  current.
+- **Figures are drawn by the report step**, eighteen of them, from the tables; a figure whose
+  table is missing is reported as an absence rather than omitted.
+- **Freshness is checked.** The payload carries the newest input's time and the report compares
+  its own against it; a report older than its inputs says so.
 - **No modified inputs.** Nothing a run writes replaces anything it read. The denoised objects in
   `objects/` are the run's own copies; the matrices named in the samplesheet are never written to.

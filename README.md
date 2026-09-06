@@ -128,6 +128,21 @@ filtered on its own mitochondrial ceiling and cluster-checked on its own cluster
 
 📄 **[Output reference](docs/OUTPUTS.md)** — every file, every column.
 
+### What a run leaves behind
+
+Four states are distinguishable from the filesystem alone, by a reader who did not watch the run:
+
+| file | written | says |
+|---|---|---|
+| `STATUS.json` | first as `partial`, last with the outcome | `ok` · `partial` (it died) · `refused` with a `fix` · `failed`; the commit, the job, the products actually on disk, `sees`, `cannot_show`, and every adjudicated threshold as an ask/decision pair |
+| `RUNNING.txt` | at start | replaced at exit by one of the two below |
+| `SEALED.txt` | exit 0 **and** every expected product present | a green light that checks the products, not just the exit status |
+| `FAILED.txt` | anything else | names what is missing |
+
+`scqc describe` prints the tool's declaration — needs, provides (one mask per criterion), sees,
+gates and their verdicts, escapes, `cannot_show`, `state_version` — as JSON, for a host or a
+reader that will not read the code.
+
 ## Reproducibility
 
 All enforced today:

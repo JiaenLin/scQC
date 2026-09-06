@@ -90,7 +90,7 @@ library's own tail that far means the filter's severity is set by prep quality, 
 exactly where the population at risk is largest.
 
 **Why the spread is prep, not biology.** The decisive measurement is available because the design
-has replicates: the fence varied **more between two mice of the same group (3.87×) than between
+has replicates: the fence varied **more between two animals of the same group (3.87×) than between
 the design groups (2.59×)**. A biological replicate cannot differ by more than the design and
 still have that variation be the design. The UMI valley is the control and behaves oppositely —
 within-group 1.33× against between-group 1.52× — which is why *it* collapses safely to one cohort
@@ -210,7 +210,7 @@ resolution in a way that argued for a different default.
 **What the sweep did NOT support**, recorded because it was proposed and tested:
 
 - **A stopping rule on marker strength.** "Split until a cluster has no gene above AUC 0.6", used
-  by two published cardiac workflows, fails in only 1 of 10 libraries anywhere below resolution
+  by two published workflows for this tissue, fails in only 1 of 10 libraries anywhere below resolution
   3.0 on this cohort. It does not constrain, and it is not adopted.
 - **Higher resolution as a way to flag less.** It flags *more*: the share of the deliverable in a
   flagged cluster rose from 3.50% at 1.0 to 5.57% at 3.0. Resolution redistributes flagging into

@@ -245,7 +245,10 @@ def _ambient(task, pipeline, log):
 
     sample = task.sample
     raw = task.params["raw"]
-    out_h5 = _objects(pipeline) / f"{sample}_cellbender.h5"
+    # `<sample>_ambient.h5`: the name the graph declares as this task's output and every consumer
+    # reads (engine/graph.py). It was `_cellbender.h5` here alone, so the CellBender-run path
+    # could never have satisfied its own output check; only the supplied route ever ran.
+    out_h5 = _objects(pipeline) / f"{sample}_ambient.h5"
     res = cbd.run_remove_background(
         sample=sample, input_path=raw, output_h5=out_h5,
         exe=task.params["exe"], env_bin=task.params.get("env_bin"),
