@@ -26,8 +26,14 @@ points:
     lives: modules
     register:
       - {file: engine/declare.py, table: CRITERIA}
-    must_declare: [one mask per criterion in PROVIDES, a GATES entry with as_written,
-                   what it CANNOT show, state_version]
+    # PROSE, DELIBERATELY. A bare identifier here is checked against the artefact at
+    # `lives`; a sentence is printed for a person. These requirements are satisfied in
+    # other files - the declaration module, the run record - so as checked keys they
+    # would look for them where they are not and fail every existing one.
+    must_declare: ["one mask of its own in PROVIDES",
+                   "a GATES entry carrying the word the module itself writes (as_written)",
+                   "what it CANNOT show",
+                   "a state_version in the run record it produces"]
     example: light_floor
     tests: [tests/test_status_contract.py, tests/test_describe.py]
     proves: "it declares a mask of its own, a threshold that is written down, and never deletes"
