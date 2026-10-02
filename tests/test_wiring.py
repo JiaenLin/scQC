@@ -558,6 +558,37 @@ for _label, _decl in (("mixed", {"A": "scrna", "B": "snrna"}), ("missing", {"A":
 print(f"M. the declared assay reaches 05_quality, for both assays; mixed or missing refuses: "
       f"{_axis_bad} bad")
 
+# ---- N. the project's registry reaches ingest.
+#
+# Ingest read the registry beside the project's PARENT, else the one this repository ships - one
+# example row, the first cohort's mouse reference. A second species could not be declared without
+# editing the tool. `scqc run --registry` hands ingest the project's own; the same human row must be
+# accepted with it and refused, naming the registry, without it.
+import tempfile as _tf  # noqa: E402
+from engine.task import Task as _Task  # noqa: E402
+_reg_bad = 0
+with _tf.TemporaryDirectory() as _td:
+    _reg = Path(_td) / "registry.tsv"
+    _reg.write_text("species\tbuild\tpath\nhomo_sapiens\tGRCh38\t-\n")
+    _hrow = _row("A", **_CELLS)
+    for _given, _should in ((str(_reg), "accepted"), (None, "refused")):
+        class _PR(_P):
+            project = Path(_td) / "proj"
+            tools = {"registry": _given} if _given else {}
+        _t = _Task(key="00_ingest/A", step="00_ingest", sample="A", fn=_st._ingest,
+                   params={"row": _hrow, "python_exe": "python", "expected_genes": None})
+        try:
+            _st._ingest(_t, _PR, Path(_td) / "log.txt")
+            _said = ""
+        except Exception as e:                                        # noqa: BLE001
+            _said = str(e)
+        _named = "not in the registry" in _said
+        if (_should == "accepted") == _named:
+            fails.append(f"N: with registry={_given!r} the human reference was "
+                         f"{'refused' if _named else 'accepted'}; expected {_should}. Said: {_said[:160]}")
+            _reg_bad += 1
+print(f"N. a project's --registry reaches ingest (accepted with it, refused without): {_reg_bad} bad")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

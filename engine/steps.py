@@ -122,8 +122,13 @@ def _ingest(task, pipeline, log):
     row = task.params["row"]
     sample = row["sample"]
     ing = step_module("ingest")
-    registry = ing.read_registry(pipeline.project.parent / "references" / "_registry"
-                                 / "registry.tsv")
+    # THE PROJECT'S REGISTRY FIRST, when the run was given one (`--registry`). Only then the old
+    # lookups - which a second species could not satisfy without editing this repository.
+    given = (getattr(pipeline, "tools", None) or {}).get("registry")
+    registry = ing.read_registry(Path(given)) if given else {}
+    if not registry:
+        registry = ing.read_registry(pipeline.project.parent / "references" / "_registry"
+                                     / "registry.tsv")
     if not registry:
         registry = ing.read_registry(Path(__file__).resolve().parents[1]
                                      / "references" / "_registry" / "registry.tsv")

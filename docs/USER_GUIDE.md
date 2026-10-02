@@ -27,8 +27,14 @@ whether it is reached through the pipeline or by hand.
 ### `scqc run`
 
 ```bash
-scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--decisions FILE]
+scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--decisions FILE] \
+          [--registry FILE]
 ```
+
+- `--registry` — the project's reference registry (TSV: `species`, `build`, `path`, ...). The
+  samplesheet's `reference` must be a `species/build` key in it. Without it, ingest uses the
+  registry shipped with scQC, which holds one example row; a project on any other reference
+  declares its own here rather than editing the tool.
 
 - `--jobs` — independent tasks run at once. `0` (default) uses the machine, capped at 16. Use `1`
   when a failure has to be read in a single log.

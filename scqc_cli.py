@@ -236,6 +236,16 @@ def cmd_validate(a) -> int:
     return 2 if bad else 0
 
 
+def _registry_path(given):
+    """The project's registry as an absolute path, or None when none was given."""
+    if not given:
+        return None
+    p = Path(given).expanduser().resolve()
+    if not p.is_file():
+        raise SystemExit(f"scqc run: --registry {given!r} is not a file")
+    return str(p)
+
+
 def _mito_bounds(text, declared_by):
     """`LO,HI` as two floats, or None when nothing was declared. A usage error otherwise - before
     any file is opened, not at step 5 after every library has been read."""
@@ -558,6 +568,10 @@ def cmd_run(a) -> int:
     tools = {k: v for k, v in {
         "celescope": a.celescope, "cellranger": a.cellranger, "cellbender": a.cellbender,
         "rscript": a.rscript, "device": ("cpu" if a.cpu else "cuda"),
+        # Resolved to an absolute path, and refused if it does not exist: a typo would otherwise
+        # fall through to the shipped example and refuse every row three steps later, or worse,
+        # accept one the project never declared.
+        "registry": _registry_path(getattr(a, "registry", None)),
         "light_floor": a.light_floor, "seed": a.seed, "resolution": a.resolution,
         # DECLARED, with no default anywhere. The doublet adapter refuses a missing dbr rather
         # than substituting one, because an expected doublet rate is a property of how the
@@ -776,6 +790,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="apply (default) derives the thresholds, applies them and writes the "
                          "deliverable; evidence measures and applies nothing")
     r2.add_argument("--samplesheet")
+    # THE PROJECT'S REFERENCES, not the tool's. Absent, ingest falls back to the registry this
+    # repository ships - ONE example row, the first cohort's mouse reference - so a second
+    # species could not be declared without editing the tool. `validate` already took this flag.
+    r2.add_argument("--registry", help="the project's reference registry (TSV: species, build, "
+                                       "path, ...); default: the example shipped with scQC")
     r2.add_argument("--decisions", help="apply mode only; evidence mode refuses it")
     r2.add_argument("--executor", choices=["local", "pbs"], default="local")
     r2.add_argument("--allow-local", dest="allow_local", action="store_true",
