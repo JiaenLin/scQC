@@ -236,6 +236,26 @@ def cmd_validate(a) -> int:
     return 2 if bad else 0
 
 
+def _mito_bounds(text, declared_by):
+    """`LO,HI` as two floats, or None when nothing was declared. A usage error otherwise - before
+    any file is opened, not at step 5 after every library has been read."""
+    if not text:
+        if declared_by:
+            raise SystemExit("scqc run: --mito-bound-declared-by without --mito-bounds declares "
+                             "a reason for a bound nobody gave")
+        return None
+    try:
+        lo, hi = (float(x) for x in str(text).split(","))
+    except ValueError:
+        raise SystemExit(f"scqc run: --mito-bounds must be LO,HI in percent, got {text!r}") from None
+    if not (0 <= lo < hi <= 100):
+        raise SystemExit(f"scqc run: --mito-bounds must satisfy 0 <= LO < HI <= 100, got {text!r}")
+    if not declared_by:
+        raise SystemExit("scqc run: --mito-bounds replaces the assay's own bound and needs "
+                         "--mito-bound-declared-by: the analyst's words for why it is what it is")
+    return (lo, hi)
+
+
 def cmd_verify(a) -> int:
     v = load("verify_raw")
     verdict = v.verify(
@@ -545,6 +565,11 @@ def cmd_run(a) -> int:
         # per-sample from the samplesheet - loading concentration can differ between libraries -
         # or cohort-wide from these flags.
         "dbr": a.dbr, "dbr_sd": a.dbr_sd,
+        # Parsed here so a malformed bound is a usage error before any file is opened. Absent,
+        # both are None and drop out of `tools` - so a run that declares none is keyed exactly
+        # as before.
+        "mito_bounds": _mito_bounds(a.mito_bounds, a.mito_bound_declared_by),
+        "mito_bound_declared_by": a.mito_bound_declared_by,
         # Split here rather than in the graph, so a malformed list is a usage error before any
         # file is opened. An empty token is dropped: `default,,1` is a typo, not a request to
         # sweep a setting with no name, and `resolve_dbr_sd` would refuse it three steps later.
@@ -768,6 +793,14 @@ def build_parser() -> argparse.ArgumentParser:
                          "overrides it). No default: it describes how the libraries were loaded.")
     r2.add_argument("--dbr-sd", dest="dbr_sd", type=float,
                     help="uncertainty on --dbr (DECLARED; per-sample `dbr_sd` overrides it)")
+    # A NON-DEFAULT MITOCHONDRIAL BOUND. docs/FILTERS.md has always said one may be declared with
+    # the analyst's own words; the step read the two keys and nothing ever wrote them. No default:
+    # absent, the assay's own bound applies and the report says so.
+    r2.add_argument("--mito-bounds", dest="mito_bounds",
+                    help="LO,HI - a declared mitochondrial bound in percent, replacing the "
+                         "assay's own (requires --mito-bound-declared-by)")
+    r2.add_argument("--mito-bound-declared-by", dest="mito_bound_declared_by",
+                    help="the analyst's own words for why the bound is what it is")
     # OFF by default because it re-scores every library once per setting. It changes no
     # deliverable; it is the evidence behind figure F5, which asks whether the rate the run
     # applied was measured or was the prior's, and one setting cannot answer that.

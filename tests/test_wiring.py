@@ -181,7 +181,13 @@ def _row(s, **extra):
 
 _AMB = {"ambient_h5": "/cb/x.h5", "ambient_tool": "CellBender", "ambient_version": "0.3.2",
         "ambient_params": "--fpr 0", "ambient_produced_by": "a prior run"}
+# THE SECOND COHORT'S SHAPE, beside the first's (2026-10-02). Every row above is one platform,
+# one species and one assay - the only cohort this pipeline had run - so a wire that carries a
+# declared axis to its consumer was indistinguishable from a default that happens to equal it.
+_CELLS = {"platform": "10x", "species": "homo_sapiens", "reference": "homo_sapiens/GRCh38",
+          "assay": "scrna"}
 _SHAPES = {
+    "10x cells, ambient run here": [_row("A", **_CELLS), _row("B", **_CELLS)],
     "accepted matrix, ambient run here": [_row("A"), _row("B")],
     "accepted matrix, ambient supplied": [_row("A", **_AMB), _row("B", **_AMB)],
     "mixed: one supplied, one not":      [_row("A", **_AMB), _row("B")],
@@ -519,6 +525,38 @@ try:
           f"{len(_script_adapters)} checked, {len(_rel)} bad")
 except Exception as e:                                                # noqa: BLE001
     fails.append(f"L: could not check adapter imports: {type(e).__name__}: {e}")
+
+# ---- M. a declared axis reaches the step that reads it - not a default that equals it.
+#
+# The mitochondrial step read `params.get("assay", "snrna")` from a task built without `assay`.
+# Every graph above declared `snrna`, so the default and the declaration agreed and section F
+# built clean while every single-cell cohort was bounded as nuclei. So: declare each assay, build
+# the graph, and read the assay where 05_quality reads it - and refuse a cohort that mixes two.
+from engine import graph as _g, steps as _st  # noqa: E402
+from engine.task import Refusal as _Refusal  # noqa: E402
+_axis_bad = 0
+for _assay in ("scrna", "snrna"):
+    _P.samples = [_row("A", assay=_assay), _row("B", assay=_assay)]
+    _P.mode, _P.decisions = "evidence", {}
+    _q = [t for t in _g.main_stage(_P, "python", {}, {"A": {"mode": "accept"}, "B": {"mode": "accept"}})
+          if t.key == "05_quality"]
+    _got = _q[0].params.get("assay") if _q else None
+    if _got != {"A": _assay, "B": _assay}:
+        fails.append(f"M: declared assay {_assay!r} reached 05_quality as {_got!r}")
+        _axis_bad += 1
+    elif _st._cohort_assay(_got) != _assay:
+        fails.append(f"M: 05_quality resolved {_got!r} to {_st._cohort_assay(_got)!r}")
+        _axis_bad += 1
+for _label, _decl in (("mixed", {"A": "scrna", "B": "snrna"}), ("missing", {"A": "scrna", "B": None}),
+                      ("nothing", None)):
+    try:
+        _st._cohort_assay(_decl)
+        fails.append(f"M: a cohort with {_label} assays was resolved instead of refused")
+        _axis_bad += 1
+    except _Refusal:
+        pass
+print(f"M. the declared assay reaches 05_quality, for both assays; mixed or missing refuses: "
+      f"{_axis_bad} bad")
 
 print("=" * 74)
 if fails:

@@ -95,7 +95,7 @@ except ThresholdRefusal as e:
 
 print("\n" + "-" * 74)
 print("H. the mitochondrial ceiling")
-print(" " + mito_ceiling_note()[:300] + "...")
+print(" " + mito_ceiling_note("snrna")[:300] + "...")
 
 print("\n" + "=" * 74)
 if fails:

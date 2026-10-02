@@ -325,7 +325,15 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         needs=tuple(f"05_quality/{s}" for s in by_sample) + ("04_doublet_health",),
         params={"samples": list(by_sample), "python_exe": python_exe,
                 "light_floor": tools.get("light_floor", 200),
-                "decisions": pipeline.decisions},
+                "decisions": pipeline.decisions,
+                # THE ASSAY, AND THE BOUND, REACH THE STEP THAT READS THEM. Neither did: this
+                # task read `params.get("assay", "snrna")` and two bound keys nothing wrote, so
+                # every cohort got the single-nucleus bound and a declared bound was impossible.
+                # Per library, so the step can refuse a cohort that mixes assays rather than
+                # pick one.
+                "assay": {s: assay.get(s) for s in by_sample},
+                "mito_bounds": tools.get("mito_bounds"),
+                "mito_bound_declared_by": tools.get("mito_bound_declared_by")},
     ))
 
     # --- step 6: cluster and profile, then flag.

@@ -206,14 +206,17 @@ def derive(valleys, metric, light_floor=None) -> Proposal:
     p.provenance = "declared_informed" if shoulders else "derived"
     return p
 
-def mito_ceiling_note(assay: str = "snrna") -> str:
+def mito_ceiling_note(assay: str) -> str:
     """What the mitochondrial ceiling is, and what remains a judgement after it is derived.
 
     Takes the assay because the answer genuinely differs between them - the two assays are not
     measuring the same quantity, and one note covering both would have to be vague about the only
     thing that matters. See MITO_BOUNDS.
     """
-    lo, hi = MITO_BOUNDS.get(assay, MITO_BOUNDS["snrna"])
+    if assay not in MITO_BOUNDS:
+        raise ThresholdRefusal(f"unknown assay {assay!r}; known: {sorted(MITO_BOUNDS)}. The note "
+                               f"describes one assay's bound, and an unknown one has none.")
+    lo, hi = MITO_BOUNDS[assay]
     k = MITO_MAD_K.get(assay)
     common = (
         "The distribution is unimodal, so there is no valley and the count-floor route does not "
@@ -553,7 +556,7 @@ def select_mad_k(stats, mult=IQR_MULT, k_bounds=MAD_K_BOUNDS) -> dict:
             "undefined": tuple(sorted(undefined)), "clamped": clamped, "notes": notes}
 
 
-def derive_mito_ceiling(per_library, assay="snrna", bounds=None, mult=IQR_MULT,
+def derive_mito_ceiling(per_library, assay, bounds=None, mult=IQR_MULT,
                         declared_by=None, k=None) -> dict:
     """Derive one mitochondrial ceiling per library, bounded by a DECLARED statement.
 
@@ -589,7 +592,7 @@ def derive_mito_ceiling(per_library, assay="snrna", bounds=None, mult=IQR_MULT,
         stats, assay=assay, bounds=bounds, mult=mult, declared_by=declared_by, k=k)
 
 
-def derive_mito_ceiling_from_quartiles(stats, assay="snrna", bounds=None, mult=IQR_MULT,
+def derive_mito_ceiling_from_quartiles(stats, assay, bounds=None, mult=IQR_MULT,
                                        declared_by=None, k=None) -> dict:
     """As `derive_mito_ceiling`, from a precomputed per-library summary.
 

@@ -46,7 +46,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
 from verify_raw import verify # noqa: E402
 
-REQUIRED = ("sample", "platform", "species", "reference")
+REQUIRED = ("sample", "platform", "species", "reference", "assay")
+#: The assays this pipeline has a policy for. `modules/01_ambient` (ASSAYS) and `modules/05_quality`
+#: (MITO_BOUNDS) key on the same words, and tests/test_ingest.py holds the three equal.
+#:
+#: REQUIRED SINCE 2026-10-02. It was optional, and the mitochondrial step read it as
+#: `params.get("assay", "snrna")` from a task never handed it - so every cohort was bounded as
+#: single-nucleus whatever its samplesheet said, and no test could tell, because every cohort this
+#: pipeline had run WAS single-nucleus. A cell or a nucleus is a fact about the experiment; it has
+#: no default.
+ASSAYS = ("snrna", "scrna")
 PROCESSOR = {"10x": "cellranger", "singleron": "celescope"}
 FUTURE = {"bgi": "not implemented - declare it and the run will refuse rather than guess"}
 
@@ -80,6 +89,11 @@ def validate_row(row: dict, registry: dict) -> list:
         errs.append(f"platform '{p}': {FUTURE[p]}")
     elif p and p not in PROCESSOR:
         errs.append(f"platform '{p}' unknown; supported: {', '.join(sorted(PROCESSOR))}")
+    a = str(row.get("assay", "")).strip().lower()
+    if a and a not in ASSAYS:
+        errs.append(f"assay '{a}' unknown; supported: {', '.join(ASSAYS)} - a cell and a nucleus "
+                    f"get different mitochondrial bounds and a different ambient policy, and an "
+                    f"assay outside these has neither")
     ref = str(row.get("reference", "")).strip()
     if ref and ref not in registry:
         errs.append(f"reference '{ref}' is not in references/_registry/registry.tsv - "

@@ -132,7 +132,7 @@ The two forms are not interchangeable, and the diagram marks the difference.
 - **Step 0 rejects a matrix, not a sample.** A supplied matrix that fails P1 or P2 does not stop the
   run when FASTQ is available: the plan becomes *rebuild from FASTQ*, and the matrix is simply not
   used. Only a failing matrix with nothing to rebuild from is blocked. A samplesheet missing a
-  DECLARED field — sample, platform, species, reference — is blocked before any of this.
+  DECLARED field — sample, platform, species, reference, assay — is blocked before any of this.
 - **The learning-rate check is cohort-relative, and it is not a convergence test.** It asks whether
   any sample's run diagnostics are unlike its siblings', by a robust (MAD) outlier rule. It
   deliberately asserts no direction of *better* for those diagnostics, and it declines to run at all

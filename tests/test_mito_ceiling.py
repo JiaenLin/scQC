@@ -93,7 +93,7 @@ check("...and the flat ceiling is the floor itself",
 
 # Per-library variation is a property of the ESTIMATOR, so it is tested where the bound is not
 # deciding: with a wide declared bound the same cohort must produce ten different fences.
-free = quality.derive_mito_ceiling(tight, bounds=(0.5, 60.0),
+free = quality.derive_mito_ceiling(tight, assay="snrna", bounds=(0.5, 60.0),
                                    declared_by="probe: isolate the estimator from the bound")
 check("unbounded, ceilings differ between libraries (not a cohort constant)",
       len({round(m.ceiling, 6) for m in free["ceilings"].values()}) > 1)
@@ -136,7 +136,7 @@ check("...and the derived k is reported ANYWAY where it is not applied",
 check("...and the selection is reported, not just its result",
       free["k_selection"]["per_library"] and free["k_selection"]["median_k"] > 0)
 check("...an explicitly passed k outranks the assay and is recorded as the caller's",
-      quality.derive_mito_ceiling(tight, bounds=(0.5, 60.0), declared_by="probe",
+      quality.derive_mito_ceiling(tight, assay="snrna", bounds=(0.5, 60.0), declared_by="probe",
                                   k=7)["k_source"] == "declared_caller")
 check("a cohort whose libraries share a shape derives a tight implied k",
       free["k_selection"]["spread"] < 2.0, f"spread {free['k_selection']['spread']}")
@@ -160,13 +160,13 @@ check("snrna declares k=3 and scrna leaves it to be derived",
 refuses("unknown assay with no explicit bounds refuses",
         lambda: quality.derive_mito_ceiling(tight, assay="spatial"), ("unknown assay",))
 refuses("a custom bound with no declared_by refuses",
-        lambda: quality.derive_mito_ceiling(tight, bounds=(2.0, 60.0)), ("declared_by",))
+        lambda: quality.derive_mito_ceiling(tight, assay="snrna", bounds=(2.0, 60.0)), ("declared_by",))
 check("a custom bound WITH declared_by is accepted",
-      quality.derive_mito_ceiling(tight, bounds=(2.0, 60.0),
+      quality.derive_mito_ceiling(tight, assay="snrna", bounds=(2.0, 60.0),
                                   declared_by="pilot tissue, cytoplasm retained")["bounds"]
       == (2.0, 60.0))
 refuses("inverted bounds refuse",
-        lambda: quality.derive_mito_ceiling(tight, bounds=(30.0, 5.0), declared_by="x"),
+        lambda: quality.derive_mito_ceiling(tight, assay="snrna", bounds=(30.0, 5.0), declared_by="x"),
         ("lo < hi",))
 
 # The bound must be a guard rail. Libraries with a huge spread push every fence past the bound;
@@ -224,7 +224,7 @@ check("missing design is reported, not passed over",
 split = {}
 for i in range(6):
     split[f"lib{i}"] = lognormal(rng, 3000, 1.6 if i % 2 else 0.4, 0.8)
-ds_free = quality.derive_mito_ceiling(split, bounds=(0.5, 60.0),
+ds_free = quality.derive_mito_ceiling(split, assay="snrna", bounds=(0.5, 60.0),
                                       declared_by="probe: the per-library property, unbounded")
 asx = quality.assess_mito_removal(split, ds_free, design=design)
 check("an unbounded per-library fence keeps removal even when arms genuinely differ",
@@ -267,7 +267,7 @@ check("_at_least catches exactly-on-the-line", quality._at_least(0.30 / 0.10, 3.
 
 # --- the note ------------------------------------------------------------------------------------
 print("\nmito_ceiling_note()")
-note = quality.mito_ceiling_note()
+note = quality.mito_ceiling_note("snrna")
 check("no longer claims the ceiling is underivable", "NOT DERIVABLE" not in note)
 check("still records what remains adjudicated", "adjudicat" in note.lower())
 check("names the bound as declared", "declared" in note.lower())

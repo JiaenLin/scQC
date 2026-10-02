@@ -1291,6 +1291,31 @@ def _quality_measure(task, pipeline, log):
             "versions": res.get("versions", {})}
 
 
+def _cohort_assay(declared) -> str:
+    """The one assay a cohort declared, or a refusal - never a default.
+
+    THIS WAS `task.params.get("assay", "snrna")`, read from a task that was never given `assay`:
+    every cohort was bounded as single-nucleus whatever its samplesheet said, and no test could
+    see it, because every cohort run so far was single-nucleus - the default and the truth were
+    the same word. One mitochondrial bound is derived for the cohort, so the cohort must be one
+    assay; `declared` maps each library to the assay its row declared.
+    """
+    declared = declared or {}
+    kinds = sorted({str(v or "").strip().lower() for v in declared.values()})
+    if not declared or "" in kinds:
+        raise Refusal(
+            f"05_quality (mitochondrial ceiling): no assay reached this step for "
+            f"{', '.join(sorted(s for s, v in declared.items() if not v)) or 'any library'}. "
+            f"The samplesheet's `assay` column is required at ingest, so this is a wiring defect "
+            f"in the pipeline, not a missing declaration - refusing rather than assuming one.")
+    if len(kinds) != 1:
+        raise Refusal(
+            f"05_quality (mitochondrial ceiling): the cohort mixes assays {kinds}. A cell and a "
+            f"nucleus are bounded differently and this step derives one bound for the cohort; "
+            f"run each assay as its own project.")
+    return kinds[0]
+
+
 def _quality_stage(task, pipeline, log):
     """The barrier: one cohort constant per count axis, plus the per-library mito ceilings.
 
@@ -1433,7 +1458,7 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
             f"matched anything - or the library has too few cells to place a quartile. Refusing "
             f"rather than deriving a ceiling for it from the other libraries.")
 
-    assay = task.params.get("assay", "snrna")
+    assay = _cohort_assay(task.params.get("assay"))
     bounds = task.params.get("mito_bounds")
     declared_by = task.params.get("mito_bound_declared_by")
     try:

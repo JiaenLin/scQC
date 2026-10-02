@@ -201,7 +201,9 @@ able to change the answer by being counted as a default.
 Quartiles and the MAD are linearly interpolated. An unknown assay with no explicit bounds is
 refused — guessing a bound for an unknown assay is guessing what a cell can be. Non-default bounds
 require `declared_by`: the analyst's own words for why they are what they are, because the bound is
-the one part of this the data cannot supply.
+the one part of this the data cannot supply. On the command line: `scqc run --mito-bounds LO,HI
+--mito-bound-declared-by "..."`. Until 2026-10-02 the pipeline had no way to pass either - the
+step read two keys nothing wrote, and the assay it bounded by was always `snrna`.
 
 > **The snRNA bound has moved twice, and the second move reversed the first.** Both are recorded,
 > because the earlier reasoning was not wrong about its own evidence.

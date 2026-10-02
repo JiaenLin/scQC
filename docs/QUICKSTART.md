@@ -40,7 +40,7 @@ upgrading the pipeline cannot disturb a result you already have.
 
 ## 3 · Fill in the samplesheet
 
-`<project>/samplesheet.csv` (the CLI looks for that name; `--samplesheet` names another). Four columns are required; everything else is either a
+`<project>/samplesheet.csv` (the CLI looks for that name; `--samplesheet` names another). Five columns are required; everything else is either a
 path the pipeline needs or a **design factor it discovers on its own**.
 
 ```tsv
@@ -55,6 +55,7 @@ S2	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl]	t
 | `platform` | **yes** | `10x` or `singleron`. Anything else refuses rather than guessing |
 | `species` | **yes** | for the record and the reference resolution |
 | `reference` | **yes** | the genome/annotation the counts were made against |
+| `assay` | **yes** | `snrna` (nuclei) or `scrna` (whole cells). It sets the mitochondrial bound and the ambient policy, and it has **no default**: until 2026-10-02 it was optional, never reached the mitochondrial step, and every cohort was bounded as single-nucleus |
 | `matrix` | to start from counts | a MatrixMarket directory, a CellRanger `.h5`, or an `.h5ad` |
 | `fastq_r1` / `fastq_r2` | to start from reads | alignment runs first and produces the matrix |
 | `mt_prefix`, `ribo_pattern` | for steps 5 and 6 | **species-specific; nothing guesses them** |
