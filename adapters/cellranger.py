@@ -1,6 +1,8 @@
 # Execution adapter: FASTQ -> raw unfiltered count matrix, via `cellranger count`.
-# It removes no observation. Cell Ranger's own cell call is a by-product of this step and is
-# never this pipeline's cell call; what the step delivers downstream is outs/raw_feature_bc_matrix.
+# It removes no observation. What the step delivers downstream is outs/raw_feature_bc_matrix,
+# never the filtered one. Cell Ranger's own cell call is a by-product here; on nuclei the
+# denoiser's call is the empty-droplet boundary, and on single cells - which this pipeline does
+# not denoise - the aligner's is, read from `aligner_cells` as a column over the raw droplets.
 """Cell Ranger adapter - run the aligner, then hand back the unfiltered matrix or refuse.
 
 NOTHING IN THIS MODULE HAS BEEN RUN AGAINST CELL RANGER
