@@ -139,6 +139,7 @@ allowed, unknown keys rejected rather than ignored.
 | `design_levels` | `treat=treat,ctrl=ctrl` | `level=substring`, first match wins; a library matching none is `unassigned` rather than silently joining an arm |
 | `light_floor` | `200` | the technical floor for doublet scoring |
 | `quality_floor` | `350` | the lowest count floor, used only to check the two do not collide |
+| `assay` | `snrna` | which assay's count bounds the valleys are judged against (`snrna` or `scrna`) |
 | `cluster_resolution` | `1.0` | which resolution to read from the cluster profile |
 | `cluster_algorithm` | `leiden` | which algorithm to read from it |
 

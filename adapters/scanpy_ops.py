@@ -2373,6 +2373,20 @@ def _op_valley(adata, params, out_prefix) -> tuple:
             f"mito_derivation_max is {mito_max:g}; it must lie in (0, 100]. It is the line above "
             f"which a droplet is not a cell at all, not a quality threshold, so a value outside "
             f"the range a percentage can take is a mistake rather than a strict setting.")
+    # THE CELL CALL, FROM A COLUMN WHEN ONE IS NAMED. Absent, the object is a denoiser's and its
+    # call is "has counts left" (below). Named, the object is NOT denoised - single cells, whose
+    # raw droplets all carry counts - and the call is the column step 1 wrote from the aligner.
+    call_key = params.get("cell_call_key")
+    call_mask = None
+    if not _unknown(call_key):
+        if call_key not in adata.obs.columns:
+            raise TaskFailure(
+                f"cell_call_key={call_key!r} is not a column of this object. Step 1 writes it; "
+                f"falling back to 'has counts' would call every raw droplet a cell.")
+        call_mask, _unk = _bool_array(adata.obs[call_key])
+        if _unk:
+            raise TaskFailure(f"obs[{call_key!r}] is unknown for {_unk} barcodes; a cell call "
+                              f"has an answer for every droplet.")
     mito, mito_pop = (None, {"floor_umi": mito_floor, "derivation_max_pct": mito_max,
                              "n_above_floor": None, "n_excluded_high_mito": None,
                              "max_above_floor": None, "n_at_or_above": None,
@@ -2386,7 +2400,8 @@ def _op_valley(adata, params, out_prefix) -> tuple:
         mito, mito_pop = mito_quartiles(
             _float_array(adata.obs["pct_counts_mt"]),
             _float_array(adata.obs["total_counts"]),
-            floor_umi=mito_floor, derivation_max=mito_max)
+            floor_umi=mito_floor, derivation_max=mito_max,
+            called=None if call_mask is None else list(call_mask))
 
     # THE DENOISER'S CELL CALL, read from THIS object rather than from a file beside it.
     #
@@ -2405,9 +2420,11 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     # barcodes with counts remaining. That is a property of the output rather than an inference
     # about it.
     import csv as _csv
-    _tot = adata.X.sum(axis=1)
-    _tot = _tot.A1 if hasattr(_tot, "A1") else _tot.ravel()
-    called = [str(b) for b, keep in zip(adata.obs_names, _tot > 0) if keep]
+    if call_mask is None:
+        _tot = adata.X.sum(axis=1)
+        _tot = _tot.A1 if hasattr(_tot, "A1") else _tot.ravel()
+        call_mask = _tot > 0
+    called = [str(b) for b, keep in zip(adata.obs_names, call_mask) if keep]
     cells_path = Path(str(out_prefix) + ".called_barcodes.csv")
     with cells_path.open("w", encoding="utf-8", newline="") as fh:
         _w = _csv.writer(fh)
@@ -2478,7 +2495,14 @@ def _op_valley(adata, params, out_prefix) -> tuple:
                # quartile. Absent is reported as absent; step 5 refuses rather than defaulting.
                "mito_quartiles": mito,
                "mito_population": mito_pop}
-    metrics["n_called_by_denoiser"] = len(called)
+    # Named for who called them. A count from the aligner under the denoiser's name is the
+    # report saying a denoiser ran on a library no denoiser touched.
+    if _unknown(call_key):
+        metrics["n_called_by_denoiser"] = len(called)
+    else:
+        metrics["n_called_by_denoiser"] = None
+        metrics["n_called"] = len(called)
+        metrics["cell_call_key"] = str(call_key)
     metrics.update(nf_metrics)
     outs = [valleys, density, jpath, cells_path]
     if nf_path is not None:
@@ -2486,7 +2510,8 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     return outs, metrics
 
 
-def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIVATION_MAX):
+def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIVATION_MAX,
+                   called=None):
     """`(quartiles, population)` for the mitochondrial ceiling. Selects; removes nothing.
 
     # rule-one: no-removal - this reads two per-barcode arrays and returns summary statistics.
@@ -2506,8 +2531,17 @@ def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIV
     separately is how `n_at_or_above` comes to describe a different set from the one the quartiles
     were placed on, and nothing downstream could detect it.
     """
-    above = [float(m) for m, c in zip(pct_mt, total_counts)
-             if m == m and c == c and float(c) >= floor_umi]
+    # `called`, when given, is the cell call as one boolean per barcode, and only called cells
+    # contribute. On a DENOISED object it is implied - an empty droplet holds no counts and never
+    # clears the floor - so it is not passed and nothing changes. On a RAW object (single cells,
+    # no denoiser) a droplet the caller rejected can hold 200+ counts, and without this a ceiling
+    # for cells would be placed partly on droplets that are not cells.
+    keep = [True] * len(pct_mt) if called is None else [bool(x) for x in called]
+    if len(keep) != len(pct_mt):
+        raise TaskFailure(f"the cell call covers {len(keep)} barcodes and the percentages "
+                          f"{len(pct_mt)}; they must be the same barcodes in the same order.")
+    above = [float(m) for m, c, k in zip(pct_mt, total_counts, keep)
+             if k and m == m and c == c and float(c) >= floor_umi]
     v = sorted(m for m in above if m < derivation_max)
     # The true observed maximum, taken BEFORE the derivation cut. Keeping it is what makes the cut
     # safe: a run reporting only the derivation population's own maximum would say the worst
@@ -2521,6 +2555,9 @@ def mito_quartiles(pct_mt, total_counts, *, floor_umi, derivation_max=MITO_DERIV
            "max_above_floor": max_above,
            "n_at_or_above": len(v) if len(v) >= 4 else None,
            "n_all_with_a_value": int(sum(1 for x in pct_mt if x == x))}
+    if called is not None:
+        pop["called_only"] = True
+        pop["n_called"] = int(sum(keep))
     if len(v) < 4:
         return None, pop
 
@@ -2752,6 +2789,16 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
         if "mt_genes" in q or "ribo_genes" in q:
             uninformative = {"mt": list(q.get("mt_genes") or []),
                              "ribo": list(q.get("ribo_genes") or [])}
+            # WHICH CLASSES COUNT AS UNINFORMATIVE IS A PROPERTY OF THE ASSAY. On nuclei both
+            # halves are carry-over - a nucleus holds no mitochondria and little cytoplasmic
+            # ribosome - so a cluster whose top markers are either is describing contamination.
+            # A whole cell's cytoplasm IS ribosomal transcript, and a cluster of cells marked by
+            # it is ordinary biology. The caller names the classes; the half left out is NOT
+            # EVALUATED (its split reads unknown), never scored as zero.
+            classes = params.get("uninformative_classes")
+            if not _unknown(classes):
+                uninformative = {k: v for k, v in uninformative.items()
+                                 if k in {str(c) for c in classes}}
     if _unknown(uninformative):
         raise TaskFailure(
             "the locked mt+ribo set criterion C is measured against could not be established. "
@@ -3243,14 +3290,49 @@ def _op_convert(adata, params, out_prefix) -> tuple:
     called empty keep their zero denoised counts, which is what step 5 reads as its cell call.
     """
     from adapters import matrix as mx
+    import numpy as np
 
     src, dest = params.get("source"), params.get("dest")
     if not src or not dest:
         raise TaskFailure("convert needs 'source' (the denoiser's .h5) and 'dest' (the object).")
     ad_ = mx.read_matrix(src)
+    met = {"droplets": int(ad_.n_obs), "features": int(ad_.n_vars), "source": Path(src).name}
+
+    # THE CELL CALL, WRITTEN AS THE COLUMN STEP 6 READS. Step 6 clusters `obs[cell_call_key]`
+    # and nothing in this tool ever wrote one: the calibration cohort's objects arrived with
+    # `cellbender_cell` from the converter that made them, so a library denoised HERE would have
+    # reached step 6 and been refused for a column only someone else's conversion supplied
+    # (single-cell-harness ADR-0027, Q10). Two sources, one column each:
+    #   * `cell_barcodes` - the aligner's call, for an object no denoiser touched (single
+    #     cells). Every barcode in it must be a droplet of the raw matrix: a call naming droplets
+    #     the matrix does not hold is a call from a different run.
+    #   * no `cell_barcodes` - the denoiser's own: a droplet it called empty keeps zero counts.
+    key = params.get("cell_key")
+    if key:
+        names = [str(b) for b in ad_.obs_names]
+        if params.get("cell_barcodes"):
+            wanted = mx.called_barcodes(params["cell_barcodes"])
+            have = set(names)
+            absent = [b for b in wanted if b not in have]
+            if absent:
+                raise TaskFailure(
+                    f"{len(absent):,} of the {len(wanted):,} barcodes in {params['cell_barcodes']} "
+                    f"are not droplets of {src} (first: {absent[0]!r}). The call and the matrix "
+                    f"are not from the same run, or not named the same way; a call that names "
+                    f"droplets the matrix does not hold is not this library's call.")
+            ws = set(wanted)
+            mask = np.fromiter((b in ws for b in names), dtype=bool, count=len(names))
+            met["cell_call"] = "aligner"
+        else:
+            tot = ad_.X.sum(axis=1)
+            tot = tot.A1 if hasattr(tot, "A1") else np.asarray(tot).ravel()
+            mask = tot > 0
+            met["cell_call"] = "denoiser"
+        ad_.obs[str(key)] = mask
+        met["cell_key"] = str(key)
+        met["cells_called"] = int(mask.sum())
     mx.write_h5ad(ad_, dest)
-    return [Path(dest)], {"droplets": int(ad_.n_obs), "features": int(ad_.n_vars),
-                          "source": Path(src).name}
+    return [Path(dest)], met
 
 
 def _op_apply_write(adata, params, out_prefix) -> tuple:

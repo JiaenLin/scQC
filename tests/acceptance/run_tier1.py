@@ -107,6 +107,9 @@ SCHEMA = {
     "design_levels": "treat=treat,ctrl=ctrl",
     "light_floor": "200",
     "quality_floor": "350",
+    # The count bounds are per assay; the calibration cohort is nuclei. A single-cell cohort
+    # overrides it here, or its valleys are judged against the nuclear range.
+    "assay": "snrna",
     "cluster_resolution": "1.0",
     "cluster_algorithm": "leiden",
 }
@@ -284,7 +287,8 @@ if _vf.exists():
         # reported and the remaining checkpoints still execute. Uncaught, it aborted the whole
         # run and reported nothing about the checkpoints that follow it.
         try:
-            pu = derive(umi_valleys, "umi", light_floor=int(SCHEMA["light_floor"]))
+            pu = derive(umi_valleys, "umi", light_floor=int(SCHEMA["light_floor"]),
+                        assay=SCHEMA["assay"])
             print(" " + str(pu).replace("\n", "\n "))
         except Exception as e:                                        # noqa: BLE001
             print(f" REFUSED: {type(e).__name__}: {e}")

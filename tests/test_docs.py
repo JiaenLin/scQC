@@ -58,8 +58,14 @@ S = "adapters/scanpy_ops.py"
 
 #: (what it is, is it still that in the code, is it still that in the document)
 CHECKS = [
-    ("UMI bounds", const(Q, "UMI_BOUNDS") == "(200, 1000)", "**200 – 1,000**" in doc),
-    ("gene bounds", const(Q, "GENE_BOUNDS") == "(100, 600)", "**100 – 600**" in doc),
+    # Per assay since 2026-10-02: the nuclear pair is measured, the whole-cell pair declared,
+    # and the document has to carry both or a reader of it bounds cells as nuclei.
+    ("UMI bounds",
+     const(Q, "UMI_BOUNDS") == '{"snrna": (200, 1000), "scrna": (500, 2000)}',
+     "**200 – 1,000**" in doc and "**500 – 2,000**" in doc),
+    ("gene bounds",
+     const(Q, "GENE_BOUNDS") == '{"snrna": (100, 600), "scrna": (250, 1500)}',
+     "**100 – 600**" in doc and "**250 – 1,500**" in doc),
     ("valley spread review", const(Q, "SPREAD_REVIEW") == "2.0", "**2.0×**" in doc),
     ("Tukey multiplier", const(Q, "IQR_MULT") == "1.5", "1.5 x IQR" in doc),
     ("mitochondrial bounds",

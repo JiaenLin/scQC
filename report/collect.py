@@ -254,7 +254,7 @@ DENSITY_FIGURES = {"F6": ("umi", "UMI per nucleus", "umi_floor_proposed"),
 
 
 def _f6(tables: Path, thresholds: list, fig_id: str, metric: str, metric_label: str,
-        cut_key: str, n_by_sample=None) -> dict:
+        cut_key: str, n_by_sample=None, assay=None) -> dict:
     """One metric's density per library, with that library's valley and the cohort cut.
 
     The bounds come from `modules/05_quality`, imported rather than restated: they are the range
@@ -301,7 +301,10 @@ def _f6(tables: Path, thresholds: list, fig_id: str, metric: str, metric_label: 
             sys.path.insert(0, str(mod_dir))
         import quality  # noqa: PLC0415
 
-        data["bounds"] = list(quality.UMI_BOUNDS if metric == "umi" else quality.GENE_BOUNDS)
+        # The cohort's OWN assay's bounds, or none: they are per assay, and shading the nuclear
+        # range behind a single-cell density would show a guard that was never applied to it.
+        data["bounds"] = list(quality.count_bounds(metric, assay))
+        data["bounds_source"] = quality.BOUNDS_SOURCE.get(str(assay).strip().lower())
     except Exception:                                                     # noqa: BLE001
         # A shaded margin nobody can attribute is worse than no margin. Absent is absent.
         pass
@@ -988,9 +991,11 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     # it. The figures are still drawn without it - the n reads NOT SUPPLIED and the curve is
     # unaffected - so this is an ordering preference, not a dependency.
     n_by_sample = {s: len(rows) for s, rows in percell.items()} if percell else {}
+    assays = {str(r.get("assay") or "").strip().lower() for r in sheet} - {""}
+    cohort_assay = assays.pop() if len(assays) == 1 else None
     for fid, (metric, label, cut_key) in DENSITY_FIGURES.items():
         _try(fid, f"tables/<sample>.valley_density.csv + tables/valleys_{metric}.csv",
              lambda f=fid, m=metric, lb=label, ck=cut_key:
-                 _f6(tables, thresholds, f, m, lb, ck, n_by_sample))
+                 _f6(tables, thresholds, f, m, lb, ck, n_by_sample, cohort_assay))
 
     return figures, notes

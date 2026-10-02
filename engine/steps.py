@@ -288,11 +288,55 @@ def _ambient(task, pipeline, log):
         device=task.params.get("device", "cuda"),
         log=log, executor=pipeline.executor)
     conv = _scanpy(pipeline, "convert", native, pipeline.scratch / f"{sample}_convert",
-                   {"source": str(native), "dest": str(out_h5)}, log,
+                   {"source": str(native), "dest": str(out_h5),
+                    # Step 6 clusters obs["cellbender_cell"], which only a SUPPLIED object had
+                    # ever carried (Q10). Written here from the denoised counts themselves.
+                    "cell_key": "cellbender_cell"}, log,
                    task.params["python_exe"])
     res["outputs"] = list(res.get("outputs") or []) + [str(out_h5)]
     res.setdefault("metrics", {})["converted"] = conv.get("metrics", {})
     return res
+
+
+def _ambient_none(task, pipeline, log):
+    """Step 1 for an assay this pipeline does not denoise: the raw counts become the object.
+
+    # rule-one: no-removal - every droplet of the raw matrix is kept; the cell call is a column.
+
+    Single cells (modules/01_ambient, DENOISE). Nothing is corrected and nothing is pretended:
+    `<sample>_ambient.h5` - the name every later step opens - holds the matrix as the aligner
+    wrote it, every droplet in it, and `obs["aligner_cell"]` marks the ones the aligner called.
+    The cell call has to come from somewhere, and with no denoiser the aligner's is the one in
+    hand; the count floors, the ceiling and the doublets then judge WITHIN it.
+
+    Every droplet is kept rather than only the called ones because step 5's count valleys are
+    found between the debris mode and the cell mode, and need the debris to be there.
+    """
+    am = step_module("ambient")
+    s = task.sample
+    try:
+        plan = am.plan_ambient(s, task.params["assay"])
+    except Exception as e:                                                # noqa: BLE001
+        raise Refusal(f"01_ambient ({s}): {e}") from None
+    if plan.run:
+        raise Refusal(
+            f"01_ambient ({s}): assay {plan.assay} IS denoised by this pipeline, and this task "
+            f"is the route for one that is not. The graph sent it the wrong way.")
+    print(f"    {plan}")
+    out_h5 = _objects(pipeline) / f"{s}_ambient.h5"
+    conv = _scanpy(pipeline, "convert", Path(task.params["raw"]),
+                   pipeline.scratch / f"{s}_convert",
+                   {"source": str(task.params["raw"]), "dest": str(out_h5),
+                    "cell_key": "aligner_cell",
+                    "cell_barcodes": str(task.params["aligner_cells"])}, log,
+                   task.params["python_exe"])
+    m = conv.get("metrics", {}) or {}
+    print(f"    {s:<14} {m.get('droplets', 0):>9,} droplets kept   "
+          f"{m.get('cells_called', 0):>7,} called by the aligner   (NOT denoised)")
+    return {"outputs": [str(out_h5)],
+            "metrics": {"state": plan.state, "reason": plan.reason, "converted": m,
+                        "cell_call": "aligner", "corrected_here": 0},
+            "versions": {}}
 
 
 def _ambient_supplied(task, pipeline, log):
@@ -379,11 +423,19 @@ def _ambient_audit(task, pipeline, log):
     if supplied:
         print(f"    {len(supplied)} library(ies) arrived already corrected and ARE audited "
               f"against their raw counts; provenance in tables/ambient_supplied.json.")
+    # NOT DENOISED IS NOT "NOTHING REMOVED". A library this pipeline does not denoise has no
+    # corrected matrix to set against its raw one, so there is no fraction - and a 0% printed in
+    # its row would read as an ambient pool measured and found clean.
+    not_denoised = list(task.params.get("not_denoised") or [])
+    if not_denoised:
+        print(f"    NOT DENOISED: {len(not_denoised)} library(ies) "
+              f"({', '.join(sorted(not_denoised))}) - this pipeline does not denoise their assay "
+              f"(modules/01_ambient, DENOISE). Their ambient fraction is NOT MEASURED.")
     if not rows:
         pipeline.gate("01_ambient", [], "NOT RUN")
         return {"outputs": [str(out)],
                 "metrics": {"libraries": 0, "no_raw": len(no_raw),
-                            "supplied": len(supplied)},
+                            "supplied": len(supplied), "not_denoised": len(not_denoised)},
                 "versions": {}}
 
     findings = aa.audit(rows, per_gene, task.params["design"])
@@ -528,9 +580,23 @@ def _cellcall(task, pipeline, log):
 
     cg = step_module("cellcall_gate")
     paths = task.params.get("call_paths") or {}
-    calls, missing, notes = {}, [], []
+    by = task.params.get("call_by") or {}
+    calls, missing, notes, aligner_only = {}, [], [], {}
     for s in task.params["samples"]:
         pth = paths.get(s) or {}
+        if by.get(s) == "aligner":
+            # NOTHING TO COMPARE. With no denoiser the aligner's call IS the cell call (step 1
+            # wrote it), and comparing it with itself would print "0 lost" - a tautology that
+            # reads exactly like a gate that ran and passed. Counted, and said to be uncompared.
+            r = pipeline.results_by_key.get(f"05_quality/{s}")
+            n = (getattr(r, "metrics", None) or {}).get("n_called") if r else None
+            if n is None:
+                missing.append(f"{s}: no aligner call was measured from {s}_ambient.h5")
+                continue
+            aligner_only[s] = int(n)
+            print(f"    {s:<14} aligner {int(n):>7,}   (no denoiser: the aligner's call is the "
+                  f"cell call, and there is nothing to compare it with)")
+            continue
         a_path = pth.get("aligner")
         if not a_path:
             missing.append(f"{s}: aligner_cells")
@@ -578,6 +644,27 @@ def _cellcall(task, pipeline, log):
     if notes:
         print(f"    cross-checked against a declared cellbender_barcodes for "
               f"{len(notes)} library(ies); all agree with the object")
+
+    if not calls:
+        # Every library took the aligner's call. The gate has no comparison to judge, and says so
+        # rather than passing one it never made.
+        pipeline.gate("02_cells", [], "NOT RUN")
+        out = _tables(pipeline) / "cell_calls.csv"
+        import csv
+        with open(out, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["sample", "aligner", "denoiser", "lost"])
+            # BLANK, not 0: no denoiser ran, so nothing was called by one and nothing was lost.
+            for s_, n in sorted(aligner_only.items()):
+                w.writerow([s_, n, "", ""])
+        return {"outputs": [str(out)],
+                "metrics": {"libraries": 0, "aligner_only": len(aligner_only)},
+                "versions": {}}
+    if aligner_only:
+        raise Refusal(
+            f"02_cells: {len(aligner_only)} library(ies) took the aligner's call and "
+            f"{len(calls)} a denoiser's. One cohort, one cell call: a cohort that mixes them "
+            f"compares libraries whose cells were selected by different rules.")
 
     findings = cg.gate(calls, task.params["design"])
 
@@ -644,7 +731,8 @@ def _quality(task, pipeline, log):
     objs = [q.Valley(v["sample"], metric, float(v["value"]), bool(v["bimodal"]))
             for v in valleys]
     try:
-        prop = q.derive(objs, metric, light_floor=task.params.get("light_floor"))
+        prop = q.derive(objs, metric, light_floor=task.params.get("light_floor"),
+                        assay=task.params["assay"])
     except Exception as e:                                            # noqa: BLE001
         # A refusal here is a verdict about the valleys, and it stops the run - but it is
         # reported as a refusal, not as a crash, because the two mean different things to a
@@ -892,7 +980,23 @@ def _doublets(task, pipeline, log):
     mtx = pipeline.scratch / f"{p['sample']}_dbl_mtx"
     out_csv = _tables(pipeline) / f"{p['sample']}_doublets.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]))
+    # On a RAW object (no denoiser) a droplet the aligner rejected can still clear the light
+    # floor, and scoring it would put non-cells into the doublet simulation and the rate's
+    # denominator. So the export takes the CALLED barcodes, from the same one pass step 5 made;
+    # the rest are "not selected", which ExportedMatrix already keeps apart from "below floor".
+    # On a denoised object nothing is passed and nothing changes - its empties hold no counts.
+    barcodes = None
+    if p.get("cell_call_key"):
+        from adapters import matrix as mx
+        r5 = pipeline.results_by_key.get(f"05_quality/{p['sample']}")
+        csv5 = (getattr(r5, "metrics", None) or {}).get("called_barcodes") if r5 else None
+        if not csv5 or not Path(csv5).exists():
+            raise Refusal(
+                f"04_doublets ({p['sample']}): the cell call was not measured, so which droplets "
+                f"are cells is unknown - and on an object holding every raw droplet, scoring "
+                f"them all would score empties.")
+        barcodes = mx.called_barcodes(csv5)
+    export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]), barcodes=barcodes)
     # The never-scored population, named from what ExportedMatrix actually carries.
     #
     # This was `getattr(export, "unscored", None)`, and ExportedMatrix has no `.unscored` - it
@@ -1084,7 +1188,23 @@ def _doublet_sweep(task, pipeline, log):
     # intermediate makes this step's correctness depend on when scratch is cleaned, and the
     # export is cheap beside thirty seconds of xgboost.
     mtx = pipeline.scratch / f"{s}_dbl_sweep_mtx"
-    export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]))
+    # On a RAW object (no denoiser) a droplet the aligner rejected can still clear the light
+    # floor, and scoring it would put non-cells into the doublet simulation and the rate's
+    # denominator. So the export takes the CALLED barcodes, from the same one pass step 5 made;
+    # the rest are "not selected", which ExportedMatrix already keeps apart from "below floor".
+    # On a denoised object nothing is passed and nothing changes - its empties hold no counts.
+    barcodes = None
+    if p.get("cell_call_key"):
+        from adapters import matrix as mx
+        r5 = pipeline.results_by_key.get(f"05_quality/{p['sample']}")
+        csv5 = (getattr(r5, "metrics", None) or {}).get("called_barcodes") if r5 else None
+        if not csv5 or not Path(csv5).exists():
+            raise Refusal(
+                f"04_doublets ({p['sample']}): the cell call was not measured, so which droplets "
+                f"are cells is unknown - and on an object holding every raw droplet, scoring "
+                f"them all would score empties.")
+        barcodes = mx.called_barcodes(csv5)
+    export = db.export_matrix(p["h5"], mtx, min_umi=int(p["light_floor"]), barcodes=barcodes)
     res = db.sweep(list(p["settings"]), p["rscript"], {s: mtx},
                    pipeline.scratch / f"{s}_dbl_sweep", p["dbr"], int(p.get("seed", 0)),
                    pipeline.work, pipeline.executor,
@@ -1274,6 +1394,9 @@ def _quality_measure(task, pipeline, log):
                    # adapter's own default applies and records itself in the ceiling table, so
                    # there is no route by which the applied value goes unrecorded.
                    "mito_floor_umi": p["light_floor"],
+                   # The cell call as a COLUMN, for an object no denoiser touched; absent, the
+                   # call is "has counts left", which only a denoised object makes true.
+                   **({"cell_call_key": p["cell_call_key"]} if p.get("cell_call_key") else {}),
                    # Passed only when the samplesheet names one. Absent, no nuclear fraction is
                    # read, none is written, and the run is what it was before this existed.
                    **({"cellreads_stats": p["cellreads_stats"],
@@ -1314,6 +1437,8 @@ def _quality_measure(task, pipeline, log):
                         "mito_population": m.get("mito_population"),
                         "called_barcodes": str(called_csv) if called_csv else None,
                         "n_called_by_denoiser": m.get("n_called_by_denoiser"),
+                        "n_called": m.get("n_called"),
+                        "cell_call_key": m.get("cell_call_key"),
                         # The nuclear fraction travels as METRICS, like everything else the
                         # barrier reads, so no worker writes to shared state.
                         "nf_median": m.get("nf_median"),
@@ -1396,9 +1521,12 @@ def _quality_stage(task, pipeline, log):
                 f"library with no measured valley cannot contribute to a cohort constant, and "
                 f"treating its absence as agreement lets the other libraries decide on its "
                 f"behalf.")
+        # The count bounds are per assay, like the mitochondrial ones, and the cohort is one
+        # assay or it is refused here rather than bounded as whichever came first.
         sub = Task(key=task.key, step=task.step, fn=_quality,
                    params={"valleys": valleys[metric], "metric": metric,
-                           "light_floor": task.params.get("light_floor")})
+                           "light_floor": task.params.get("light_floor"),
+                           "assay": _cohort_assay(task.params.get("assay"))})
         r = _quality(sub, pipeline, log)
         out["outputs"] += list(r.get("outputs", []))
         for k, v in (r.get("metrics") or {}).items():
@@ -1576,7 +1704,7 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
 # step 6 - cluster, profile, flag
 
 
-def _population_for_cluster(pipeline, sample):
+def _population_for_cluster(pipeline, sample, cell_call_key="cellbender_cell"):
     """The cells step 6 is specified to cluster: quality-filtered, doublets NOT applied.
 
     # rule-one: no-removal - this reads a table and a task's metrics and returns four numbers.
@@ -1632,7 +1760,7 @@ def _population_for_cluster(pipeline, sample):
             f"floors the deliverable will use are not knowable here. Do NOT read them from "
             f"thresholds_per_sample.csv - that table is written after this step runs.")
 
-    return {"cell_call_key": "cellbender_cell", "umi_floor": float(umi),
+    return {"cell_call_key": cell_call_key, "umi_floor": float(umi),
             "gene_floor": float(gene), "mito_ceiling": float(ceiling)}
 
 
@@ -1664,7 +1792,12 @@ def _cluster(task, pipeline, log):
                    # re-derived: step 6 must cluster the cells that reach the deliverable, not
                    # the droplet matrix they were selected from. The doublet criterion is
                    # deliberately absent - see the op.
-                   "population": _population_for_cluster(pipeline, p["sample"]),
+                   "population": _population_for_cluster(
+                       pipeline, p["sample"], p.get("cell_call_key") or "cellbender_cell"),
+                   # Which marker classes count against a cluster: on whole cells the ribosomal
+                   # half is ordinary cytoplasm (adapters/scanpy_ops, _op_cluster). Absent, both.
+                   **({"uninformative_classes": p["uninformative_classes"]}
+                      if p.get("uninformative_classes") else {}),
                    # THE COORDINATES F10 AND F11 ARE DRAWN ON, over a WIDER population than the
                    # clustering. `cell_called` is not a looser version of the clustering
                    # population, it is the only one that can answer F11: a projection built

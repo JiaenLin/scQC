@@ -60,7 +60,7 @@ S2	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl]	t
 | `fastq_r1` / `fastq_r2` | to start from reads | alignment runs first and produces the matrix |
 | `mt_prefix`, `ribo_pattern` | for steps 5 and 6 | **species-specific; nothing guesses them** |
 | `ambient_h5` | if already denoised | a CellBender object you produced elsewhere |
-| `aligner_cells` | for step 2 | the aligner's filtered matrix, to compare cell calls against |
+| `aligner_cells` | for step 2; **required for `scrna`** | the aligner's filtered matrix (CellRanger `filtered_feature_bc_matrix`, CeleScope `outs/filtered`). On nuclei it is compared with the denoiser's call; on single cells, which this pipeline does not denoise, it **is** the cell call, and a run without it is refused before anything is submitted |
 | anything else | no | a **design factor**, discovered automatically |
 
 `mt_prefix` and `ribo_pattern` have no defaults on purpose. Mouse and human differ in case alone

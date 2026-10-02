@@ -1,6 +1,6 @@
 # Decides whether ambient correction runs and refuses an unsafe skip.
 # It removes no observation itself; CellBender adjusts counts and deletes no barcode.
-"""Step 1 — ambient RNA removal. MANDATORY for single-nuclei, optional for single-cell.
+"""Step 1 — ambient RNA removal. MANDATORY for single-nuclei, NOT RUN on single cells.
 
 WHY THE ASYMMETRY IS STRUCTURAL, NOT A PREFERENCE
 
@@ -18,9 +18,15 @@ Measured across the calibration cohort's ten solid-tissue libraries, CellBender 
 Between a sixth and a quarter of the data. A pipeline that leaves that in place for snRNA-seq is
 not applying a lighter touch; it is analysing a mixture and calling it a cell.
 
-For scRNA-seq the cell retains its cytoplasm, the ambient fraction is ordinarily much lower, and
-whether to correct is a judgement about a particular experiment. So: mandatory for `snrna`,
-default-on-but-skippable for `scrna`, and a skip must be RECORDED rather than silent.
+For scRNA-seq the cell retains its cytoplasm and the ambient fraction is ordinarily much lower.
+This read "default-on-but-skippable for `scrna`" until 2026-10-02, and the run route ignored even
+that: it scheduled CellBender for every library whatever the assay, so the first single-cell
+cohort spent its GPU hours denoising whole cells and failed there (single-cell-harness ADR-0027).
+The PI's ruling that day: "do not run cellbender for single cell" - "single cell and single
+nuclei is fundamentally different!". So the rule is now a POLICY per assay, `DENOISE` below:
+mandatory for `snrna`, never run by this pipeline for `scrna`. A single-cell library arrives
+already corrected (SUPPLIED, with its provenance) or is not corrected at all, and the report says
+which. Its cell call is then the aligner's, because there is no denoiser to take one from.
 
 CELLBENDER IS A DENOISER, NOT THIS PIPELINE'S CELL CALLER
 
@@ -45,6 +51,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 ASSAYS = ("snrna", "scrna")
+
+# WHETHER THIS PIPELINE RUNS A DENOISER, PER ASSAY. A policy, not a default a flag can flip: a
+# nucleus is denoised because the ambient pool is a sixth to a quarter of its counts, and a whole
+# cell is not, by the PI's ruling of 2026-10-02 (see above). Every assay in ASSAYS has an entry,
+# and a new assay must state its own rather than inherit either.
+DENOISE = {"snrna": True, "scrna": False}
 # CellBender package defaults. A departure from either - a halved learning rate, for instance -
 # is a stated choice, not a setting, and must be recorded as one. `lr_policy` decides when the
 # learning rate has to move and requires the halved run to be RE-MEASURED before it is adopted.
@@ -69,7 +81,7 @@ class AmbientPlan:
         return "RUN" if self.run else ("SUPPLIED" if self.supplied else "SKIP")
 
     def __str__(self) -> str:
-        tag = "mandatory" if self.mandatory else "optional"
+        tag = "mandatory" if self.mandatory else "not denoised here"
         s = f"[{self.state:8s}] {self.sample:14s} assay={self.assay:6s} ({tag})"
         if self.reason:
             s += f"\n {self.reason}"
@@ -90,7 +102,8 @@ def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=No
     THREE STATES, AND THE THIRD IS NOT A KIND OF SKIP
 
       RUN       this pipeline corrects the matrix.
-      SKIP      no correction happens at all. Refused outright for snRNA - see below.
+      SKIP      no correction happens at all. Refused outright for snRNA; for scRNA it is
+                the policy (DENOISE), not a request.
       SUPPLIED  the correction ALREADY HAPPENED, elsewhere, and its output is the input here.
 
     Conflating SUPPLIED with SKIP is the failure this distinction exists to prevent, and it can
@@ -154,11 +167,22 @@ def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=No
             f"it were.",
             p, dict(supplied))
 
-    if not skip:
-        return AmbientPlan(sample, assay, True, mandatory,
-                           "ambient correction will run", p)
+    if not DENOISE[assay]:
+        # NOT a skip somebody asked for, so it needs no reason from the caller: it is this
+        # pipeline's rule for the assay, and the rule is the reason. A reason given anyway is
+        # kept beside it.
+        return AmbientPlan(
+            sample, assay, False, mandatory,
+            f"NOT RUN: this pipeline does not denoise {assay} (PI, 2026-10-02: single cells and "
+            f"single nuclei are fundamentally different). The ambient fraction is NOT MEASURED "
+            f"and must not be reported as low; the cell call is the aligner's."
+            + (f" Also recorded: {skip_reason}" if str(skip_reason).strip() else ""),
+            p)
 
-    if mandatory:
+    # Only an assay this pipeline denoises reaches here, and every such assay is mandatory: the
+    # branch that took a recorded reason for a single-cell skip went with the policy above, since
+    # no caller can now arrive at it.
+    if skip:
         raise AmbientRefusal(
             f"{sample}: ambient correction cannot be skipped for snRNA-seq. There is no flag "
             f"for this. A nucleus holds roughly an order of magnitude less RNA than its cell "
@@ -167,12 +191,4 @@ def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=No
             f"solid-tissue libraries. Skipping it does not analyse nuclei; it analyses a "
             f"mixture.")
 
-    if not str(skip_reason).strip():
-        raise AmbientRefusal(
-            f"{sample}: skipping ambient correction for scRNA-seq is permitted but must be "
-            f"RECORDED. Give a reason - it is written to the run manifest, the same way every "
-            f"other deliberate bypass in this pipeline is. A skip that is possible and logged "
-            f"stays reviewable; a silent one is indistinguishable from an oversight.")
-
-    return AmbientPlan(sample, assay, False, mandatory,
-                       f"SKIPPED, recorded reason: {skip_reason}", p)
+    return AmbientPlan(sample, assay, True, mandatory, "ambient correction will run", p)

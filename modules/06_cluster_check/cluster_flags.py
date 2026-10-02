@@ -88,6 +88,14 @@ def _unknown(v) -> bool:
 
 TOPN = 20
 
+#: WHICH MARKER CLASSES COUNT AGAINST A CLUSTER (criterion C), PER ASSAY. On a nucleus both are
+#: carry-over: it holds no mitochondria and little cytoplasmic ribosome, so a cluster whose top
+#: markers are either describes contamination. A whole cell's cytoplasm IS ribosomal transcript,
+#: and a cluster of cells marked by it is ordinary biology (the calibration cohort's ribosomal
+#: half was empty "as expected for nuclei" - an expectation that is the reverse on cells). The
+#: class left out is NOT EVALUATED - C_ribo reads unknown - never scored as 0%.
+UNINFORMATIVE_CLASSES = {"snrna": ("mt", "ribo"), "scrna": ("mt",)}
+
 #: The profile columns that carry numbers. A CSV carries no types: every cell arrives as a string,
 #: and a string meets `<` against a float with a TypeError - or, where the comparison happens to be
 #: between two strings, sorts lexicographically and returns a plausible wrong answer. An EMPTY cell

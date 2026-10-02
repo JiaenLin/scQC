@@ -24,7 +24,7 @@ flowchart TD
 
     subgraph S1["Step 1 — Ambient RNA"]
         G1{"Assay declared, and<br/>consistent with the<br/>intronic fraction?"}
-        A1["Denoise at the package<br/>default rate · or accept<br/>a supplied denoised object"]
+        A1["snrna: denoise at the package<br/>default rate · or accept<br/>a supplied denoised object<br/>scrna: NOT denoised - raw counts,<br/>the aligner's call as a column"]
         A3{"Is any sample unlike<br/>its siblings? (MAD over<br/>the run diagnostics)"}
         A2["Audit: 5 checks"]
     end
@@ -43,7 +43,7 @@ flowchart TD
     R1 --> S2
 
     subgraph S2["Step 2 — Cell call"]
-        C1["Aligner calls vs denoiser calls"]
+        C1["Aligner calls vs denoiser calls<br/>(scrna: the aligner's call IS the call -<br/>nothing to compare, gate NOT RUN)"]
     end
     C1 --> V2A{"Does the denoiser call<br/>FEWER cells than the aligner?"}
     V2A -- "yes" --> X2A["REFUSE<br/>the boundary has become a filter"]
@@ -128,6 +128,16 @@ The two forms are not interchangeable, and the diagram marks the difference.
   `REVIEW` or `PASS`. Returning `"REFUSE"` reports; the **caller** is what stops the run.
 
 ### Branches worth reading twice
+
+- **A single cell is not a nucleus, and the route says so from step 1.** The assay decides
+  whether this pipeline denoises at all (`modules/01_ambient`, `DENOISE`): nuclei always, single
+  cells never - the PI's ruling of 2026-10-02, after the first single-cell cohort went down the
+  nuclear route whole and failed inside CellBender. A single-cell library's object is its raw
+  counts, every droplet kept; the aligner's call is written into it as `aligner_cell`, and steps
+  2, 4, 5 and 6 select cells by that column. Step 2 has nothing to compare and reports NOT RUN
+  rather than a loss of zero. The count bounds and criterion C's marker classes are per assay.
+  Apply mode is refused for a library no denoiser touched, because step 7's first criterion
+  carries the denoiser's name.
 
 - **Step 0 rejects a matrix, not a sample.** A supplied matrix that fails P1 or P2 does not stop the
   run when FASTQ is available: the plan becomes *rebuild from FASTQ*, and the matrix is simply not

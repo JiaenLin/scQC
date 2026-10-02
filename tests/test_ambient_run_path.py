@@ -80,6 +80,10 @@ if HAVE:
     print("1. the denoiser's .h5 converts to the object step 5 opens, empties kept at zero")
 
 # ---- 2. the names line up: what CellBender writes is what step 2 reads
+#
+# On NUCLEI. This fixture was a single-cell row until 2026-10-02, when single cells stopped being
+# denoised here at all (modules/01_ambient, DENOISE; tests/test_single_cells_are_not_nuclei.py).
+# The run route this section pins is the nuclear one now, and only a nuclear row reaches it.
 from adapters import cellbender as cbd  # noqa: E402
 from engine import graph  # noqa: E402
 
@@ -89,7 +93,7 @@ class _P:
     decisions: dict = {}
     mode = "evidence"
     samples = [{"sample": "S1", "platform": "10x", "species": "homo_sapiens",
-                "reference": "homo_sapiens/GRCh38", "assay": "scrna", "matrix": "/d/S1",
+                "reference": "homo_sapiens/GRCh38", "assay": "snrna", "matrix": "/d/S1",
                 "aligner_cells": "/d/S1_filtered", "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]"}]
 
 

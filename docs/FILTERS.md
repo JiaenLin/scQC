@@ -111,12 +111,18 @@ the filter a technical property that varies across the design — which is the f
 design-differential checks exist to catch — so one constant is preferred even where it fits some
 libraries better than others.
 
-The proposal is refused if it falls outside the bounds:
+The proposal is refused if it falls outside the bounds of the cohort's **assay**. They are per
+assay because a whole cell carries roughly ten times a nucleus's RNA, and its debris/cell boundary
+has no reason to sit where a nucleus's does:
 
-| Metric | Bounds |
-|---|---|
-| UMI | **200 – 1,000** |
-| genes | **100 – 600** |
+| Metric | `snrna` | `scrna` |
+|---|---|---|
+| UMI | **200 – 1,000** | **500 – 2,000** |
+| genes | **100 – 600** | **250 – 1,500** |
+| source | measured: the calibration cohort's nuclear valleys | **declared** by the PI on 2026-10-02 from published whole-cell practice; not yet measured on a single-cell cohort |
+
+There is no default assay. Until 2026-10-02 there was one pair — the nuclear one — and every
+cohort was bounded by it.
 
 The bounds are the real guard. On one cohort, two libraries' minima wandered to ~1,040 UMI under a
 narrower kernel; the upper bound rejects that on sight, and no depth test is needed to catch it.
@@ -253,7 +259,8 @@ neither check objecting.
 
 ### Which population the quartiles are taken over
 
-**Derived over:** called cells **at or above the light floor** and **below
+**Derived over:** called cells — the denoiser's call on nuclei, the aligner's on single cells,
+which are not denoised — **at or above the light floor** and **below
 `MITO_DERIVATION_MAX = 50.0`%** mitochondrial. All three restrictions matter:
 
 - *Called cells*, because a barcode with no counts has no meaningful percentage — `0/0`.
@@ -359,7 +366,7 @@ removal available; it requires an explicit human decision taken elsewhere.
 |---|---|---|
 | **A** | low RNA | cluster median UMI < *f* × that **sample's own** median |
 | **B** | high mitochondrial | cluster median `pct_counts_mt` above a threshold |
-| **C** | uninformative | share of the cluster's top-20 markers falling in the locked mt+ribo set |
+| **C** | uninformative | share of the cluster's top-20 markers falling in the locked uninformative set: mt+ribo on `snrna`, **mt only** on `scrna` |
 | **D** | doublet | cluster doublet frequency above a threshold |
 
 ```
@@ -368,6 +375,11 @@ WATCH = C alone
 ```
 
 A alone, B alone, and every continuous value are **reported, not flagged**.
+
+**C's set is per assay** (`cluster_flags.UNINFORMATIVE_CLASSES`). On a nucleus both mitochondrial
+and ribosomal transcripts are carry-over, so a cluster marked by either describes contamination.
+A whole cell's cytoplasm *is* ribosomal transcript, so on `scrna` only the mitochondrial half
+counts against a cluster; the ribosomal split reads **not evaluated**, never 0%.
 
 **Why the conjunction.** C alone is not a QC failure — a cluster whose markers are mitochondrial
 at normal coverage is the signature of a mitochondria-rich cell type rather than damage. A alone

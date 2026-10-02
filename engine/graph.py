@@ -16,7 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import steps
-from .task import Task
+from .pipeline import step_module
+from .task import Refusal, Task
 
 
 
@@ -101,6 +102,43 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             "params": str(row.get("ambient_params") or "").strip(),
             "produced_by": str(row.get("ambient_produced_by") or "").strip()}
 
+    # WHICH ROUTE EACH LIBRARY TAKES IS THE ASSAY'S POLICY, decided by the module and read here
+    # BEFORE anything is submitted. This loop used to schedule CellBender for every library not
+    # supplied, whatever its assay - so the first single-cell cohort queued four GPU jobs for
+    # whole cells and failed inside them (single-cell-harness ADR-0027, Q6). A library whose
+    # assay is not denoised takes `_ambient_none`: its raw counts become the object, and the
+    # aligner's call - `aligner_cells`, required here rather than discovered missing at step 2 -
+    # is written into it as the cell call.
+    am = step_module("ambient")
+    not_denoised = []
+    for s in by_sample:
+        if s in supplied_of:
+            continue
+        try:
+            plan = am.plan_ambient(s, assay.get(s))
+        except Exception as e:                                            # noqa: BLE001
+            raise Refusal(f"01_ambient ({s}): {e}") from None
+        if not plan.run:
+            not_denoised.append(s)
+    if not_denoised:
+        lacking = [s for s in not_denoised
+                   if not str(by_sample[s].get("aligner_cells") or "").strip()]
+        if lacking:
+            raise Refusal(
+                f"01_ambient: {', '.join(lacking)} {'is' if len(lacking) == 1 else 'are'} not "
+                f"denoised by this pipeline (assay {assay.get(lacking[0])}), so the cell call is "
+                f"the aligner's - and the samplesheet gives no `aligner_cells` for "
+                f"{'it' if len(lacking) == 1 else 'them'}. Name the aligner's filtered matrix "
+                f"directory (CellRanger filtered_feature_bc_matrix, CeleScope outs/filtered). "
+                f"Refused before anything is submitted.")
+        if pipeline.mode == "apply":
+            raise Refusal(
+                f"01_ambient: apply mode is not built for a library no denoiser touched "
+                f"({', '.join(not_denoised)}). Step 7's first criterion is "
+                f"`fail_not_cellbender_cell`, and removing barcodes under a denoiser's name on "
+                f"a run where none ran would put a false reason in the ledger. Run evidence "
+                f"mode; apply for single cells is built once its thresholds have been seen.")
+
     for s in by_sample:
         h5 = pipeline.results / "objects" / f"{s}_ambient.h5"
         if s in supplied_of:
@@ -115,6 +153,19 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # a matrix. A latent break on the path a reusable pipeline is most likely to be used on.
         needs = (f"00_align/{s}",) if f"00_align/{s}" in {t.key for t in tasks} else ()
         k = f"01_ambient/{s}"
+        if s in not_denoised:
+            aligner = str(by_sample[s].get("aligner_cells") or "").strip()
+            tasks.append(Task(
+                key=k, step="01_ambient", sample=s, fn=steps._ambient_none, needs=needs,
+                inputs=(str(raw_of[s]), aligner),
+                params={"raw": str(raw_of[s]), "assay": assay.get(s),
+                        "python_exe": python_exe, "aligner_cells": aligner},
+                # A conversion, not a denoising: no GPU. The raw matrix holds every droplet
+                # (two million on a 10x run), sparse, read once.
+                outputs=(str(h5),), cpus=2, memory_gb=32, walltime_h=2,
+            ))
+            ambient_keys.append(k)
+            continue
         tasks.append(Task(
             key=k, step="01_ambient", sample=s, fn=steps._ambient, needs=needs,
             inputs=(str(raw_of[s]),),
@@ -174,8 +225,11 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                                    # instead would answer a different question in the same units.
                                    "cell_barcodes": str(
                                        by_sample[s].get("cellbender_barcodes") or "").strip()}
-                               for s in by_sample if raw_of.get(s)},
+                               for s in by_sample
+                               if raw_of.get(s) and s not in not_denoised},
                 "no_raw": [s for s in by_sample if not raw_of.get(s)],
+                # Named, not dropped: no corrected matrix exists to measure a fraction against.
+                "not_denoised": not_denoised,
                 "supplied": supplied_of,
                 "design": design},
     ))
@@ -192,9 +246,13 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     # catch a population lost at the boundary between the two callers, and a step that quietly
     # compares something else is worse than one that refuses.
     call_paths = {}
+    # Who called each library's cells: the denoiser, or - where none ran - the aligner. Every step
+    # that selects cells reads the call from the column step 1 wrote for that caller.
+    call_by = {s: ("aligner" if s in not_denoised else "denoiser") for s in by_sample}
+    call_key = {s: ("aligner_cell" if s in not_denoised else None) for s in by_sample}
     for s, row in by_sample.items():
         cb_csv = str(row.get("cellbender_barcodes") or "").strip()
-        if not cb_csv and s not in supplied_of:
+        if not cb_csv and s not in supplied_of and s not in not_denoised:
             stem = pipeline.results / "objects" / f"{s}_cellbender"
             cb_csv = str(stem.parent / f"{stem.name}_cell_barcodes.csv")
         call_paths[s] = {"aligner": str(row.get("aligner_cells") or "").strip(),
@@ -206,7 +264,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # object every step after step 1 reads. It used to come from a second file named in the
         # samplesheet, from a run nothing verified was this one.
         needs=tuple(f"05_quality/{s}" for s in by_sample),
-        params={"design": design, "samples": list(by_sample), "call_paths": call_paths},
+        params={"design": design, "samples": list(by_sample), "call_paths": call_paths,
+                "call_by": call_by},
     ))
 
     # --- steps 3-4: the light floor, then doublet scoring on what clears it.
@@ -225,7 +284,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     # refuses None rather than choosing a rate nobody declared.
                     "dbr": _num(by_sample[s].get("dbr"), tools.get("dbr")),
                     "dbr_sd": _num(by_sample[s].get("dbr_sd"), tools.get("dbr_sd")),
-                    "seed": tools.get("seed", 0)},
+                    "seed": tools.get("seed", 0),
+                    **({"cell_call_key": call_key[s]} if call_key[s] else {})},
             outputs=(str(csv),), cpus=4, memory_gb=32, walltime_h=4,
         ))
         dbl_keys.append(k)
@@ -316,7 +376,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     # a droplet more than this percent mitochondrial is ambient, not a cell whose
                     # mitochondrial content is high, and it must not set the MAD. None means the
                     # adapter's declared default, which records itself either way.
-                    "mito_derivation_max": tools.get("mito_derivation_max")},
+                    "mito_derivation_max": tools.get("mito_derivation_max"),
+                    **({"cell_call_key": call_key[s]} if call_key[s] else {})},
             cpus=4, memory_gb=32, walltime_h=2,
         ))
 
@@ -354,7 +415,12 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     "extra_resolutions": tools.get("extra_resolutions"),
                     "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
                     "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
-                    "doublet_csv": str(pipeline.results / "tables" / f"{s}_doublets.csv")},
+                    "doublet_csv": str(pipeline.results / "tables" / f"{s}_doublets.csv"),
+                    # The ASSAY's marker classes, whoever denoised it: a whole cell's ribosomal
+                    # transcript is cytoplasm, not carry-over (cluster_flags.UNINFORMATIVE_CLASSES).
+                    "uninformative_classes": list(
+                        step_module("cluster_flags").UNINFORMATIVE_CLASSES[assay.get(s)]),
+                    **({"cell_call_key": call_key[s]} if call_key[s] else {})},
             # 48 rather than 64: a common workq ceiling is 50 gb, and one library's
             # clustering does not need more. check_resources() would refuse the
             # graph otherwise - correctly, but before doing any work.

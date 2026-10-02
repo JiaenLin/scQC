@@ -184,10 +184,12 @@ _AMB = {"ambient_h5": "/cb/x.h5", "ambient_tool": "CellBender", "ambient_version
 # THE SECOND COHORT'S SHAPE, beside the first's (2026-10-02). Every row above is one platform,
 # one species and one assay - the only cohort this pipeline had run - so a wire that carries a
 # declared axis to its consumer was indistinguishable from a default that happens to equal it.
+# Single cells are not denoised here (modules/01_ambient, DENOISE), so their cell call is the
+# aligner's and `aligner_cells` is part of the shape, not an extra.
 _CELLS = {"platform": "10x", "species": "homo_sapiens", "reference": "homo_sapiens/GRCh38",
-          "assay": "scrna"}
+          "assay": "scrna", "aligner_cells": "/d/filtered_feature_bc_matrix"}
 _SHAPES = {
-    "10x cells, ambient run here": [_row("A", **_CELLS), _row("B", **_CELLS)],
+    "10x cells, not denoised": [_row("A", **_CELLS), _row("B", **_CELLS)],
     "accepted matrix, ambient run here": [_row("A"), _row("B")],
     "accepted matrix, ambient supplied": [_row("A", **_AMB), _row("B", **_AMB)],
     "mixed: one supplied, one not":      [_row("A", **_AMB), _row("B")],
@@ -205,11 +207,22 @@ for _label, _rows, _mode in _combos:
     _P.mode = _mode
     _P.decisions = {}
     _ing = {r["sample"]: {"mode": "accept"} for r in _rows}
+    # Apply mode for a library no denoiser touched is REFUSED at build, by design: step 7's first
+    # criterion carries the denoiser's name (engine/graph.py). That refusal is the expected
+    # outcome for that one combination, and any other is a failure.
+    _refuse_expected = _mode == "apply" and all(r.get("assay") == "scrna" and not r.get("ambient_h5")
+                                                for r in _rows)
     try:
         _built = graph.main_stage(_P, "python", {}, _ing)
     except Exception as e:                                            # noqa: BLE001
+        if _refuse_expected and "apply mode is not built" in str(e):
+            continue
         fails.append(f"F: graph does not build for {_label!r} in {_mode} mode: "
                      f"{type(e).__name__}: {e}")
+        continue
+    if _refuse_expected:
+        fails.append(f"F: [{_label}] apply mode BUILT for libraries no denoiser touched; step 7 "
+                     f"would remove them under `fail_not_cellbender_cell`")
         continue
     _keys = {t.key for t in _built}
     for _t in _built:
@@ -536,7 +549,8 @@ from engine import graph as _g, steps as _st  # noqa: E402
 from engine.task import Refusal as _Refusal  # noqa: E402
 _axis_bad = 0
 for _assay in ("scrna", "snrna"):
-    _P.samples = [_row("A", assay=_assay), _row("B", assay=_assay)]
+    _x = {"aligner_cells": "/d/filtered"} if _assay == "scrna" else {}
+    _P.samples = [_row("A", assay=_assay, **_x), _row("B", assay=_assay, **_x)]
     _P.mode, _P.decisions = "evidence", {}
     _q = [t for t in _g.main_stage(_P, "python", {}, {"A": {"mode": "accept"}, "B": {"mode": "accept"}})
           if t.key == "05_quality"]

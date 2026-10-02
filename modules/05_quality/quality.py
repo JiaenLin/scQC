@@ -54,12 +54,42 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import median
 
-UMI_BOUNDS = (200, 1000)
-# Genes get their own bounds, 100-600, and NOT the UMI ones. The measured gene valleys ran
+# PER ASSAY, because the bounds above were read off NUCLEI and a whole cell is not one.
+#
+# Until 2026-10-02 there was one pair, and every single-cell cohort would have been bounded by
+# the valleys of ten nuclear libraries - a cell carries roughly an order of magnitude more RNA,
+# so its debris/cell boundary has no reason to sit where a nucleus's does. The single-cell pair is
+# NOT a measurement: no single-cell cohort had been run when it was set. It is the common
+# published range for whole cells (a UMI floor of 500 and a gene floor of 200-300 are the usual
+# starting points, and a valley above 2,000 UMI or 1,500 genes is cutting into the cells),
+# DECLARED by the PI on 2026-10-02 in preference to running unbounded. The first single-cell
+# cohort's valleys are what will say whether it fits, and the report names its source.
+UMI_BOUNDS = {"snrna": (200, 1000), "scrna": (500, 2000)}
+# Genes get their own bounds and NOT the UMI ones. On nuclei the measured gene valleys ran
 # 184-352, so the smallest of them is ALREADY BELOW 200 - applying the UMI lower bound to genes
-# would have refused a real library for being correct. The upper bound of 600 is ~1.7x the
+# would have refused a real library for being correct. The nuclear upper bound of 600 is ~1.7x the
 # largest measured valley, the same headroom the UMI bound leaves.
-GENE_BOUNDS = (100, 600)
+GENE_BOUNDS = {"snrna": (100, 600), "scrna": (250, 1500)}
+#: Where each assay's count bounds came from, for the report: a measured range and a declared one
+#: must not read alike.
+BOUNDS_SOURCE = {"snrna": "measured: the calibration cohort's nuclear valleys",
+                 "scrna": "DECLARED by the PI 2026-10-02 from published whole-cell practice; "
+                          "not yet measured on any single-cell cohort"}
+
+
+def count_bounds(metric: str, assay: str) -> tuple:
+    """The (lo, hi) a derived count floor must fall inside, for this metric and assay.
+
+    No default assay. The pair for nuclei is the pair this module shipped alone, and defaulting to
+    it is exactly how a single-cell cohort would be bounded as nuclei without anything saying so.
+    """
+    a = str(assay or "").strip().lower()
+    table = UMI_BOUNDS if metric == "umi" else GENE_BOUNDS
+    if a not in table:
+        raise ThresholdRefusal(
+            f"{metric}: no count bounds for assay {assay!r} (known: {sorted(table)}). The bounds "
+            f"are calibrated per assay and one assay's must not be lent to another.")
+    return table[a]
 SPREAD_REVIEW = 2.0 # per-library valleys differing more than this question a constant
 
 class ThresholdRefusal(RuntimeError):
@@ -105,7 +135,7 @@ class Proposal:
         s += [f" {n}" for n in self.notes]
         return "\n".join(s)
 
-def derive(valleys, metric, light_floor=None) -> Proposal:
+def derive(valleys, metric, light_floor=None, *, assay) -> Proposal:
     """Turn per-library valleys into a proposed cohort constant, refusing what cannot be right.
 
     A SHALLOW VALLEY CHANGES WHAT THE FLOOR IS CALLED, NOT WHETHER YOU GET ONE.
@@ -135,7 +165,7 @@ def derive(valleys, metric, light_floor=None) -> Proposal:
     libraries that failed it are NAMED in the proposal, so a reader is told the constant rests on
     a shoulder rather than a dip in those.
     """
-    bounds = UMI_BOUNDS if metric == "umi" else GENE_BOUNDS
+    bounds = count_bounds(metric, assay)
 
     shoulders = [v.sample for v in valleys if not v.bimodal]
     if shoulders and len(shoulders) == len(valleys):
@@ -158,8 +188,10 @@ def derive(valleys, metric, light_floor=None) -> Proposal:
             f"{metric}: valley outside {bounds[0]}-{bounds[1]} in {len(out)} library(ies) "
             f"({who}). Below the lower bound the quality floor would sit at or under the "
             f"doublet-scoring light floor and invert the ordering; above the upper bound the KDE "
-            f"has found something other than the debris/nucleus boundary. Neither is a threshold "
-            f"to apply - look at the density first.")
+            f"has found something other than the debris/"
+            f"{'nucleus' if str(assay).lower() == 'snrna' else 'cell'} boundary. Neither is a "
+            f"threshold to apply - look at the density first. (Bounds for {assay}: "
+            f"{BOUNDS_SOURCE.get(str(assay).lower(), '?')}.)")
 
     constant = int(round(median(list(per.values())) / 10.0) * 10)
     notes = []
