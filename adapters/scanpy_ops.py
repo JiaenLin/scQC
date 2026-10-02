@@ -164,11 +164,11 @@ MITO_DERIVATION_MAX = 50.0
 ABSENT = "not installed"
 
 #: Operations `run_scanpy_op()` and the script entry point understand.
-OPS = ("qc", "valley", "cluster", "apply_measure", "apply_write")
+OPS = ("qc", "valley", "cluster", "apply_measure", "apply_write", "convert")
 
 #: Ops that do not read an input object. `apply_write` takes a LIST of objects in its params and
 #: `main()` would otherwise load one of them for nothing - a hundred megabytes to be discarded.
-OPS_WITHOUT_INPUT = ("apply_write",)
+OPS_WITHOUT_INPUT = ("apply_write", "convert")
 
 # Values below this maximum, in a matrix that is not integral, are the signature of data that has
 # already been log1p'd. Running normalize_total on it produces an embedding that looks entirely
@@ -3232,6 +3232,27 @@ def _annotation_column(values: list):
     return pd.Categorical([None if v is None else str(v) for v in values])
 
 
+def _op_convert(adata, params, out_prefix) -> tuple:
+    """The denoiser's own output, as the AnnData every later step opens (`_load` is read_h5ad).
+
+    Single-cell-harness ADR-0027, Q4: on the run route CellBender's native .h5 sat under the name
+    every consumer opens as an AnnData, so step 5 would have failed on the first library that was
+    ever denoised inside this pipeline. In the analysis environment, like every op that reads a
+    matrix (tests/test_wiring.py section E), through this tool's own reader - which already reads
+    CellBender's format - and its verified writer. Nothing is filtered: the droplets CellBender
+    called empty keep their zero denoised counts, which is what step 5 reads as its cell call.
+    """
+    from adapters import matrix as mx
+
+    src, dest = params.get("source"), params.get("dest")
+    if not src or not dest:
+        raise TaskFailure("convert needs 'source' (the denoiser's .h5) and 'dest' (the object).")
+    ad_ = mx.read_matrix(src)
+    mx.write_h5ad(ad_, dest)
+    return [Path(dest)], {"droplets": int(ad_.n_obs), "features": int(ad_.n_vars),
+                          "source": Path(src).name}
+
+
 def _op_apply_write(adata, params, out_prefix) -> tuple:
     """Materialise the deliverable: the kept barcodes of every library, in ONE object.
 
@@ -3425,7 +3446,8 @@ def main(argv=None) -> int:
 
     adata = None if a.op in OPS_WITHOUT_INPUT else _load(a.h5ad)
     handler = {"qc": _op_qc, "valley": _op_valley, "cluster": _op_cluster,
-               "apply_measure": _op_apply_measure, "apply_write": _op_apply_write}[a.op]
+               "apply_measure": _op_apply_measure, "apply_write": _op_apply_write,
+               "convert": _op_convert}[a.op]
     outputs, metrics = handler(adata, params, a.out_prefix)
 
     missing = [str(p) for p in outputs if not Path(p).exists()]

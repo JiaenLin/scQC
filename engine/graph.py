@@ -118,7 +118,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         tasks.append(Task(
             key=k, step="01_ambient", sample=s, fn=steps._ambient, needs=needs,
             inputs=(str(raw_of[s]),),
-            params={"raw": str(raw_of[s]), "assay": assay.get(s),
+            params={"raw": str(raw_of[s]), "assay": assay.get(s), "python_exe": python_exe,
                     "exe": tools.get("cellbender", "cellbender"),
                     "env_bin": tools.get("cellbender_bin"),
                     "device": tools.get("device", "cuda"),

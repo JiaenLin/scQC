@@ -82,6 +82,21 @@ def _promote(pipeline, result: dict, suffix: str, dest_name: str, *, what: str):
     return dst
 
 
+#: Samplesheet columns that are never a design factor: what the run IS, and the per-library
+#: PARAMETERS this pipeline reads. The second half was missing (single-cell-harness ADR-0027, Q7):
+#: design discovery admits any column with 2..n-1 distinct values, so a per-library doublet rate
+#: or a reference path with few enough distinct values became a "factor" and every differential
+#: check then compared libraries by the parameter they were run with. Excluded here only when a
+#: column is the pipeline's own input; a technical property of the experiment (chemistry, batch)
+#: stays discoverable, because comparing arms by it is exactly what a confound check is for.
+NOT_FACTORS = frozenset({
+    "sample", "platform", "species", "reference", "assay", "fastq_r1", "fastq_r2", "matrix",
+    "dbr", "dbr_sd", "mt_prefix", "ribo_pattern", "expected_genes", "aligner_cells",
+    "cellbender_barcodes", "cellreads_stats", "nf_antisense",
+    "ambient_h5", "ambient_tool", "ambient_version", "ambient_params", "ambient_produced_by",
+})
+
+
 def _design(samples: list[dict], max_levels: int = 6) -> dict:
     """Design factors discovered from the samplesheet, never declared.
 
@@ -96,8 +111,7 @@ def _design(samples: list[dict], max_levels: int = 6) -> dict:
 
     So a factor must leave at least one level holding more than one sample.
     """
-    skip = {"sample", "platform", "species", "reference", "assay",
-            "fastq_r1", "fastq_r2", "matrix"}
+    skip = NOT_FACTORS
     out: dict = {}
     if not samples:
         return out
@@ -250,17 +264,34 @@ def _ambient(task, pipeline, log):
 
     sample = task.sample
     raw = task.params["raw"]
-    # `<sample>_ambient.h5`: the name the graph declares as this task's output and every consumer
-    # reads (engine/graph.py). It was `_cellbender.h5` here alone, so the CellBender-run path
-    # could never have satisfied its own output check; only the supplied route ever ran.
+    # TWO FILES, BECAUSE THERE ARE TWO FORMATS. Every consumer opens `<sample>_ambient.h5` as an
+    # AnnData (`scanpy_ops._load` is `ad.read_h5ad`), and on the supplied route that is what it
+    # was: a converted object copied under that name. CellBender writes its OWN format. This step
+    # used to hand CellBender `<sample>_ambient.h5` as its output, so the run route - which no
+    # cohort had taken until a second one did (single-cell-harness ADR-0027, Q4/Q5) - would have
+    # denoised every library on a GPU and then died at step 5 opening it, and its cell-barcode
+    # CSV would have been `<sample>_ambient_cell_barcodes.csv` while step 2 looks for
+    # `<sample>_cellbender_cell_barcodes.csv`. So CellBender writes `<sample>_cellbender.h5` and
+    # its siblings under that stem, and the object every consumer reads is CONVERTED from it by
+    # this tool's own reader - which reads CellBender's format already - and verified on write.
+    #
+    # NOTHING IS FILTERED IN THE CONVERSION. The full output keeps every droplet CellBender
+    # analysed; the ones it calls empty carry zero denoised counts, which is what step 5's "a
+    # barcode left with no counts is not a cell it called" reads.
+    native = _objects(pipeline) / f"{sample}_cellbender.h5"
     out_h5 = _objects(pipeline) / f"{sample}_ambient.h5"
     res = cbd.run_remove_background(
-        sample=sample, input_path=raw, output_h5=out_h5,
+        sample=sample, input_path=raw, output_h5=native,
         exe=task.params["exe"], env_bin=task.params.get("env_bin"),
         fpr=task.params.get("fpr", 0.0),
         learning_rate=task.params.get("learning_rate"),
         device=task.params.get("device", "cuda"),
         log=log, executor=pipeline.executor)
+    conv = _scanpy(pipeline, "convert", native, pipeline.scratch / f"{sample}_convert",
+                   {"source": str(native), "dest": str(out_h5)}, log,
+                   task.params["python_exe"])
+    res["outputs"] = list(res.get("outputs") or []) + [str(out_h5)]
+    res.setdefault("metrics", {})["converted"] = conv.get("metrics", {})
     return res
 
 

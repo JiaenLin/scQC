@@ -220,8 +220,9 @@ def cmd_validate(a) -> int:
                     print(f"   - {e}")
         elif not a.json:
             print(f"[ok     ] {r.get('sample')}")
-    factors = design_from(rows, skip={"sample", "platform", "species", "reference",
-                                      "assay", "fastq_r1", "fastq_r2", "matrix"})
+    # The pipeline's own list, so `validate` and `run` cannot discover different designs.
+    from engine.steps import NOT_FACTORS
+    factors = design_from(rows, skip=set(NOT_FACTORS))
     if a.json:
         print(json.dumps({"rows": len(rows), "invalid": bad, "results": results,
                           "design_factors": {k: sorted(set(v.values())) for k, v in factors.items()}},
@@ -562,7 +563,8 @@ def cmd_run(a) -> int:
         if a.decisions or dpath.exists():
             decisions = load_decisions(dpath)
 
-    executor = make_executor(a.executor, **({"queue": a.queue, "project": a.pbs_project}
+    executor = make_executor(a.executor, **({"queue": a.queue, "project": a.pbs_project,
+                                              "gpu_queue": a.gpu_queue}
                                             if a.executor == "pbs" else {}))
     jobs = a.jobs if a.jobs and a.jobs > 0 else min(16, (os.cpu_count() or 4))
     tools = {k: v for k, v in {
@@ -800,6 +802,9 @@ def build_parser() -> argparse.ArgumentParser:
     r2.add_argument("--allow-local", dest="allow_local", action="store_true",
                     help="run the local executor on a machine that has a scheduler, outside a job")
     r2.add_argument("--queue"); r2.add_argument("--pbs-project", dest="pbs_project")
+    r2.add_argument("--gpu-queue", dest="gpu_queue",
+                    help="the queue a task that declares a GPU (the denoiser) is sent to; "
+                         "default: --queue, as every other task")
     r2.add_argument("--python", help="interpreter that has scanpy/anndata")
     r2.add_argument("--celescope"); r2.add_argument("--cellranger")
     r2.add_argument("--cellbender"); r2.add_argument("--rscript")

@@ -227,9 +227,16 @@ class PBSExecutor:
 
     def __init__(self, queue: str | None = None, project: str | None = None,
                  poll_s: int = 30, cpus: int = 1, memory_gb: int = 8,
-                 walltime_h: int = 4, gpu: bool = False):
+                 walltime_h: int = 4, gpu: bool = False, gpu_queue: str | None = None):
         self.queue, self.project, self.poll_s = queue, project, poll_s
+        # WHERE A TASK THAT DECLARES A GPU IS SENT (single-cell-harness ADR-0027). Every child job
+        # went to `queue`, with `ngpus=1` added for the denoiser - but a site's GPUs may be only in
+        # GPU queues, which may also cap how many jobs one user can have queued. The run route of
+        # the denoiser had never been taken, so nothing had ever asked. The caller names the
+        # queue; nothing here knows any site's. Absent, every task goes to `queue` as before.
+        self.gpu_queue = gpu_queue
         self.cpus, self.memory_gb, self.walltime_h, self.gpu = cpus, memory_gb, walltime_h, gpu
+        self._limits_by_queue: dict = {}
         # Resolved ONCE, here, so a host without PBS is refused before any task runs rather than
         # failing identically ten times with a bare FileNotFoundError that names neither the
         # command nor the reason.
@@ -268,23 +275,33 @@ class PBSExecutor:
                 f"    --executor local.")
 
 
-    def queue_limits(self) -> dict:
-        """`resources_max` for the configured queue, as PBS reports it.
+    def queue_for(self, gpu: bool) -> str | None:
+        """The queue a task goes to: the GPU queue for a task that declares a GPU, when one was
+        named, and the queue otherwise."""
+        return self.gpu_queue if (gpu and self.gpu_queue) else self.queue
+
+    def queue_limits(self, queue: str | None = None) -> dict:
+        """`resources_max` for a queue (the configured one by default), as PBS reports it.
 
         Read from the scheduler, never hardcoded: a ceiling written into this repository is wrong
         on the next cluster, and silently - the job is simply rejected at submission with a
         message about a resource nobody set.
         """
-        if self._limits is not None:
+        queue = queue or self.queue
+        if queue == self.queue and self._limits is not None:
             return self._limits
-        self._limits = {}
-        if not self.queue or not self.qstat:
-            return self._limits
-        q = subprocess.run([self.qstat, "-Qf", self.queue], capture_output=True, text=True,
-                           env={**os.environ, **self.pbs_env})
-        for m in re.finditer(r"resources_max\.(\w+)\s*=\s*(\S+)", q.stdout or ""):
-            self._limits[m.group(1)] = m.group(2)
-        return self._limits
+        if queue in self._limits_by_queue:
+            return self._limits_by_queue[queue]
+        lim: dict = {}
+        if queue and self.qstat:
+            q = subprocess.run([self.qstat, "-Qf", queue], capture_output=True, text=True,
+                               env={**os.environ, **self.pbs_env})
+            for m in re.finditer(r"resources_max\.(\w+)\s*=\s*(\S+)", q.stdout or ""):
+                lim[m.group(1)] = m.group(2)
+        self._limits_by_queue[queue] = lim
+        if queue == self.queue:
+            self._limits = lim
+        return lim
 
     def check_resources(self, tasks) -> list:
         """Which declared resources exceed the queue, reported BEFORE anything is submitted.
@@ -293,17 +310,19 @@ class PBSExecutor:
         task thirty of thirty-seven, after half an hour of work that then has to be repeated. The
         cheap moment to find that is now.
         """
-        lim = self.queue_limits()
         out = []
-        max_mem = lim.get("mem", "")
-        max_cpu = lim.get("ncpus", "")
-        mem_gb = int(re.sub(r"[^0-9]", "", max_mem) or 0) if "gb" in max_mem.lower() else 0
-        cpu_n = int(re.sub(r"[^0-9]", "", max_cpu) or 0)
         for t in tasks:
+            # EACH TASK AGAINST THE QUEUE IT WILL ENTER, which for a GPU task may not be `queue`.
+            q = self.queue_for(bool(getattr(t, "gpu", False)))
+            lim = self.queue_limits(q)
+            max_mem = lim.get("mem", "")
+            max_cpu = lim.get("ncpus", "")
+            mem_gb = int(re.sub(r"[^0-9]", "", max_mem) or 0) if "gb" in max_mem.lower() else 0
+            cpu_n = int(re.sub(r"[^0-9]", "", max_cpu) or 0)
             if mem_gb and int(getattr(t, "memory_gb", 0) or 0) > mem_gb:
-                out.append(f"{t.key}: asks {t.memory_gb} gb, queue {self.queue} allows {max_mem}")
+                out.append(f"{t.key}: asks {t.memory_gb} gb, queue {q} allows {max_mem}")
             if cpu_n and int(getattr(t, "cpus", 0) or 0) > cpu_n:
-                out.append(f"{t.key}: asks {t.cpus} cpus, queue {self.queue} allows {max_cpu}")
+                out.append(f"{t.key}: asks {t.cpus} cpus, queue {q} allows {max_cpu}")
         return out
 
     def shell(self, cmd, log: Path, env=None, cwd=None, timeout_s=None) -> str:
@@ -325,8 +344,9 @@ class PBSExecutor:
         lines = ["#!/usr/bin/env bash", "#PBS -N scqc", f"#PBS -l {sel}",
                  f"#PBS -l walltime={wall}:00:00",
                  f"#PBS -o {log}.out", f"#PBS -e {log}.err", "#PBS -j oe"]
-        if self.queue:
-            lines.append(f"#PBS -q {self.queue}")
+        queue = self.queue_for(gpu)
+        if queue:
+            lines.append(f"#PBS -q {queue}")
         if self.project:
             lines.append(f"#PBS -P {self.project}")
         lines.append("set -euo pipefail")

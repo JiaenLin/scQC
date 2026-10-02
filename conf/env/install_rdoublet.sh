@@ -77,6 +77,13 @@ fi
 export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$ROOT/mamba}"
 echo "package manager: $MM  ($("$MM" --version 2>&1 | head -1))"
 
+if [ -d "$ENVDIR" ] && [ ! -x "$ENVDIR/bin/Rscript" ]; then
+    # EXISTING IS NOT COMPLETE (single-cell-harness ADR-0027): a build killed mid-transaction
+    # leaves the directory without its interpreter, and "exists" then skipped the build for ever.
+    echo "ERROR: $ENVDIR exists but has no bin/Rscript - the remains of an interrupted build." >&2
+    echo "       Remove it and run again:  rm -rf '$ENVDIR'" >&2
+    exit 1
+fi
 if [ -d "$ENVDIR" ]; then
     echo "$ENVDIR exists - enforcing the xgboost pin only"
     "$MM" install -y -p "$ENVDIR" -c conda-forge -c bioconda \

@@ -28,13 +28,15 @@ whether it is reached through the pipeline or by hand.
 
 ```bash
 scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--decisions FILE] \
-          [--registry FILE]
+          [--registry FILE] [--executor pbs --queue Q [--gpu-queue G]]
 ```
 
 - `--registry` — the project's reference registry (TSV: `species`, `build`, `path`, ...). The
   samplesheet's `reference` must be a `species/build` key in it. Without it, ingest uses the
   registry shipped with scQC, which holds one example row; a project on any other reference
   declares its own here rather than editing the tool.
+- `--gpu-queue` — under `--executor pbs`, the queue a task that declares a GPU (the denoiser)
+  is sent to; every other task goes to `--queue`. Without it, every task goes to `--queue`.
 
 - `--jobs` — independent tasks run at once. `0` (default) uses the machine, capped at 16. Use `1`
   when a failure has to be read in a single log.

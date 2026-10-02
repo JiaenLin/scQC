@@ -241,6 +241,16 @@ created=()
 make_env() {
     local name="$1" py="$2" path="$PREFIX/$1"
     if [[ -d "$path" ]]; then
+        # EXISTING IS NOT COMPLETE. A build killed mid-transaction leaves the directory with a
+        # conda-meta/ and no interpreter, and this used to say "[skip] already exists" and then
+        # die on the missing bin/python one line later, with exit 127 and no word about why - on
+        # every rerun, for ever (single-cell-harness ADR-0027, PBS 720421). Refused, not removed:
+        # an installer does not delete what it did not verify it made.
+        if [[ ! -x "$path/bin/python" ]]; then
+            echo "ERROR: $path exists but has no bin/python - the remains of an interrupted build." >&2
+            echo "       Remove it and run again:  rm -rf '$path'" >&2
+            exit 1
+        fi
         echo "  [skip] $name already exists at $path"
         return 0
     fi
