@@ -78,6 +78,23 @@ def _step_module_locked(name: str):
     return mod
 
 
+
+def _why(message: str, limit: int = 300) -> str:
+    """The line of a failure worth printing beside `FAIL`: the error itself, not the preamble.
+
+    A failed task printed `FAIL <key>` and nothing else, and its reason lived only in the task's
+    log and the run state - on 2026-10-02 a queue limit and a missing mitochondrial match both
+    read as a bare FAIL in run.log. A subprocess failure's message opens with the command and
+    ends with the exception, so the last line naming an error is preferred to the first line.
+    """
+    lines = [ln.strip() for ln in str(message or "").splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    pick = next((ln for ln in reversed(lines)
+                 if any(w in ln for w in ("Error", "Failure", "Refusal", "refused", "failed"))),
+                lines[0])
+    return pick if len(pick) <= limit else pick[:limit - 3] + "..."
+
 class Pipeline:
     """Builds the task graph for a project and runs it."""
 
@@ -444,7 +461,7 @@ class Pipeline:
         except TaskFailure as e:
             return TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""),
                               message=str(e), seconds=time.time() - started,
-                              log=str(log)), f"  FAIL    {key}"
+                              log=str(log)), f"  FAIL    {key}  {_why(str(e))}"
         except Exception as e:                                        # noqa: BLE001
             return TaskResult(key, Status.FAILED, step=task.step, sample=(task.sample or ""),
                               message=f"{type(e).__name__}: {e}",
@@ -529,9 +546,10 @@ class Pipeline:
     #: is what FIXED means - they are listed rather than inferred because a contract nobody wrote
     #: down is not a contract.
     FIXED_PARAMETERS = (
-        ("cell caller", "the denoiser's output",
+        ("cell caller", "the denoiser's output on nuclei; the aligner's call on single cells",
          "pipeline contract: cell selection belongs to QC thresholds and doublet detection, not "
-         "to the tool chosen for denoising"),
+         "to the tool chosen for denoising - and single cells are not denoised here, so their "
+         "empty-droplet boundary is the aligner's (modules/01_ambient, DENOISE)"),
         ("variable-gene selection", "every gene, no class excluded",
          "no mitochondrial, ribosomal or haemoglobin exclusion term exists; the flagged genes "
          "selection CHOSE are reported instead"),
@@ -606,7 +624,14 @@ class Pipeline:
                              "decided_on": block.get("approved_on") or ""})
                 continue
             klass = "DERIVED"
-            if derived_key:
+            if derived_key and cohort.get(f"{derived_key.split('_')[0]}_provenance") == "declared":
+                # Single cells: no valley is measured, and the floor is the declaration it is.
+                klass = "DECLARED"
+                value = cohort.get(derived_key)
+                basis = ("step 5: DECLARED for single cells and applied to the aligner's called "
+                         "cells - " + str(cohort.get(f"{derived_key.split('_')[0]}_declared_by")
+                                          or "declared"))
+            elif derived_key:
                 value = cohort.get(derived_key)
                 basis = (f"step 5: the density valley measured per library, proposed as one "
                          f"cohort constant and bounded")

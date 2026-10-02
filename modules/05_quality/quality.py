@@ -77,6 +77,52 @@ BOUNDS_SOURCE = {"snrna": "measured: the calibration cohort's nuclear valleys",
                           "not yet measured on any single-cell cohort"}
 
 
+#: HOW EACH ASSAY'S COUNT FLOORS ARE SET, and on single cells it is not by a valley.
+#:
+#: The valley is a boundary between two modes in the droplets a DENOISER analysed: debris against
+#: nuclei. A single-cell object is the aligner's raw matrix, every droplet of it, and its density
+#: has three populations - barcodes carrying a handful of UMI, empty droplets carrying ambient
+#: RNA, and cells. On the first single-cell cohort the two tallest modes were both in the
+#: integer-count noise and the "valley" was 2.5 UMI in every library (single-cell-harness
+#: ADR-0027). The boundary between empties and cells is the aligner's cell call, already made;
+#: a valley drawn over the same droplets would be a second cell caller. What is left for a floor
+#: on called cells is to set aside the plainly empty, and the PI's instruction for it was
+#: "make reasonable QC, do not be too harsh, avoid removing true signal" (2026-10-02).
+FLOOR_METHOD = {"snrna": "valley", "scrna": "declared"}
+#: The declared floors, on the aligner's CALLED cells: the lower ends of the whole-cell bounds,
+#: and the floors most whole-cell studies start from. Lenient on purpose - on the first cohort
+#: the aligner's call already stops at 500 UMI, and these set aside 0 to 10 cells per library.
+DECLARED_FLOORS = {"scrna": {"umi": 500, "genes": 250}}
+FLOORS_DECLARED_BY = {"scrna": "the PI, 2026-10-02: \"make reasonable QC, do not be too harsh, "
+                               "avoid removing true signal\" - the lower ends of the declared "
+                               "whole-cell bounds"}
+
+
+def declared_floor(metric: str, assay: str, light_floor=None) -> "Proposal":
+    """The DECLARED count floor for an assay whose floors are not derived (single cells).
+
+    Checked as a derived one is: inside the assay's bounds, and above the light floor so nothing
+    reaches the deliverable unscored for doublets. Reported as declared, never as measured.
+    """
+    a = str(assay or "").strip().lower()
+    if FLOOR_METHOD.get(a) != "declared":
+        raise ThresholdRefusal(f"{metric}: assay {assay!r} derives its floors; it declares none.")
+    v = DECLARED_FLOORS[a][metric]
+    bounds = count_bounds(metric, a)
+    if not (bounds[0] <= v <= bounds[1]):
+        raise ThresholdRefusal(f"{metric}: declared floor {v} is outside {bounds[0]}-{bounds[1]}.")
+    if metric == "umi" and light_floor is not None and v <= light_floor:
+        raise ThresholdRefusal(
+            f"{metric}: declared floor {v} is not above the {light_floor}-UMI light floor, so "
+            f"cells between them would reach the deliverable never scored for doublets.")
+    p = Proposal(metric, {}, int(v), bounds,
+                 [f"DECLARED, not derived: {FLOORS_DECLARED_BY[a]}. Applied to the aligner's "
+                  f"called cells; no valley is measured on {a}."])
+    p.shoulders = ()
+    p.provenance = "declared"
+    return p
+
+
 def count_bounds(metric: str, assay: str) -> tuple:
     """The (lo, hi) a derived count floor must fall inside, for this metric and assay.
 
@@ -448,6 +494,11 @@ K_DECLARED_GAP_REVIEW = 2.0
 # quietly using the edge value. k below 2 fences inside the bulk of the distribution; k above 10
 # is so permissive that the bound, not the derivation, is doing all the work.
 MAD_K_BOUNDS = (2, 10)
+# Per assay where k is DERIVED. On whole cells a light-tailed cohort can put the Tukey-implied k
+# at 2, a fence inside the bulk of healthy cells; 3 is the usual "median + 3 MAD" and the least
+# this pipeline will derive for cells. On nuclei k is declared (3) and the derived value is only
+# reported, under the original limits.
+MAD_K_BOUNDS_BY_ASSAY = {"snrna": MAD_K_BOUNDS, "scrna": (3, 10)}
 # Per-library implied k spreading more than this says no single k fits the cohort - the libraries
 # differ in SHAPE, not just in scale, and a cohort constant is then a compromise rather than a
 # measurement. Reported, because the calibration cohort itself spans 1.90x.
@@ -675,7 +726,8 @@ def derive_mito_ceiling_from_quartiles(stats, assay, bounds=None, mult=IQR_MULT,
     gradable = {s: st for s, st in stats.items()
                 if all(key in st for key in ("median", "q1", "q3", "mad"))}
     if declared_k is None:
-        sel = select_mad_k(gradable, mult=mult)      # propagates; k has nowhere else to come from
+        sel = select_mad_k(gradable, mult=mult,      # propagates; k has nowhere else to come from
+                           k_bounds=MAD_K_BOUNDS_BY_ASSAY.get(assay, MAD_K_BOUNDS))
         k, k_notes = sel["k"], sel["notes"]
     else:
         try:

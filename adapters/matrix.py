@@ -497,6 +497,31 @@ def called_barcodes(path) -> list:
     if not p.is_file():
         raise TaskFailure(f"{p} does not exist, so its cell call cannot be read.")
 
+    # A 10x HDF5 matrix - Cell Ranger's `filtered_feature_bc_matrix.h5` - names its cells in
+    # `matrix/barcodes`. Read as text it is binary noise, and the duplicate check below then
+    # reports bytes as barcodes. Recognised by its signature, not its suffix.
+    with open(p, "rb") as fh:
+        is_hdf5 = fh.read(8) == b"\x89HDF\r\n\x1a\n"
+    if is_hdf5:
+        try:
+            import h5py
+        except ImportError:
+            raise TaskFailure(
+                f"{p} is an HDF5 matrix and this interpreter has no h5py to read its barcodes. "
+                f"Name the filtered matrix DIRECTORY instead (it holds barcodes.tsv.gz), or run "
+                f"the orchestrator under the analysis interpreter.") from None
+        with h5py.File(p, "r") as f:
+            if "matrix" not in f or "barcodes" not in f["matrix"]:
+                raise TaskFailure(f"{p} is HDF5 but holds no matrix/barcodes, so it is not a "
+                                  f"10x matrix and its cell call cannot be read.")
+            raw = f["matrix"]["barcodes"][:]
+        out = [b.decode() if isinstance(b, bytes) else str(b) for b in raw]
+        if len(set(out)) != len(out):
+            raise TaskFailure(f"{p} lists a barcode more than once.")
+        if not out:
+            raise TaskFailure(f"{p} lists no barcodes.")
+        return out
+
     out, seen = [], set()
     with _open_text(p) as fh:
         for line in fh:
@@ -845,12 +870,13 @@ def read_matrix(path, tmp_dir=None, *, backed: Optional[str] = None,
         raise TaskFailure(f"matrix directory does not exist: {p}")
     try:
         if kind == "mtx_dir":
-            return _read_mtx_dir(p)
+            return _gene_expression_only(_read_mtx_dir(p), p)
         if kind == "h5ad":
             return _read_h5ad(p, backed=backed)
         if kind == "h5":
-            return _read_hdf5(p)
-        return _read_mtx_dir(_extract_tar_mtx(p, tmp_dir, reuse_extracted=reuse_extracted))
+            return _gene_expression_only(_read_hdf5(p), p)
+        return _gene_expression_only(
+            _read_mtx_dir(_extract_tar_mtx(p, tmp_dir, reuse_extracted=reuse_extracted)), p)
     except TaskFailure:
         raise
     except ImportError as e:
@@ -861,6 +887,40 @@ def read_matrix(path, tmp_dir=None, *, backed: Optional[str] = None,
     except Exception as e:
         raise TaskFailure(f"failed to read {p} as {kind}: "
                           f"{type(e).__name__}: {e}") from e
+
+
+#: The one feature type QC measures. An aligner's matrix can carry others beside it - antibody
+#: capture on a CITE-seq run, multiplexing tags, CRISPR guides - and their counts are not
+#: transcripts: counted as UMIs they inflate every droplet's depth, dilute its mitochondrial
+#: share, enter clustering as "genes", and make a raw matrix whose empties all carry antibody
+#: background look already cell-called (single-cell-harness ADR-0027).
+GENE_EXPRESSION = "Gene Expression"
+
+
+def _gene_expression_only(adata, path):
+    """The Gene Expression features of an aligner's matrix; the rest set aside and counted.
+
+    A matrix that declares no feature types, or only Gene Expression, is returned unchanged. One
+    that declares OTHER types and no Gene Expression is refused: QC on it would measure the wrong
+    modality in every number.
+    """
+    if "feature_types" not in adata.var.columns:
+        return adata
+    types = [str(t) for t in adata.var["feature_types"]]
+    if all(t == GENE_EXPRESSION for t in types):
+        return adata
+    keep = [t == GENE_EXPRESSION for t in types]
+    if not any(keep):
+        raise TaskFailure(
+            f"{path} declares feature types {sorted(set(types))} and none is "
+            f"'{GENE_EXPRESSION}'. QC measures transcripts; this matrix has none to measure.")
+    other = sorted({t for t in types if t != GENE_EXPRESSION})
+    n_other = len(types) - sum(keep)
+    import numpy as _np
+    out = adata[:, _np.asarray(keep, dtype=bool)].copy()
+    out.uns["scqc_features_set_aside"] = {"types": other, "n": int(n_other),
+                                          "kept": GENE_EXPRESSION}
+    return out
 
 
 def _as_adata(path_or_adata, tmp_dir=None, backed: Optional[str] = None):

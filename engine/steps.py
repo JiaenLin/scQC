@@ -841,7 +841,10 @@ def _per_sample_thresholds(pipeline, samples: list) -> tuple:
             "cells_aligner": _int(cc.get("aligner")),
             "cells_denoiser": q5.get("n_called_by_denoiser"),
             "cells_lost": _int(cc.get("lost")),
-            "light_floor_umi": pop.get("floor_umi"),
+            # The light floor is step 4's; the mitochondrial population's floor is its own column
+            # below. They were the same number until single cells took the ceiling's population
+            # at the declared UMI floor.
+            "light_floor_umi": d4.get("light_floor_umi", pop.get("floor_umi")),
             "doublets_scored": d4.get("n_scored"),
             "doublets_called": d4.get("n_called"),
             "doublet_rate_pct": round(100 * rate, 2) if rate is not None else None,
@@ -1385,7 +1388,11 @@ def _quality_measure(task, pipeline, log):
     res = _scanpy(pipeline, "valley",
                   pipeline.results / "objects" / f"{s}_ambient.h5",
                   pipeline.scratch / f"{s}_qc",
-                  {"sample": s, "metrics": list(VALLEY_METRICS),
+                  {"sample": s,
+                   # None on an assay whose floors are declared, with the reason (graph.py).
+                   "metrics": [] if p.get("valleys_not_used") else list(VALLEY_METRICS),
+                   **({"valleys_not_used": p["valleys_not_used"]}
+                      if p.get("valleys_not_used") else {}),
                    "mt_prefix": p["mt_prefix"], "ribo_pattern": p["ribo_pattern"],
                    # The mitochondrial quartiles are taken above this floor, below the
                    # derivation ceiling, and the VALLEYS take neither. One pass, two populations,
@@ -1393,7 +1400,7 @@ def _quality_measure(task, pipeline, log):
                    # `mito_derivation_max` is passed only when this run declares one; absent, the
                    # adapter's own default applies and records itself in the ceiling table, so
                    # there is no route by which the applied value goes unrecorded.
-                   "mito_floor_umi": p["light_floor"],
+                   "mito_floor_umi": p.get("mito_floor_umi") or p["light_floor"],
                    # The cell call as a COLUMN, for an object no denoiser touched; absent, the
                    # call is "has counts left", which only a denoised object makes true.
                    **({"cell_call_key": p["cell_call_key"]} if p.get("cell_call_key") else {}),
@@ -1488,11 +1495,16 @@ def _quality_stage(task, pipeline, log):
     mito_pop = {}
     nf_per = {}
     missing = []
+    qmod = step_module("quality")
+    # HOW THIS COHORT'S FLOORS ARE SET is the assay's (quality.FLOOR_METHOD): measured from a
+    # valley on nuclei, declared on single cells, where no valley is measured at all.
+    cohort_assay = _cohort_assay(task.params.get("assay"))
+    floors_declared = qmod.FLOOR_METHOD.get(cohort_assay) == "declared"
     for s in task.params["samples"]:
         r = pipeline.results_by_key.get(f"05_quality/{s}")
         met = (getattr(r, "metrics", None) or {}) if r is not None else {}
         got, bim = met.get("valleys") or {}, met.get("bimodal") or {}
-        if not got:
+        if not met or (not got and not floors_declared):
             missing.append(s)
             continue
         for metric in VALLEY_METRICS:
@@ -1512,7 +1524,28 @@ def _quality_stage(task, pipeline, log):
             f"absence as agreement lets the other libraries decide on its behalf.")
 
     out = {"outputs": [], "metrics": {}, "versions": {}}
-    for metric in VALLEY_METRICS:
+    if floors_declared:
+        import csv as _csvf
+        fpath = _tables(pipeline) / "count_floors.csv"
+        with open(fpath, "w", newline="", encoding="utf-8") as fh:
+            w = _csvf.writer(fh)
+            w.writerow(["metric", "floor", "provenance", "declared_by", "bounds", "applied_to"])
+            for metric in VALLEY_METRICS:
+                try:
+                    prop = qmod.declared_floor(metric, cohort_assay,
+                                            light_floor=task.params.get("light_floor"))
+                except Exception as e:                                    # noqa: BLE001
+                    raise Refusal(f"05_quality ({metric}): {e}") from None
+                print(f"    {metric}: floor {prop.constant} DECLARED for {cohort_assay} - "
+                      f"{qmod.FLOORS_DECLARED_BY[cohort_assay]}")
+                w.writerow([metric, prop.constant, "declared", qmod.FLOORS_DECLARED_BY[cohort_assay],
+                            f"{prop.bounds[0]}-{prop.bounds[1]}", "the aligner's called cells"])
+                out["metrics"][f"{metric}_proposed"] = prop.constant
+                out["metrics"][f"{metric}_spread"] = None
+                out["metrics"][f"{metric}_provenance"] = "declared"
+                out["metrics"][f"{metric}_declared_by"] = qmod.FLOORS_DECLARED_BY[cohort_assay]
+        out["outputs"].append(str(fpath))
+    for metric in (() if floors_declared else VALLEY_METRICS):
         unknown = [v["sample"] for v in valleys[metric]
                    if v["value"] is None or v["bimodal"] is None]
         if unknown:
@@ -1860,7 +1893,10 @@ def _cluster_flags(task, pipeline, log):
     # cluster mito and C works only where that distribution was bimodal. A number carried from
     # another dataset while labelled as measured from this one is the worst of both.
     try:
-        proposed = cf.propose(rows)
+        # B's floor is the assay's (cluster_flags.B_FLOOR_PCT): none on nuclei, 10% on cells.
+        _assays = {str(v or "").strip().lower() for v in (task.params.get("assay") or {}).values()}
+        b_floor = (cf.B_FLOOR_PCT.get(next(iter(_assays))) if len(_assays) == 1 else None)
+        proposed = cf.propose(rows, b_floor=b_floor)
     except cf.ClusterRefusal as e:
         raise Refusal(f"06_cluster_check: {e}") from None
     d = (task.params.get("decisions") or {}).get("cluster_check") or {}
@@ -1945,7 +1981,7 @@ def _cluster_flags(task, pipeline, log):
             erows: list = []
             for f in files:
                 erows.extend(cf.read_profile_csv(f))
-            ethr = cf.propose(erows)
+            ethr = cf.propose(erows, b_floor=b_floor)
             eflag = cf.apply_flags(erows, ethr)
             eout = _tables(pipeline) / f"cluster_profile.res{res_txt}.csv"
             with open(eout, "w", encoding="utf-8", newline="") as fh:
@@ -2089,7 +2125,10 @@ def _apply_thresholds(task, pipeline, samples):
                 f"evidence mode and this run has no record of that, so there is nothing to "
                 f"apply - and a threshold nobody chose and nothing measured is not a default, it "
                 f"is a guess.")
-        values[dotted], classes[dotted] = derived[dotted], "DERIVED"
+        prov = {"quality.umi_floor": cohort.get("umi_provenance"),
+                "quality.gene_floor": cohort.get("genes_provenance")}.get(dotted)
+        values[dotted] = derived[dotted]
+        classes[dotted] = "DECLARED" if prov == "declared" else "DERIVED"
     ceilings, basis = _ceilings_for(pipeline, samples, values["quality.mito_ceiling_pct"])
     return values, classes, ceilings, basis
 
@@ -2121,7 +2160,10 @@ def _apply_measure(task, pipeline, log):
                     "nf_floor": _cohort_metric(pipeline, "nf_floor"),
                     "nf_trigger_pct": _cohort_metric(pipeline, "nf_trigger_pct"),
                     "doublet_csv": p["doublet_csv"],
-                    "doublet_key": "doublet_class", "doublet_positive": "doublet"},
+                    "doublet_key": "doublet_class", "doublet_positive": "doublet",
+                    # The cell call as a column, where step 1 wrote one (single cells). Absent,
+                    # the call is "has counts left", which only a denoised object makes true.
+                    **({"cell_call_key": p["cell_call_key"]} if p.get("cell_call_key") else {})},
                    log, p["python_exe"])
 
 
@@ -2248,6 +2290,7 @@ def _apply(task, pipeline, log):
     # be audited against anything.
     percell: list = []
     absent = []
+    headers = set()
     for s in samples:
         r = pipeline.results_by_key.get(f"07_measure/{s}")
         got = [o for o in (getattr(r, "outputs", None) or []) if str(o).endswith(".percell.csv")]
@@ -2255,7 +2298,9 @@ def _apply(task, pipeline, log):
             absent.append(s)
             continue
         with open(got[0], encoding="utf-8", newline="") as fh:
-            percell.extend(dict(row, _src=str(got[0])) for row in _csv.DictReader(fh))
+            rd = _csv.DictReader(fh)
+            headers.add(tuple(rd.fieldnames or ()))
+            percell.extend(dict(row, _src=str(got[0])) for row in rd)
     if absent:
         raise Refusal(
             f"07_apply: no per-cell criteria table was recorded for {', '.join(absent)}. A "
@@ -2266,7 +2311,20 @@ def _apply(task, pipeline, log):
     def flag(row, col):
         return str(row.get(col, "")).strip().lower() == "true"
 
-    criteria = list(so_apply_criteria())
+    # THE CRITERIA ARE THE TABLES' OWN `fail_*` COLUMNS, and the cell column is the one they
+    # carry. The cell criterion is named for who called the cells - the denoiser on nuclei, the
+    # aligner on single cells - so a fixed list would either miss it or name a caller that never
+    # ran. One cohort, one header: libraries measured under different callers are refused.
+    if len(headers) > 1:
+        raise Refusal(
+            "07_apply: the libraries' per-cell tables do not share one header - their cells were "
+            "called by different callers or measured under different criteria. One cohort, one "
+            "rule:\n" + "\n".join(f"    {', '.join(h)}" for h in sorted(headers)))
+    header = list(next(iter(headers))) if headers else []
+    criteria = ([c for c in header if c.startswith("fail_")]
+                or list(so_apply_criteria()))
+    cell_col = next((c for c in ("aligner_cell", "cellbender_cell") if c in header),
+                    "cellbender_cell")
     n_in = len(percell)
     ids = [f"{r['sample']}|{r['barcode']}" for r in percell]
     masks = {c: [flag(r, c) for r in percell] for c in criteria}
@@ -2325,14 +2383,15 @@ def _apply(task, pipeline, log):
     au = step_module("audit_removal")
     table = {c: [flag(r, c) for r in percell] for c in criteria}
     table.update({
-        "cellbender_cell": [flag(r, "cellbender_cell") for r in percell],
+        cell_col: [flag(r, cell_col) for r in percell],
         "keep": [flag(r, "keep") for r in percell],
         "removed": removed_mask,
         "total_counts": [float(r["total_counts"]) if r.get("total_counts") else 0.0
                          for r in percell],
         "doublet_scored": [flag(r, "doublet_scored") for r in percell],
     })
-    findings = au.audit(table, criteria=criteria, scored_col="doublet_scored",
+    findings = au.audit(table, criteria=criteria, cell_col=cell_col,
+                        scored_col="doublet_scored",
                         light_floor=task.params["light_floor"],
                         quality_floor=float(resolved["quality.umi_floor"]),
                         doublet_criterion="fail_doublet")

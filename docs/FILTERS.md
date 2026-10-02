@@ -124,6 +124,20 @@ has no reason to sit where a nucleus's does:
 There is no default assay. Until 2026-10-02 there was one pair — the nuclear one — and every
 cohort was bounded by it.
 
+### On single cells the floors are declared, and no valley is measured
+
+`quality.FLOOR_METHOD`: `valley` on `snrna`, `declared` on `scrna`. A single-cell object is the
+aligner's raw matrix, every droplet of it, and its density has **three** populations — barcodes
+carrying a handful of UMI, empty droplets carrying ambient RNA, and cells. On the first
+single-cell cohort the two tallest modes were both in the integer-count noise and the "valley"
+was 2.5 UMI in every library. The empties/cells boundary is the aligner's cell call, already
+made; a valley over the same droplets would be a second cell caller.
+
+So on `scrna` the floors are **declared**: UMI ≥ **500**, genes ≥ **250**, applied to the
+aligner's called cells (`quality.DECLARED_FLOORS`). They are the lower ends of the whole-cell
+bounds, chosen by the PI to be lenient — "make reasonable QC, do not be too harsh, avoid removing
+true signal" — and the report classes them `DECLARED`, never `DERIVED`.
+
 The bounds are the real guard. On one cohort, two libraries' minima wandered to ~1,040 UMI under a
 narrower kernel; the upper bound rejects that on sight, and no depth test is needed to catch it.
 Where per-library valleys differ by more than **2.0×**, the spread is reported for review: a
@@ -260,7 +274,9 @@ neither check objecting.
 ### Which population the quartiles are taken over
 
 **Derived over:** called cells — the denoiser's call on nuclei, the aligner's on single cells,
-which are not denoised — **at or above the light floor** and **below
+which are not denoised — **at or above the light floor** (on single cells, at or above the
+declared UMI floor, the population the ceiling is applied to; and there the derived `k` is never
+below 3, `MAD_K_BOUNDS_BY_ASSAY`) and **below
 `MITO_DERIVATION_MAX = 50.0`%** mitochondrial. All three restrictions matter:
 
 - *Called cells*, because a barcode with no counts has no meaningful percentage — `0/0`.
@@ -376,6 +392,13 @@ WATCH = C alone
 
 A alone, B alone, and every continuous value are **reported, not flagged**.
 
+**B's floor is per assay** (`cluster_flags.B_FLOOR_PCT`). B is the cohort's p95 of cluster
+medians, so one cluster in twenty is "high" whatever the values; on healthy whole cells (medians
+of 2–5%) that labels ordinary clusters, so on `scrna` B never sits below **10%**, the lowest
+per-cell ceiling applied to a cell. **When no cluster carries any uninformative marker**, C has
+nothing to threshold and **cannot fire** — reported, not refused. A cluster too small to rank
+(under 3 cells) has C **unknown**; the others are still evaluated.
+
 **C's set is per assay** (`cluster_flags.UNINFORMATIVE_CLASSES`). On a nucleus both mitochondrial
 and ribosomal transcripts are carry-over, so a cluster marked by either describes contamination.
 A whole cell's cytoplasm *is* ribosomal transcript, so on `scrna` only the mitochondrial half
@@ -459,8 +482,15 @@ a criterion nobody evaluated has not been judged, and the ledger refuses one.
 
 The applied criteria are, in ledger order:
 
+On single cells the first criterion is `fail_not_aligner_cell` — not called by the aligner —
+and the per-cell table and the ledger cover the **called cells only**: the two million droplets
+the aligner did not call are one number in the metrics, not two million "removals". In the
+deliverable a cell is named `<sample>_<barcode>` (the aligner's barcode kept in `obs["barcode"]`),
+since libraries from one aligner share a barcode whitelist.
+
 ```
-fail_not_cellbender_cell   the denoiser left it no counts
+fail_not_cellbender_cell   the denoiser left it no counts (nuclei)
+fail_not_aligner_cell      the aligner did not call it (single cells; replaces the line above)
 fail_umi_floor             below the applied UMI floor
 fail_gene_floor            below the applied gene floor
 fail_mito_ceiling          above that library's mitochondrial ceiling

@@ -38,7 +38,10 @@ NEEDS = ["matrix/{counts}", "column/{sample}"]
 # comprehension is invisible to anything but the interpreter, and a check that cannot see it
 # reports "no criteria" when it means "I cannot tell", which is a different and worse answer.
 CRITERIA = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
-            "fail_mito_ceiling", "fail_doublet", "fail_mito_nf")
+            "fail_mito_ceiling", "fail_doublet", "fail_mito_nf",
+            # The cell criterion when the aligner made the call (single cells, not denoised).
+            # It replaces the first entry on that route; a run carries one or the other.
+            "fail_not_aligner_cell")
 
 PROVIDES = [f"mask/{c}" for c in CRITERIA] + [
     "column/total_counts", "column/n_genes", "column/pct_counts_mt", "column/pct_counts_ribo",

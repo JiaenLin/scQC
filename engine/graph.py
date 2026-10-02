@@ -109,7 +109,19 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     # assay is not denoised takes `_ambient_none`: its raw counts become the object, and the
     # aligner's call - `aligner_cells`, required here rather than discovered missing at step 2 -
     # is written into it as the cell call.
+    # ONE COHORT, ONE ASSAY - refused here, before anything is submitted. Step 5 refused a mixed
+    # cohort too, but only after step 1 had run each library down its own route: a nucleus
+    # library in a cell cohort started a denoiser before the refusal arrived.
+    kinds = sorted({a for a in assay.values() if a})
+    if len(kinds) > 1:
+        raise Refusal(
+            f"the cohort mixes assays {kinds} ("
+            + "; ".join(f"{k}: {', '.join(sorted(s for s, a in assay.items() if a == k))}"
+                        for k in kinds)
+            + "). A cell and a nucleus are QC'd by different rules; run each assay as its own "
+              "project.")
     am = step_module("ambient")
+    _qmod = step_module("quality")
     not_denoised = []
     for s in by_sample:
         if s in supplied_of:
@@ -120,6 +132,17 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             raise Refusal(f"01_ambient ({s}): {e}") from None
         if not plan.run:
             not_denoised.append(s)
+    # THE JOINT MITOCHONDRIAL x NUCLEAR-FRACTION CRITERION IS A NUCLEUS'S. It removes droplets
+    # high in mitochondrial reads AND low in intronic fraction - carry-over around a nucleus. In a
+    # whole cell the direction is the opposite: a damaged cell that has lost its cytoplasm is
+    # HIGH in intronic fraction. Armed on cells it would remove intact cells for the wrong reason.
+    nf_on_cells = sorted(s for s, r in by_sample.items()
+                         if assay.get(s) == "scrna" and str(r.get("cellreads_stats") or "").strip())
+    if nf_on_cells:
+        raise Refusal(
+            f"05_quality: `cellreads_stats` is declared for single-cell libraries "
+            f"({', '.join(nf_on_cells)}). The nuclear-fraction criterion is calibrated on nuclei "
+            f"and points the other way in a whole cell; remove the column for scrna.")
     if not_denoised:
         lacking = [s for s in not_denoised
                    if not str(by_sample[s].get("aligner_cells") or "").strip()]
@@ -131,13 +154,9 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 f"{'it' if len(lacking) == 1 else 'them'}. Name the aligner's filtered matrix "
                 f"directory (CellRanger filtered_feature_bc_matrix, CeleScope outs/filtered). "
                 f"Refused before anything is submitted.")
-        if pipeline.mode == "apply":
-            raise Refusal(
-                f"01_ambient: apply mode is not built for a library no denoiser touched "
-                f"({', '.join(not_denoised)}). Step 7's first criterion is "
-                f"`fail_not_cellbender_cell`, and removing barcodes under a denoiser's name on "
-                f"a run where none ran would put a false reason in the ledger. Run evidence "
-                f"mode; apply for single cells is built once its thresholds have been seen.")
+        # Apply mode was refused here until step 7 could name its cell criterion for the
+        # aligner: `fail_not_aligner_cell`, read from the column step 1 wrote, over the called
+        # cells only (adapters/scanpy_ops, ALIGNER_CELL_CRITERION).
 
     for s in by_sample:
         h5 = pipeline.results / "objects" / f"{s}_ambient.h5"
@@ -331,7 +350,9 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                         "light_floor": tools.get("light_floor", 200),
                         "settings": list(sweep_settings),
                         "dbr": _num(by_sample[s].get("dbr"), tools.get("dbr")),
-                        "seed": tools.get("seed", 0)},
+                        "seed": tools.get("seed", 0),
+                        # Called cells only on a raw object, exactly as step 4 scores.
+                        **({"cell_call_key": call_key[s]} if call_key[s] else {})},
                 outputs=(str(pipeline.results / "tables" / f"{s}.doublet_sweep.csv"),),
                 cpus=4, memory_gb=32, walltime_h=12,
             ))
@@ -377,7 +398,14 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     # mitochondrial content is high, and it must not set the MAD. None means the
                     # adapter's declared default, which records itself either way.
                     "mito_derivation_max": tools.get("mito_derivation_max"),
-                    **({"cell_call_key": call_key[s]} if call_key[s] else {})},
+                    **({"cell_call_key": call_key[s]} if call_key[s] else {}),
+                    # DECLARED floors (single cells): no valley over raw droplets, and the
+                    # ceiling derived over the cells the floors let through - the population it
+                    # is applied to - rather than over everything above the light floor.
+                    **({"valleys_not_used": "count floors are DECLARED for this assay "
+                                            "(quality.FLOOR_METHOD)",
+                        "mito_floor_umi": _qmod.DECLARED_FLOORS[assay.get(s)]["umi"]}
+                       if _qmod.FLOOR_METHOD.get(assay.get(s)) == "declared" else {})},
             cpus=4, memory_gb=32, walltime_h=2,
         ))
 
@@ -430,7 +458,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     tasks.append(Task(
         key="06_cluster_flags", step="06_cluster_check", fn=steps._cluster_flags,
         needs=tuple(clus_keys), params={"design": design, "decisions": pipeline.decisions,
-                                        "samples": list(by_sample)},
+                                        "samples": list(by_sample),
+                                        "assay": {s: assay.get(s) for s in by_sample}},
     ))
 
     last = "06_cluster_flags"
@@ -458,7 +487,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                         "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
                         "light_floor": tools.get("light_floor", 200),
                         "doublet_csv": str(pipeline.results / "tables"
-                                           / f"{s}_doublets.csv")},
+                                           / f"{s}_doublets.csv"),
+                        **({"cell_call_key": call_key[s]} if call_key[s] else {})},
                 cpus=4, memory_gb=32, walltime_h=2,
             ))
             measure_keys.append(k)

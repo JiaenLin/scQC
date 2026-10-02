@@ -92,13 +92,31 @@ try:
 except Refusal as e:
     if "aligner_cells" not in str(e):
         fails.append(f"A7: refused, but without naming aligner_cells: {str(e)[:120]}")
+# Apply mode builds for single cells, and step 7 reads the aligner's call: its cell criterion is
+# named for the aligner, not the denoiser (ALIGNER_CELL_CRITERION in the adapter).
 try:
-    _build(CELLS, mode="apply")
-    fails.append("A8: apply mode built for single cells; step 7 would remove them under "
-                 "`fail_not_cellbender_cell` on a run where no denoiser ran")
+    ga = _build(CELLS, mode="apply")
+    for s in ("A1", "B2"):
+        if ga[f"07_measure/{s}"].params.get("cell_call_key") != "aligner_cell":
+            fails.append(f"A8: 07_measure/{s} would take 'has counts' as the cell call on a raw "
+                         f"matrix, calling every droplet a cell")
 except Refusal as e:
-    if "apply mode is not built" not in str(e):
-        fails.append(f"A8: refused for another reason: {str(e)[:120]}")
+    fails.append(f"A8: apply mode refused for single cells: {str(e)[:120]}")
+# Step 5 on single cells: no valley over raw droplets, the ceiling derived at the declared floor.
+for s in ("A1", "B2"):
+    q5 = g[f"05_quality/{s}"].params
+    if not q5.get("valleys_not_used") or q5.get("mito_floor_umi") != 500:
+        fails.append(f"A11: 05_quality/{s} would measure a valley over raw droplets, or derive the "
+                     f"ceiling below the floor it is applied above: {q5.get('valleys_not_used')!r}, "
+                     f"{q5.get('mito_floor_umi')!r}")
+# The nuclear-fraction criterion points the other way in a whole cell: refused on scrna.
+try:
+    _build([_row("A1", "scrna", aligner_cells="/d/f", cellreads_stats="/d/CellReads.stats"),
+            _row("B2", "scrna", aligner_cells="/d/f")])
+    fails.append("A12: the nucleus-calibrated nuclear-fraction criterion was armed on single cells")
+except Refusal as e:
+    if "cellreads_stats" not in str(e):
+        fails.append(f"A12: refused for another reason: {str(e)[:120]}")
 
 # Nuclei are untouched: denoised on the GPU, the call left to the denoiser, both marker classes.
 NUC = [_row("A1", "snrna"), _row("B2", "snrna")]
@@ -107,6 +125,8 @@ if not all(getattr(gn.get(f"01_ambient/{s}"), "gpu", False) for s in ("A1", "B2"
     fails.append("A9: nuclei are no longer denoised")
 if any("cell_call_key" in t.params for t in gn.values()):
     fails.append("A9: a nuclear graph names a cell-call column; its call is the denoiser's")
+if any("valleys_not_used" in gn[f"05_quality/{s}"].params for s in ("A1", "B2")):
+    fails.append("A11: nuclei lost their valley")
 if gn["06_cluster/A1"].params.get("uninformative_classes") != ["mt", "ribo"]:
     fails.append(f"A9: nuclei lost a marker class: {gn['06_cluster/A1'].params.get('uninformative_classes')}")
 # A single-cell library that arrives DENOISED ELSEWHERE is still a whole cell.
@@ -117,6 +137,34 @@ if gs["06_cluster/A1"].params.get("uninformative_classes") != ["mt"]:
     fails.append("A10: a supplied single-cell library was profiled with the nuclear marker classes")
 _P.mode = "evidence"
 print("A. the graph: single cells take the aligner's call, nuclei the denoiser's")
+
+# ---- E. step 5's floors and step 6's thresholds, as cells and as nuclei
+from engine.pipeline import step_module  # noqa: E402
+qm = step_module("quality")
+try:
+    pu, pg = qm.declared_floor("umi", "scrna", light_floor=200), qm.declared_floor("genes", "scrna")
+    if (pu.constant, pg.constant, pu.provenance) != (500, 250, "declared"):
+        fails.append(f"E1: declared single-cell floors {pu.constant}/{pg.constant} {pu.provenance}")
+except Exception as e:                                                # noqa: BLE001
+    fails.append(f"E1: no declared floor for single cells: {type(e).__name__}: {e}")
+try:
+    qm.declared_floor("umi", "snrna")
+    fails.append("E2: nuclei were handed a declared floor; theirs is measured")
+except Exception:                                                     # noqa: BLE001
+    pass
+cf = step_module("cluster_flags")
+flat = [{"umi_frac_of_sample": 1.0, "median_pct_mt": m, "pct_uninformative": 0.0,
+         "pct_mt_markers": 0.0, "pct_ribo_markers": None} for m in (2.0, 2.5, 3.0, 3.5, 4.0, 5.0)]
+try:
+    thr = cf.propose(flat, b_floor=cf.B_FLOOR_PCT["scrna"])
+    if thr.c_uninformative is not None or thr.b_pct_mt < 10.0:
+        fails.append(f"E3: thresholds on healthy cells: {thr}")
+    fl = cf.apply_flags(flat, thr)
+    if any(r.get("FLAG") or r.get("B") for r in fl.rows):
+        fails.append("E3: a healthy whole-cell cluster (median mito 2-5%) was flagged")
+except Exception as e:                                                # noqa: BLE001
+    fails.append(f"E3: a cohort with no uninformative marker stopped step 6: {type(e).__name__}: {e}")
+print("E. declared floors on cells only; step 6 stands on healthy cells")
 
 # ---- B, C need the analysis stack.
 try:
@@ -251,6 +299,46 @@ if HAVE:
         except Exception as e:                                        # noqa: BLE001
             fails.append(f"C: {type(e).__name__}: {e}")
         print("C. step 5 measures the aligner's cells, not every droplet with counts")
+
+        # C4. no valley on cells, but only with the reason in hand
+        try:
+            _, m4 = so._op_valley(ad.read_h5ad(dest), {
+                "sample": "S", "metrics": [], "valleys_not_used": "declared floors",
+                "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]", "mito_floor_umi": 500,
+                "cell_call_key": "aligner_cell"}, str(td / "v4"))
+            if m4.get("valleys"):
+                fails.append(f"C4: valleys were measured anyway: {m4.get('valleys')}")
+            if (m4.get("mito_population") or {}).get("floor_umi") != 500:
+                fails.append("C4: the ceiling's population is not taken at the declared floor")
+        except Exception as e:                                        # noqa: BLE001
+            fails.append(f"C4: {type(e).__name__}: {e}")
+        try:
+            so._op_valley(ad.read_h5ad(dest), {"sample": "S", "metrics": [], "mt_prefix": "MT-",
+                                               "ribo_pattern": "^RP[SL]", "mito_floor_umi": 200},
+                          str(td / "v5"))
+            fails.append("C5: an empty metric list with no reason was accepted")
+        except Exception:                                             # noqa: BLE001
+            pass
+
+        # F. step 7's measurement: the aligner's criterion, over called cells only
+        try:
+            outs, m7 = so._op_apply_measure(ad.read_h5ad(dest), {
+                "sample": "S", "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]",
+                "umi_floor": 500, "gene_floor": 250, "mito_ceiling_pct": 20.0, "light_floor": 200,
+                "doublet_csv": None, "nf_csv": None, "nf_floor": None, "nf_trigger_pct": None,
+                "cell_call_key": "aligner_cell"}, str(td / "S"))
+            with open(outs[0], encoding="utf-8") as fh:
+                rd = csv.DictReader(fh)
+                hdr, body = rd.fieldnames, list(rd)
+            if "fail_not_aligner_cell" not in hdr or "fail_not_cellbender_cell" in hdr \
+                    or "aligner_cell" not in hdr:
+                fails.append(f"F1: step 7 names the cell criterion {[h for h in hdr if 'cell' in h]}")
+            if len(body) != len(called) or m7.get("n_not_tabled") != len(bcs) - len(called):
+                fails.append(f"F2: the per-cell table holds {len(body)} rows for {len(called)} "
+                             f"called cells (left out: {m7.get('n_not_tabled')})")
+        except Exception as e:                                        # noqa: BLE001
+            fails.append(f"F: {type(e).__name__}: {e}")
+        print("F. step 7 measures called cells under the aligner's criterion")
 
 # ---- D. the CLI, on a synthetic single-cell cohort
 if HAVE:

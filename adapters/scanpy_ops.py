@@ -1763,21 +1763,31 @@ def cluster_profile(adata, cluster_key, uninformative_genes, *, sample=None, sam
 
     # ---- markers, computed once over the whole object at this clustering
     top_by_cluster = None
+    too_small: list = []
     if markers:
         import scanpy as sc
 
         sizes = pd.Series(labels).value_counts()
         too_small = sorted(sizes[sizes < int(min_cells_for_markers)].index.tolist())
+        # A CLUSTER TOO SMALL TO RANK IS NOT EVALUATED, AND THE REST STILL ARE. This stopped the
+        # whole run, so one cluster of two cells - which a small or homogeneous library at a high
+        # resolution produces - cost every library its cluster check. Now the ranking covers
+        # every cluster with enough cells, and a tiny one carries criterion C as UNKNOWN, named
+        # in the notes: not a fabricated share, and not a run lost to it.
+        ranked = [g for g in sizes.index.tolist() if g not in set(too_small)]
         if too_small:
-            raise TaskFailure(
-                f"cluster(s) {', '.join(map(str, too_small[:8]))} have fewer than "
-                f"{min_cells_for_markers} cells, and rank_genes_groups cannot rank a group that "
-                f"small. Lower the resolution, or pass markers=False - which reports criterion C "
-                f"as UNKNOWN rather than fabricating a marker share for a cluster of one.")
+            notes.append(f"cluster(s) {', '.join(map(str, too_small[:8]))} have fewer than "
+                         f"{min_cells_for_markers} cells and cannot be ranked; criterion C is "
+                         f"UNKNOWN for them and evaluated for the other {len(ranked)}")
         mkey = f"scqc_rank_{cluster_key}"
         try:
+            if not ranked:
+                raise ValueError("no cluster has enough cells to rank")
             sc.tl.rank_genes_groups(adata, groupby=cluster_key, method=marker_method,
-                                    n_genes=int(marker_topn), key_added=mkey)
+                                    n_genes=int(marker_topn), key_added=mkey,
+                                    groups=("all" if not too_small
+                                            else [str(g) for g in ranked]),
+                                    reference="rest")
         except Exception as e:                              # noqa: BLE001 - reported, not hidden
             raise TaskFailure(
                 f"rank_genes_groups(method={marker_method!r}) failed on obs[{cluster_key!r}]: "
@@ -1852,7 +1862,7 @@ def cluster_profile(adata, cluster_key, uninformative_genes, *, sample=None, sam
 
         pct_uninf = pct_mt_mk = pct_ribo_mk = None
         n_examined = None
-        if top_by_cluster is not None:
+        if top_by_cluster is not None and str(c) not in {str(g) for g in too_small}:
             col = str(c)
             if col not in top_by_cluster.columns:
                 raise TaskFailure(
@@ -2268,7 +2278,12 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     """Find the valley for each requested metric, and write the curve behind it."""
     sample = _require_str(params, "sample")
     wanted = params.get("metrics")
-    if not isinstance(wanted, list) or not wanted:
+    # NO VALLEY, SAID SO. On an assay whose floors are declared (single cells: quality.FLOOR_METHOD)
+    # a valley over the raw droplets measures integer-count noise, so none is measured - but only
+    # with the reason in hand, so an empty list cannot arrive by accident.
+    if wanted == [] and not _unknown(params.get("valleys_not_used")):
+        pass
+    elif not isinstance(wanted, list) or not wanted:
         raise TaskFailure(
             f"required parameter 'metrics' must be a non-empty list naming which valleys to "
             f"measure (known: {', '.join(sorted(VALLEY_METRIC_COLUMNS))}). It is not defaulted: "
@@ -2952,6 +2967,11 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
 #: which columns are criteria and checks that `removed` decomposes into exactly them.
 APPLY_CRITERIA = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
                   "fail_mito_ceiling", "fail_doublet", "fail_mito_nf")
+#: The cell criterion when the call is the ALIGNER's - single cells, which this pipeline does not
+#: denoise. Named for who called the cells: a removal recorded as `fail_not_cellbender_cell` on a
+#: run where no denoiser ran would be a false reason in the ledger. It takes the place of the
+#: first entry above; the other five are the same criteria either way.
+ALIGNER_CELL_CRITERION = "fail_not_aligner_cell"
 
 
 def _op_apply_measure(adata, params, out_prefix) -> tuple:
@@ -3035,10 +3055,25 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
     ribo = (_float_array(adata.obs["pct_counts_ribo"])
             if "pct_counts_ribo" in adata.obs.columns else None)
 
-    # The object holds what the denoiser produced; a barcode left with no counts is not a cell it
-    # called. Recorded as its own criterion rather than folded into the UMI floor, or the ledger
-    # would say a droplet was removed for being shallow when it was never a cell.
-    is_cell = np.asarray([c == c and c > 0 for c in counts], dtype=bool)
+    # WHO CALLED THE CELLS. On a denoised object a barcode left with no counts is not a cell the
+    # denoiser called. On a RAW object - single cells, not denoised - every droplet has counts and
+    # that test calls all two million of them cells, so the call is the column step 1 wrote from
+    # the aligner, and the criterion and its column are named for the aligner. Recorded as its
+    # own criterion rather than folded into the UMI floor, or the ledger would say a droplet was
+    # removed for being shallow when it was never a cell.
+    call_key = params.get("cell_call_key")
+    if _unknown(call_key):
+        is_cell = np.asarray([c == c and c > 0 for c in counts], dtype=bool)
+        cell_col, criteria = "cellbender_cell", APPLY_CRITERIA
+    else:
+        if call_key not in adata.obs.columns:
+            raise TaskFailure(f"{sample}: cell_call_key={call_key!r} is not a column of this "
+                              f"object; step 1 writes it.")
+        is_cell, _unk = _bool_array(adata.obs[call_key])
+        if _unk:
+            raise TaskFailure(f"{sample}: obs[{call_key!r}] is unknown for {_unk} barcodes.")
+        cell_col = str(call_key)
+        criteria = (ALIGNER_CELL_CRITERION,) + tuple(APPLY_CRITERIA[1:])
     fail_cell = ~is_cell
     fail_umi = np.asarray([not (c == c and c >= umi_floor) for c in counts], dtype=bool)
     fail_gene = np.asarray([not (g == g and g >= gene_floor) for g in genes], dtype=bool)
@@ -3100,7 +3135,7 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
             [(m == m and m > nf_trigger) and (v is not None and float(v) < nf_floor)
              for m, v in zip(mt, nf_values)], dtype=bool)
 
-    fails = {"fail_not_cellbender_cell": fail_cell, "fail_umi_floor": fail_umi,
+    fails = {criteria[0]: fail_cell, "fail_umi_floor": fail_umi,
              "fail_gene_floor": fail_gene, "fail_mito_ceiling": fail_mito,
              "fail_doublet": fail_doublet, "fail_mito_nf": fail_mito_nf}
     removed = np.zeros(adata.n_obs, dtype=bool)
@@ -3125,18 +3160,29 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                 f"read as having passed the doublet criterion. Raise the UMI floor to the light "
                 f"floor or above, or score the detector over the lower population.")
 
+    # WHICH ROWS THE TABLE HOLDS. On a denoised object, every barcode it holds - the denoiser
+    # analysed a bounded set of droplets. On a raw object that is two million droplets, all but a
+    # few thousand of which the aligner never called: written out they would be a ledger listing
+    # two million "removals" and every removal percentage would be taken over droplets, not cells
+    # (single-cell-harness ADR-0027). So there the table holds the CALLED cells, and how many
+    # droplets were left out is one number in the metrics.
+    rows_at = (range(adata.n_obs) if _unknown(call_key)
+               else [int(i) for i in np.flatnonzero(is_cell)])
+
     path = Path(str(out_prefix) + ".percell.csv")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = _csv.writer(fh)
         # `nuclear_fraction` sits beside `pct_counts_mt` because the two are the criterion's two
         # axes and a reader checking `fail_mito_nf` needs both. BLANK where undefined - never 0.
-        w.writerow(["barcode", "sample", "cellbender_cell", "total_counts", "n_genes",
+        w.writerow(["barcode", "sample", cell_col, "total_counts", "n_genes",
                     "pct_counts_mt", *(["pct_counts_ribo"] if ribo is not None else []),
                     "nuclear_fraction",
                     "doublet_score", "doublet_class", "doublet_scored",
-                    *APPLY_CRITERIA, "removed", "keep"])
-        for i, b in enumerate(adata.obs_names):
+                    *criteria, "removed", "keep"])
+        names = adata.obs_names
+        for i in rows_at:
+            b = names[i]
             w.writerow([str(b), sample, bool(is_cell[i]),
                         "" if counts[i] != counts[i] else f"{counts[i]:.0f}",
                         "" if genes[i] != genes[i] else f"{genes[i]:.0f}",
@@ -3147,11 +3193,15 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                         "" if _unknown(dbl_score[i]) else f"{float(dbl_score[i]):.6f}",
                         "" if _unknown(dbl_class[i]) else str(dbl_class[i]),
                         bool(scored[i]),
-                        *[bool(fails[c][i]) for c in APPLY_CRITERIA],
+                        *[bool(fails[c][i]) for c in criteria],
                         bool(removed[i]), bool(keep[i])])
 
-    metrics = {"sample": sample, "n_in": int(adata.n_obs), "n_keep": int(keep.sum()),
-               "n_removed": int(removed.sum()),
+    n_tabled = len(rows_at)
+    metrics = {"sample": sample, "n_in": int(n_tabled), "n_keep": int(keep.sum()),
+               "n_removed": int(removed[list(rows_at)].sum()) if n_tabled else 0,
+               "cell_col": cell_col,
+               # Droplets the aligner did not call, left out of the table (raw objects only).
+               "n_not_tabled": int(adata.n_obs - n_tabled),
                "thresholds": {"umi_floor": umi_floor, "gene_floor": gene_floor,
                               "mito_ceiling_pct": ceiling, "light_floor": light_floor,
                               "nf_floor": (None if not joint_armed else float(params["nf_floor"])),
@@ -3166,7 +3216,8 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
                    1 for m, v in zip(mt, nf_values)
                    if m == m and m > float(params["nf_trigger_pct"]) and v is None))),
                "n_doublet_scored": int(scored.sum()),
-               **{f"n_{c}": int(fails[c].sum()) for c in APPLY_CRITERIA}}
+               **{f"n_{c}": int(fails[c][list(rows_at)].sum()) if n_tabled else 0
+                  for c in criteria}}
     return [path], metrics
 
 
@@ -3398,7 +3449,11 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                 f"(first: {', '.join(missing[:3])}). The keep-list and the object have come "
                 f"apart; filtering anyway would deliver a different population from the one "
                 f"that was approved.")
-        sub = a[np.asarray([str(b) in set(wanted) for b in a.obs_names], dtype=bool)].copy()
+        # The set is built ONCE. Built inside the comprehension it was rebuilt for every droplet:
+        # harmless on a denoised object, about half an hour per library on a raw one of two
+        # million droplets.
+        wanted_set = set(wanted)
+        sub = a[np.asarray([str(b) in wanted_set for b in a.obs_names], dtype=bool)].copy()
         sub.obs["sample"] = pd.Categorical([s] * sub.n_obs)
 
         # WHAT STEP 6 FOUND, CARRIED ONTO THE NUCLEI IT FOUND IT ABOUT. Step 6 clusters each
@@ -3423,6 +3478,18 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                 sub.obs[c] = _annotation_column(
                     [_annotation_value(c, table.get(str(b), {}).get(c))
                      for b in sub.obs_names])
+
+        # ONE NAME PER CELL ACROSS THE COHORT. Libraries from one aligner share one barcode
+        # whitelist, so the same barcode recurs between libraries - about thirty times per pair of
+        # 15,000-cell 10x libraries - and the combined object below refuses duplicates. Objects a
+        # converter had already named `<sample>_<barcode>` (the calibration cohort's) never met
+        # this; objects this tool converts from the aligner's raw matrix always will. So a library
+        # whose names do not carry its prefix gets it here, after step 6's annotations - keyed by
+        # the aligner's barcode - are attached, and the aligner's barcode is kept beside it.
+        names = [str(b) for b in sub.obs_names]
+        if names and not all(b.startswith(f"{s}_") for b in names):
+            sub.obs["barcode"] = names
+            sub.obs_names = [b if b.startswith(f"{s}_") else f"{s}_{b}" for b in names]
 
         per_lib.append({"sample": s, "n_in": int(a.n_obs), "n_kept": int(sub.n_obs)})
         # WHAT THE FLAG MEANS, on the object that carries it. Step 6's verdict reaches the

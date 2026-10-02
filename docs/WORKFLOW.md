@@ -129,6 +129,14 @@ The two forms are not interchangeable, and the diagram marks the difference.
 
 ### Branches worth reading twice
 
+- **Only gene expression is measured.** A matrix carrying other feature types — antibody capture
+  on a CITE-seq run, multiplexing tags, CRISPR guides — has them set aside when it is read
+  (`adapters/matrix.py`, `GENE_EXPRESSION`), counted in `uns`: their counts are not transcripts,
+  and counted as UMIs they inflate every depth, dilute every mitochondrial share, and make a raw
+  matrix look already cell-called.
+- **A full queue is waited for.** A `qsub` refused for a queue's per-user limit backs off and
+  retries (up to `SCQC_QSUB_LIMIT_WAIT_S`, 6 h); any other refusal fails at once.
+
 - **A single cell is not a nucleus, and the route says so from step 1.** The assay decides
   whether this pipeline denoises at all (`modules/01_ambient`, `DENOISE`): nuclei always, single
   cells never - the PI's ruling of 2026-10-02, after the first single-cell cohort went down the

@@ -96,6 +96,13 @@ TOPN = 20
 #: class left out is NOT EVALUATED - C_ribo reads unknown - never scored as 0%.
 UNINFORMATIVE_CLASSES = {"snrna": ("mt", "ribo"), "scrna": ("mt",)}
 
+#: THE LEAST A CLUSTER'S MEDIAN MITO CAN BE AND STILL BE CALLED HIGH (criterion B), per assay.
+#: B is the cohort's p95 of cluster medians, so about one cluster in twenty is "high" whatever the
+#: values are. On healthy whole cells - medians of 2-5% - that labels ordinary clusters, so on
+#: cells B never sits below 10%, the lowest per-cell ceiling this pipeline will apply to a cell
+#: (quality.MITO_BOUNDS["scrna"]). Nuclei keep the p95 alone, as calibrated.
+B_FLOOR_PCT = {"snrna": None, "scrna": 10.0}
+
 #: The profile columns that carry numbers. A CSV carries no types: every cell arrives as a string,
 #: and a string meets `<` against a float with a TypeError - or, where the comparison happens to be
 #: between two strings, sorts lexicographically and returns a plausible wrong answer. An EMPTY cell
@@ -240,11 +247,12 @@ class Thresholds:
     source: str = "PROPOSED from the cohort - not approved"
 
     def __str__(self) -> str:
-        return (f"A < {self.a_umi_frac}x sample median · B > {self.b_pct_mt:g}% mito · "
-                f"C >= {self.c_uninformative:g}% markers"
+        c = ("C cannot fire" if self.c_uninformative is None
+             else f"C >= {self.c_uninformative:g}% markers")
+        return (f"A < {self.a_umi_frac}x sample median · B > {self.b_pct_mt:g}% mito · {c}"
                 f"\n {self.source}")
 
-def propose(profile) -> Thresholds:
+def propose(profile, b_floor=None) -> Thresholds:
     """Derive candidate thresholds from THIS cohort's distributions, the way step 5 does.
 
     `profile` is a list of dicts with umi_frac_of_sample, median_pct_mt, pct_uninformative.
@@ -260,14 +268,24 @@ def propose(profile) -> Thresholds:
         return v[min(len(v) - 1, int(p * len(v)))]
 
     b = round(q(mt, 0.95), 1)
+    b_note = ""
+    if b_floor is not None and b < b_floor:
+        b_note = (f" - floored at {b_floor:g}%, the least a cluster can be and be called high on "
+                  f"this assay (p95 was {b:g}%)")
+        b = float(b_floor)
     # C is proposed at the midpoint of the gap between the bulk and the tail, IF there is a gap.
     # If the distribution is not bimodal the proposal is refused rather than fudged - the same
     # rule the count floors follow.
     nonzero = [x for x in un if x > 0]
     if not nonzero:
-        raise ClusterRefusal(
-            "no cluster has any uninformative markers - criterion C has nothing to threshold. "
-            "Report it as absent rather than picking a cut")
+        # NOT A REFUSAL. No cluster carrying a single uninformative marker in its top list is a
+        # measured result - on healthy whole cells, where only mitochondrial genes count, the
+        # expected one - and stopping the run on it stopped the clean case. C has nothing to
+        # threshold, so it cannot fire, and the report says that rather than a cut.
+        return Thresholds(0.5, b, None,
+                          f"PROPOSED from this cohort - B at the p95 of cluster mito ({b:g}%)"
+                          f"{b_note}; no cluster has any uninformative marker in its top "
+                          f"{TOPN}, so C CANNOT FIRE. NOT approved; A is a convention")
     if q(un, 0.75) == 0 and max(un) > 0:
         # The MIDPOINT of the gap between the bulk and the tail. Check the algebra, not the
         # shape: an expression such as `(0 + m)/2 + m/2` reads as a midpoint and simplifies to
@@ -284,8 +302,8 @@ def propose(profile) -> Thresholds:
                 f"the p95, {c:.0f}% - a percentile, not a valley, so it is a weaker basis than "
                 f"the count floors have")
     return Thresholds(0.5, b, c,
-                      f"PROPOSED from this cohort - B at the p95 of cluster mito ({b:g}%); "
-                      f"{note}. NOT approved; A is a convention, not a measurement")
+                      f"PROPOSED from this cohort - B at the p95 of cluster mito ({b:g}%)"
+                      f"{b_note}; {note}. NOT approved; A is a convention, not a measurement")
 
 @dataclass
 class Flagged:
@@ -331,6 +349,14 @@ def apply_flags(profile, thr: Thresholds, markers_computed=True) -> Flagged:
             # operands under the same name is how a sweep comes to compare two different rules.
             row["C"] = row["C_mt"] = row["C_ribo"] = None
             row["FLAG"] = row["WATCH"] = None
+        elif thr.c_uninformative is None:
+            # No threshold because no cluster in the cohort carried an uninformative marker:
+            # measured, and not met - False, never unknown.
+            row["C"] = row["C_mt"] = row["C_ribo"] = False
+            row["FLAG"] = _or(_and(row["A"], False), _and(row["B"], False))
+            row["WATCH"] = False
+            out.append(row)
+            continue
         else:
             row["C"] = r["pct_uninformative"] >= thr.c_uninformative
             # A missing split is missing too: defaulting it to 0 would report "evaluated, below

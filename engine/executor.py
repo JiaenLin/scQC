@@ -101,6 +101,29 @@ def _log_visibility_s() -> float:
     return _LOG_VISIBILITY_S
 
 
+#: A qsub refused because a QUEUE LIMIT is full, not because the job is wrong. PBS Pro words it
+#: "would exceed queue <q>'s per-user limit" (max_queued) or "Maximum number of jobs already in
+#: queue"; both clear as soon as any of the user's jobs leaves the queue.
+_QSUB_LIMIT_RE = re.compile(r"would exceed|maximum number of jobs", re.I)
+#: How long a task waits for room in a full queue before its submission counts as failed, and the
+#: first pause between attempts (doubling to five minutes).
+_QSUB_LIMIT_WAIT_S = 6 * 3600.0
+_QSUB_LIMIT_FIRST_WAIT_S = 30.0
+
+
+def _qsub_limit_wait_s() -> float:
+    """The full-queue budget, from `SCQC_QSUB_LIMIT_WAIT_S` if it is a usable number."""
+    raw = os.environ.get("SCQC_QSUB_LIMIT_WAIT_S", "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            pass
+    return _QSUB_LIMIT_WAIT_S
+
+
 #: Where a PBS configuration lives when the environment does not carry one.
 _PBS_CONFS = (
     "/etc/pbs.conf",
@@ -375,10 +398,34 @@ class PBSExecutor:
             except FileNotFoundError:
                 pass
 
-        sub = subprocess.run([self.qsub, str(script)], capture_output=True, text=True,
-                             env={**os.environ, **self.pbs_env})
+        # A FULL QUEUE IS A STATE, NOT A FAILURE. A queue's per-user cap counts every job the user
+        # has in it - this run's, and any other run's - so `--jobs` alone cannot keep under it. On
+        # 2026-10-02 two scQC runs submitted in the same minute and two of one run's doublet tasks
+        # were refused "would exceed queue generic's per-user limit": the run failed on a condition
+        # that cleared minutes later (single-cell-harness ADR-0027, Q11). So a limit refusal waits,
+        # backing off, and only a refusal of any other kind - or a queue still full past the
+        # budget - fails the task.
+        limit_deadline = time.time() + _qsub_limit_wait_s()
+        limit_wait, said = _QSUB_LIMIT_FIRST_WAIT_S, False
+        while True:
+            sub = subprocess.run([self.qsub, str(script)], capture_output=True, text=True,
+                                 env={**os.environ, **self.pbs_env})
+            why = (sub.stderr or sub.stdout).strip()
+            if sub.returncode == 0 or not _QSUB_LIMIT_RE.search(why):
+                break
+            if time.time() + limit_wait > limit_deadline:
+                raise TaskFailure(
+                    f"qsub failed: {why}\n    The queue stayed full for "
+                    f"{_qsub_limit_wait_s():.0f}s (SCQC_QSUB_LIMIT_WAIT_S). Nothing is wrong with "
+                    f"the job; rerun when the queue has room - completed tasks are reused.")
+            if not said:
+                print(f"    queue full ({why}); waiting for room, up to "
+                      f"{_qsub_limit_wait_s() / 3600:.1f} h")
+                said = True
+            time.sleep(limit_wait)
+            limit_wait = min(limit_wait * 2, 300.0)
         if sub.returncode != 0:
-            raise TaskFailure(f"qsub failed: {(sub.stderr or sub.stdout).strip()}")
+            raise TaskFailure(f"qsub failed: {why}")
         m = self._JOBID.search(sub.stdout.strip())
         if not m:
             raise TaskFailure(f"could not parse a job id from qsub output: {sub.stdout!r}")

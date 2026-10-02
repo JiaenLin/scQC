@@ -207,22 +207,11 @@ for _label, _rows, _mode in _combos:
     _P.mode = _mode
     _P.decisions = {}
     _ing = {r["sample"]: {"mode": "accept"} for r in _rows}
-    # Apply mode for a library no denoiser touched is REFUSED at build, by design: step 7's first
-    # criterion carries the denoiser's name (engine/graph.py). That refusal is the expected
-    # outcome for that one combination, and any other is a failure.
-    _refuse_expected = _mode == "apply" and all(r.get("assay") == "scrna" and not r.get("ambient_h5")
-                                                for r in _rows)
     try:
         _built = graph.main_stage(_P, "python", {}, _ing)
     except Exception as e:                                            # noqa: BLE001
-        if _refuse_expected and "apply mode is not built" in str(e):
-            continue
         fails.append(f"F: graph does not build for {_label!r} in {_mode} mode: "
                      f"{type(e).__name__}: {e}")
-        continue
-    if _refuse_expected:
-        fails.append(f"F: [{_label}] apply mode BUILT for libraries no denoiser touched; step 7 "
-                     f"would remove them under `fail_not_cellbender_cell`")
         continue
     _keys = {t.key for t in _built}
     for _t in _built:
