@@ -13,6 +13,11 @@ read it.
      full version, which every analysis call record writes down (`versions.python`)
   2  pyarrow is pinned
   3  every third-party module imported anywhere in this repository is provided by a pinned distribution
+  4  the interpreter is 3.12.12, the one the reference analysis environment runs, as measured (harness
+     autodev W014's fresh-prefix build; the reference run's call records write `versions.python` 3.12.12).
+     Until 2026-11-09 the lock named 3.12.13, read from an older run's call records that another
+     environment had written; a fresh build on it then wrote call records differing from the reference's
+     in that one leaf, every table value being identical
 """
 from __future__ import annotations
 
@@ -27,6 +32,8 @@ EXACT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([A-Za-z0-9][A-Za-z0-9
 INDEX = re.compile(r"^--(extra-)?index-url[\s=]+\S+$")
 # An import name that is not its distribution's name.
 DISTRIBUTION = {"yaml": "pyyaml", "sklearn": "scikit-learn", "PIL": "pillow", "skimage": "scikit-image"}
+# The reference analysis environment's interpreter, measured (test 4).
+REFERENCE_PYTHON = "3.12.12"
 # Imported, and deliberately absent from the lock, with the reason.
 NOT_LOCKED = {"pytest": "imported only once a pytest run has already imported it "
                         "(tests/test_audit_ambient.py); the suite runs as scripts"}
@@ -101,6 +108,13 @@ else:
         print(f"  3  every third-party module imported is pinned: "
               f"{', '.join(sorted(m for m in seen if m not in NOT_LOCKED))}"
               f"; not locked, by design: {', '.join(sorted(m for m in seen if m in NOT_LOCKED))}")
+
+# ---- 4. the interpreter is the reference environment's, as measured
+if not py or py.group(1) != REFERENCE_PYTHON:
+    fails.append(f"4: the lock names python {py.group(1) if py else 'nothing'}; the reference analysis "
+                 f"environment runs {REFERENCE_PYTHON} (measured), and every call record writes it down")
+else:
+    print(f"  4  python {py.group(1)}, the reference analysis environment's, as measured")
 
 print("=" * 74)
 if fails:
