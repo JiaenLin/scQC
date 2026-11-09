@@ -127,9 +127,12 @@ Conda R bakes absolute paths in at build time. Moving `env/rdoublet` left the ol
 the `Rscript` binary and 32 other files, and **R could not start at all** — so the doublet step was
 unrunnable, silently, until the next run was attempted. `R_HOME` does not override it.
 
-`conf/env/install_rdoublet.sh` also pins `r-base` and `r-xgboost` but **not**
-`bioconductor-scdblfinder`, so rebuilding to repair a move can change the doublet caller — which
-is not something to do in the middle of measuring a different change. Pin it.
+`conf/env/install_rdoublet.sh` also pinned `r-base` and `r-xgboost` but **not**
+`bioconductor-scdblfinder`, so rebuilding to repair a move could change the doublet caller — which
+is not something to do in the middle of measuring a different change. **Pinned** by the harness's
+autodev wave W014: R 4.3.3, scDblFinder 1.16.0 (Bioconductor 3.18), SingleCellExperiment 1.24.0 and
+xgboost 1.7.6, each read back after the build and refused if different. The rest of that conda
+environment is not pinned (section 7).
 
 ## 4. Smaller, all confirmed
 
@@ -230,4 +233,49 @@ is not something to do in the middle of measuring a different change. Pin it.
 - **`scqc report --samplesheet` reads the delimiter from the file's first line, comment or not**
   (`report/collect.collect`), so a tab-separated samplesheet that opens with a `#` line is read as
   one column, and its design and assay are lost to the rebuilt report.
+
+## 7. The environments, pinned by the harness's autodev wave W014 (2026-11-09)
+
+Fixed, each with a test that fails before it:
+
+- **The denoiser's torch and numpy were never named.** `setup/install_env.sh` installed
+  `cellbender==0.3.2` and let pip choose torch, and `conf/env/install_cs_cb.sh` installed torch with no
+  version at all: on one cohort's first build pip chose torch 2.14.1, so the recipe built a denoiser
+  other than the one this pipeline was calibrated with. The environment is one lock now,
+  `conf/env/cellbender.lock.txt`, built by one recipe, `conf/env/install_cellbender.sh`, which requires
+  cellbender 0.3.2, torch 2.5.1 and numpy 1.26.4 of the lock and refuses any other before anything is
+  built, and refuses an environment holding any other after. `tests/test_the_denoiser_environment_is_pinned.py`.
+- **The core lock built an environment its own suite failed in.** It had no pyarrow, which
+  `tests/test_native_io.py` needs, and it was a workstation's freeze: a notebook stack, a Windows-only
+  package, and not a closure on linux. It is the cluster environment's 55 pins now, interpreter 3.12.13,
+  and `requirements.hpc.lock.txt`, which no script read, is gone.
+  `tests/test_the_core_lock_carries_what_the_suite_needs.py`.
+- **Locks were resolved again at every build.** `pip install -r` re-resolved anything a lock left
+  open. Every lock is applied with `--no-deps` now and every installed version compared with it; a lock
+  that is not exact is refused; an existing environment is checked and never modified; `--check` reads
+  the locks and builds nothing.
+- **A recipe's refusal did not fail the installer.** `install_rdoublet.sh` refusing an xgboost >= 2 was
+  printed as a WARNING, and the final check, which only loads packages, reported the environment ok.
+  Every component whose recipe refuses now fails the installer.
+- **`conf/env/build_reference.sh` defaulted to one cohort's reference** (organism, assembly, release).
+  `SPECIES`, `ASSEMBLY` and `ENSEMBL_RELEASE` are required, and the refusal names all three. Its one
+  bash-4 expansion is gone, so it also runs under macOS's bash 3.2.
+  `tests/test_build_reference_requires_its_reference.py`.
+
+Open:
+
+- **The pin does not make CellBender 0.3.2 able to write its checkpoint.** pyro attaches a weakref
+  (`.unconstrained`) to every parameter it manages; recent torch pickles a parameter's `__dict__`, so
+  `torch.save` raises `cannot pickle 'weakref'` after the last epoch and the posterior step finds no
+  checkpoint. The calibration runs met this in the environment whose versions the lock pins, and saved
+  through a wrapper outside this repository that detaches the attribute around the save.
+  `adapters/cellbender.py` refuses the empty result; it does not work around the cause. Until it does, a
+  denoiser task run inside scQC is expected to fail this way on any torch from 1.13 - an INFERENCE from
+  that record and the wrapper's own diagnosis, not measured inside scQC.
+- **The conda half is not locked.** The R environment pins R, scDblFinder (and with it its
+  Bioconductor release) and xgboost; Matrix, the other CRAN packages and the BLAS are solved when it is
+  built. The interpreters are pinned to the patch, their conda builds are not, and the micromamba the
+  installer fetches is the newest.
+- **Linux x86_64 only, for the denoiser.** Its lock names torch's CUDA 12.1 build, which exists for no
+  other platform; on another, pip stops at torch.
 

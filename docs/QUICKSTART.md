@@ -27,7 +27,8 @@ setup/install_env.sh --prefix ~/scqc-env --all
 ```
 
 Four environments, because the aligner, the denoiser and the analysis stack have mutually
-incompatible pins.
+incompatible pins. Each is built from its lock in `conf/env/` with nothing resolved on the day, and
+checked against it afterwards; `setup/install_env.sh --check --all` reads the locks and builds nothing.
 
 ## 2 · Make a project
 

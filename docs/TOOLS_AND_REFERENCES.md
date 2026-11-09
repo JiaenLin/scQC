@@ -22,7 +22,9 @@ mus_musculus   ensembl_112_filtered  <the index's path> celescope 2.7.3 rna mkre
 That is a worked example of one complete row (tab-separated in the file). It was built by
 `celescope 2.7.3 rna mkref` with STAR 2.7.11a from the Ensembl 112 primary assembly and a GTF
 filtered by `celescope utils mkgtf` with its **default attributes, which retain introns**.
-`conf/env/build_reference.sh` is the build, start to finish.
+`conf/env/build_reference.sh` is the build, start to finish. It takes the organism, assembly and
+release from `SPECIES`, `ASSEMBLY` and `ENSEMBL_RELEASE`, and refuses to start without all three: none
+has a default.
 
 That row records **34,290 genes**, and the count is the point of recording it. A gene count is the
 cheapest available check that an index is the one the registry claims: rebuild from the same
@@ -51,19 +53,30 @@ So the pipeline owns the **recipe**, never the directory:
 
 ```
 conf/env/
-  install_cs_cb.sh            celescope 2.7.3 + cellbender 0.3.2
-  install_rdoublet.sh         R with scDblFinder and scds — the supported route
+  requirements.lock.txt       core: the analysis stack, 55 exact pins, python 3.12.13
+  cellbender.lock.txt         the denoiser: 165 exact pins, python 3.10.22, linux x86_64 only
+  lock.sh                     reads, checks and applies a lock (sourced by the installers)
+  install_cellbender.sh       the denoiser, from its lock: cellbender 0.3.2, torch 2.5.1, numpy 1.26.4
+  install_cs_cb.sh            celescope 2.7.3; its cellbender component calls install_cellbender.sh
+  install_rdoublet.sh         R 4.3.3, scDblFinder 1.16.0, xgboost 1.7.6 — the supported route
   install_scdblfinder.sh      superseded: the same packages built from source
   build_reference.sh          the reference build, start to finish
   conda_pkgs_v2.7.3.txt       the celescope solve
-  requirements.lock.txt       workstation
-  requirements.hpc.lock.txt   HPC
 ```
 
 An environment is a build artifact. It is rebuilt from a lock file, not copied — which is the only
-form in which it is portable to another machine at all. `setup/install_env.sh` builds them under
-the prefix you give it, and skips any component that already exists there, so re-running it cannot
-disturb an environment something is currently using.
+form in which it is portable to another machine at all. A lock holds every package of an
+environment's closure at one exact version, and names its interpreter to the patch;
+`setup/install_env.sh` applies it with `pip install --no-deps`, so nothing is resolved on the day of
+the build, and then compares every installed version with it. `--check` reads the locks and builds
+nothing. The installer builds under the prefix you give it; a component that already exists there is
+checked against its pins and never modified, so re-running it cannot disturb an environment something
+is currently using — and an environment that does not match is refused, not reused.
+
+The denoiser's lock must pin torch 2.5.1 and numpy 1.26.4: the installer refuses a lock naming any other
+version, or naming torch unpinned, before anything is built. The R environment's conda half is pinned
+only where it decides the scores (R, scDblFinder and its Bioconductor release, xgboost); Matrix, the
+other CRAN packages and the BLAS are solved at build time, and the versions solved are printed.
 
 ## One version fact worth carrying
 

@@ -3,10 +3,20 @@
 #
 # Usage:
 #   conf/env/install_rdoublet.sh <env-root>
+#   conf/env/install_rdoublet.sh --check      print the pinned specification; build nothing
 #
 # <env-root> is the directory given to setup/install_env.sh --prefix. The environment name is
-# fixed by the pipeline: <env-root>/rdoublet. If it already exists, only the xgboost pin below is
-# enforced; nothing else is touched.
+# fixed by the pipeline: <env-root>/rdoublet. If it already exists it is checked against the pins
+# below and never modified: an environment something may be using is not changed underneath it,
+# and one holding another version is refused rather than reused.
+#
+# THE PINS. R 4.3.3, scDblFinder 1.16.0 and xgboost 1.7.6 are the versions of the environment that
+# scored the calibration cohort's doublets. scDblFinder 1.16.0 is a Bioconductor 3.18 release, and
+# bioconda's build of it pins every Bioconductor dependency to that release; SingleCellExperiment
+# 1.24.0 is the only version of it the release admits, and is named so the check below can read it.
+# Everything else the solver picks - Matrix, the other CRAN packages, the BLAS - is NOT pinned: the
+# conda half of this environment is not locked, and a build months later can differ there. The
+# versions it did pick are the ones printed at the end; read them before comparing two builds.
 #
 # WHY A SEPARATE ENVIRONMENT. Installing these packages from source into an existing conda R
 # fails on every Bioconductor package containing C or C++ code, all for one reason: a conda R
@@ -39,17 +49,32 @@
 # this note stays because the reasoning behind the pin is worth keeping even once the package
 # that revealed it is gone.
 #
-# 1.7.6 has a cpu_r43 build, matching r-base 4.3 exactly. The verification at the end refuses the
-# install if a 2.x or newer xgboost ends up in the environment anyway.
+# 1.7.6 has a cpu_r43 build, matching r-base 4.3 exactly, and the CPU build is what is asked for: a
+# GPU build chosen on a GPU node would be another scorer. The verification at the end refuses the
+# install if any pinned version is not the one installed, and names the shim if xgboost is >= 2.
 #
 # Environment:
 #   SCQC_CONDA   package manager to use; setup/install_env.sh passes the one it discovered
 
 set -uo pipefail
 
+R_VERSION=4.3.3
+SCDBLFINDER_VERSION=1.16.0          # Bioconductor 3.18
+SCE_VERSION=1.24.0                  # the only one Bioconductor 3.18 admits
+XGBOOST_VERSION=1.7.6
+SPEC=(r-base=$R_VERSION r-matrix "r-xgboost=$XGBOOST_VERSION=cpu_*"
+      bioconductor-scdblfinder=$SCDBLFINDER_VERSION
+      bioconductor-singlecellexperiment=$SCE_VERSION)
+
 ROOT="${1:-}"
+if [ "$ROOT" = "--check" ]; then
+    echo "  rdoublet: conda-forge then bioconda: ${SPEC[*]}"
+    echo "    pinned and checked after the build: R $R_VERSION, scDblFinder $SCDBLFINDER_VERSION," \
+         "SingleCellExperiment $SCE_VERSION, xgboost $XGBOOST_VERSION; Matrix and the rest are not pinned"
+    exit 0
+fi
 if [ -z "$ROOT" ] || [ "$ROOT" = "-h" ] || [ "$ROOT" = "--help" ]; then
-    echo "usage: install_rdoublet.sh <env-root>" >&2
+    echo "usage: install_rdoublet.sh <env-root> | --check" >&2
     exit 2
 fi
 case "$ROOT" in
@@ -85,15 +110,11 @@ if [ -d "$ENVDIR" ] && [ ! -x "$ENVDIR/bin/Rscript" ]; then
     exit 1
 fi
 if [ -d "$ENVDIR" ]; then
-    echo "$ENVDIR exists - enforcing the xgboost pin only"
-    "$MM" install -y -p "$ENVDIR" -c conda-forge -c bioconda \
-        r-xgboost=1.7.6 2>&1 | tail -20
+    echo "$ENVDIR exists - checked against the pins below, not modified"
 else
-    "$MM" create -y -p "$ENVDIR" \
-        -c conda-forge -c bioconda \
-        r-base=4.3 r-matrix r-xgboost=1.7.6 \
-        bioconductor-scdblfinder \
-        bioconductor-singlecellexperiment 2>&1 | tail -25
+    # conda-forge and bioconda alone: a channel list from an rc file must not decide what is solved.
+    "$MM" create -y -p "$ENVDIR" --override-channels \
+        -c conda-forge -c bioconda "${SPEC[@]}" 2>&1 | tail -25
 fi
 
 echo
@@ -102,16 +123,27 @@ echo "=== verify ==="
 # anything else makes the environment report BROKEN for a package the pipeline never calls, and
 # a guard that fails for reasons unrelated to whether the run can proceed is a guard that gets
 # switched off.
-"$ENVDIR/bin/Rscript" -e '
-for (p in c("Matrix","SingleCellExperiment","scDblFinder"))
-  cat(sprintf("  %-24s %s  %s\n", p, requireNamespace(p, quietly=TRUE),
-              tryCatch(as.character(packageVersion(p)), error=function(e) "?")))
-cat(sprintf("  %-24s %s  %s\n", "xgboost", requireNamespace("xgboost", quietly=TRUE),
-            as.character(packageVersion("xgboost"))))
+# Every pinned version is read back from the environment and compared; Matrix and the packages
+# scDblFinder scores through are printed, not compared - they are not pinned (see the header).
+SCQC_R="$R_VERSION" SCQC_SCDBLFINDER="$SCDBLFINDER_VERSION" SCQC_SCE="$SCE_VERSION" \
+SCQC_XGBOOST="$XGBOOST_VERSION" "$ENVDIR/bin/Rscript" -e '
+ver <- function(p) tryCatch(as.character(packageVersion(p)), error = function(e) "not installed")
+want <- c(scDblFinder = Sys.getenv("SCQC_SCDBLFINDER"), SingleCellExperiment = Sys.getenv("SCQC_SCE"),
+          xgboost = Sys.getenv("SCQC_XGBOOST"))
+for (p in c(names(want), "Matrix", "scran", "scuttle", "BiocNeighbors", "BiocSingular", "BiocParallel"))
+  cat(sprintf("  %-24s %s\n", p, ver(p)))
+r <- paste(R.version$major, R.version$minor, sep = ".")
 cat("  R:", R.version.string, "\n")
-v <- packageVersion("xgboost")
-if (v >= "2.0.0") { cat("  FATAL: xgboost", as.character(v),
-                        "silently shims scDblFinder onto a converted API\n"); quit(status=4) }
-' 2>&1 | tail -12
+bad <- if (r != Sys.getenv("SCQC_R")) sprintf("R %s (pinned %s)", r, Sys.getenv("SCQC_R")) else character(0)
+for (p in names(want)) if (ver(p) != want[[p]]) bad <- c(bad, sprintf("%s %s (pinned %s)", p, ver(p), want[[p]]))
+x <- ver("xgboost")
+if (x != "not installed" && package_version(x) >= "2.0.0")
+  cat("  FATAL: xgboost", x, "silently shims scDblFinder onto a converted API\n")
+if (length(bad)) {
+  cat("  REFUSED - not the pinned versions:", paste(bad, collapse = "; "), "\n")
+  quit(status = 5)
+}
+cat("  every pinned version is the one installed\n")
+' 2>&1 | tail -14
 rc=${PIPESTATUS[0]}
 exit "$rc"

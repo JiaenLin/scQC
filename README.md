@@ -31,7 +31,11 @@ setup/install_env.sh --prefix ~/scqc-env --all
 
 Four environments, because the aligner, the denoiser and the analysis stack have mutually
 incompatible pins. Select with `--with-celescope`, `--with-cellbender`, `--with-doublet` or
-`--all`. Requires conda, mamba or micromamba.
+`--all`. Requires conda, mamba or micromamba. Each Python environment is built from a lock in
+`conf/env/` — every package at one exact version, the interpreter's patch included — with
+`pip install --no-deps`, and every installed version is compared with the lock afterwards. The
+denoiser's lock must pin torch 2.5.1 and numpy 1.26.4; any other is refused before anything is built.
+`--check` reads the locks and builds nothing.
 
 ## Run
 

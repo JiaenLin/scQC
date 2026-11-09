@@ -14,6 +14,20 @@
 # Usage:
 #   setup/install_env.sh --prefix ~/scqc-env --all
 #   setup/install_env.sh --prefix ~/scqc-env --with-cellbender --with-doublet
+#   setup/install_env.sh --check --with-cellbender --with-doublet
+#
+# Every Python environment is built from a LOCK in conf/env/ - every package of its closure at
+# one exact version, the interpreter's patch included - applied with `pip install --no-deps`, so
+# nothing is resolved on the day of the build, and every installed version is then compared with
+# the lock. The locks are checked before a package manager is looked for, so a refusal costs
+# nothing; --check does only that, and builds nothing. An environment that already exists is
+# checked against its pins and never modified. A component whose own recipe refuses fails the
+# installer: it is not reported as built.
+#
+#   core        conf/env/requirements.lock.txt
+#   cellbender  conf/env/cellbender.lock.txt; it must pin cellbender 0.3.2, torch 2.5.1 and numpy
+#               1.26.4, and no other version of those is accepted (conf/env/install_cellbender.sh)
+#   rdoublet    R 4.3.3, scDblFinder 1.16.0, xgboost 1.7.6 (conf/env/install_rdoublet.sh)
 #
 # Uses micromamba by default and FETCHES it into --prefix/bin if absent; mamba is used if
 # present, conda only as a last resort. Nothing is installed outside --prefix.
@@ -28,6 +42,7 @@ PREFIX=""
 WITH_CELESCOPE=0
 WITH_CELLBENDER=0
 WITH_DOUBLET=0
+CHECK_ONLY=0
 
 usage() {
     # Print the header block itself rather than a copy of it: a fixed line range goes stale the
@@ -44,12 +59,50 @@ while [[ $# -gt 0 ]]; do
         --with-cellbender) WITH_CELLBENDER=1; shift ;;
         --with-doublet)    WITH_DOUBLET=1; shift ;;
         --all)             WITH_CELESCOPE=1; WITH_CELLBENDER=1; WITH_DOUBLET=1; shift ;;
+        --check)           CHECK_ONLY=1; shift ;;
         -h|--help)         usage 0 ;;
         *) echo "unknown argument: $1" >&2; usage 1 ;;
     esac
 done
 
-[[ -n "$PREFIX" ]] || { echo "ERROR: --prefix is required" >&2; usage 1; }
+# The prefix is validated, and every lock this invocation would apply is checked, BEFORE a package
+# manager is looked for: looking may download one, and building anything before a refusal leaves a
+# half-made prefix behind for a lock that was never going to be accepted.
+if [[ $CHECK_ONLY -eq 0 ]]; then
+    [[ -n "$PREFIX" ]] || { echo "ERROR: --prefix is required" >&2; usage 1; }
+    case "$PREFIX" in
+        /*|~*) : ;;
+        *) echo "ERROR: --prefix must be an absolute path (got '$PREFIX')" >&2; exit 1 ;;
+    esac
+    PREFIX="${PREFIX/#\~/$HOME}"
+    # Environments are NOT relocatable: conda writes the absolute prefix into script shebangs and
+    # into compiled shared-library paths. Moving one afterwards produces an environment whose
+    # executables silently resolve to the wrong interpreter, so the path is fixed at creation.
+    if [[ "$PREFIX" == *" "* ]]; then
+        echo "ERROR: --prefix must not contain spaces; conda shebangs break." >&2
+        exit 1
+    fi
+fi
+
+# shellcheck source=../conf/env/lock.sh
+. "$CONF/lock.sh"
+
+echo "== the locks this invocation applies =="
+check_lock "$CONF/requirements.lock.txt" core || exit 1
+if [[ $WITH_CELLBENDER -eq 1 ]]; then
+    bash "$CONF/install_cellbender.sh" --check || exit 1
+fi
+if [[ $WITH_DOUBLET -eq 1 ]]; then
+    bash "$CONF/install_rdoublet.sh" --check || exit 1
+fi
+if [[ $WITH_CELESCOPE -eq 1 ]]; then
+    echo "  celescope: conf/env/conda_pkgs_v2.7.3.txt and celescope 2.7.3 (conf/env/install_cs_cb.sh)"
+fi
+if [[ $CHECK_ONLY -eq 1 ]]; then
+    echo
+    echo "The locks were checked. Nothing was looked for, fetched or built."
+    exit 0
+fi
 
 # --- find a package manager --------------------------------------------------------------------
 # MICROMAMBA IS THE DEFAULT, and it is fetched rather than required.
@@ -176,12 +229,6 @@ find_via_module() {
     return 1
 }
 
-case "$PREFIX" in
-    /*|~*) : ;;
-    *) echo "ERROR: --prefix must be an absolute path (got '$PREFIX')" >&2; exit 1 ;;
-esac
-PREFIX="${PREFIX/#\~/$HOME}"
-
 # PREFIX is resolved BEFORE the package manager is, because the bootstrap installs into it. The
 # order was the other way round while conda was the fallback and nothing needed --prefix to find
 # a solver.
@@ -223,14 +270,6 @@ esac
 # written outside it, matching what the header promises.
 export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$PREFIX/mamba}"
 
-# Environments are NOT relocatable: conda writes the absolute prefix into script shebangs and
-# into compiled shared-library paths. Moving one afterwards produces an environment whose
-# executables silently resolve to the wrong interpreter, so the path is fixed at creation.
-if [[ "$PREFIX" == *" "* ]]; then
-    echo "ERROR: --prefix must not contain spaces; conda shebangs break." >&2
-    exit 1
-fi
-
 echo "installer : $CONDA  (found via: $CONDA_VIA)"
 echo "version   : $("$CONDA" --version 2>&1 | head -1)"
 echo "prefix    : $PREFIX"
@@ -255,38 +294,31 @@ make_env() {
         return 0
     fi
     echo "  [make] $name (python $py)"
-    "$CONDA" create -y -p "$path" -c conda-forge "python=$py" >/dev/null
+    # conda-forge alone: a channel list from an rc file must not decide which interpreter arrives.
+    "$CONDA" create -y -p "$path" --override-channels -c conda-forge "python=$py" >/dev/null
     created+=("$name")
 }
 
-# The interpreter version a lock file was resolved against, read FROM the lock file.
-#
-# It was hardcoded below as 3.11 while the lock pinned a package requiring >= 3.12, and nothing
-# compared the two. The install died on the first package with a wall of resolver output listing
-# every anndata ever released; `set -e` then aborted before any other component was built, and
-# what remained was an environment that existed as a directory and contained nothing. A lock file
-# is only valid for the interpreter it was resolved against, so that interpreter belongs in it.
-lock_python() {
-    local f="$1" v
-    v="$(sed -n 's/^#[[:space:]]*scqc-python:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$f" | head -1)"
-    if [[ -z "$v" ]]; then
-        echo "ERROR: $f carries no '# scqc-python: X.Y' line." >&2
-        echo "       A lock file without the interpreter it was resolved against cannot be" >&2
-        echo "       installed safely - that version is part of the lock." >&2
-        exit 1
-    fi
-    printf '%s' "$v"
+# True when this invocation created the named environment. Only those receive a lock: one that
+# existed is checked against it and left as it was.
+was_created() {
+    local n
+    for n in ${created[@]+"${created[@]}"}; do
+        [[ "$n" == "$1" ]] && return 0
+    done
+    return 1
 }
 
 # --- core --------------------------------------------------------------------------------------
 echo
 echo "== core =="
-CORE_PY="$(lock_python "$CONF/requirements.lock.txt")"
+CORE_LOCK="$CONF/requirements.lock.txt"
+CORE_PY="$(lock_python "$CORE_LOCK")"
 make_env core "$CORE_PY"
 # Verified BEFORE installing. Conda resolves to the nearest satisfiable build, so the environment
 # that exists is not necessarily the one requested, and the mismatch would otherwise surface as
 # an unreadable dependency error rather than as the version conflict it is.
-GOT_PY="$("$PREFIX/core/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+GOT_PY="$(env_python "$PREFIX/core/bin/python")"
 if [[ "$GOT_PY" != "$CORE_PY" ]]; then
     echo "ERROR: the core environment has python $GOT_PY, but" >&2
     echo "       conf/env/requirements.lock.txt was resolved against $CORE_PY." >&2
@@ -295,15 +327,28 @@ if [[ "$GOT_PY" != "$CORE_PY" ]]; then
     exit 1
 fi
 echo "  python $GOT_PY, matching the lock"
-"$PREFIX/core/bin/pip" install -q --no-input -r "$CONF/requirements.lock.txt"
-echo "  installed from conf/env/requirements.lock.txt"
+if was_created core; then
+    apply_lock "$PREFIX/core/bin/python" "$CORE_LOCK"
+    echo "  installed from conf/env/requirements.lock.txt with --no-deps: nothing was resolved"
+fi
+if ! verify_lock "$PREFIX/core/bin/python" "$CORE_LOCK" core; then
+    echo "ERROR: $PREFIX/core is not the environment conf/env/requirements.lock.txt describes." >&2
+    was_created core || echo "       It existed before this run and was not modified. Remove it and re-run," \
+                            "or build into a new --prefix." >&2
+    exit 1
+fi
 
 # --- optional components -------------------------------------------------------------------------
+# Each component's own recipe checks what it built. Its refusal is RECORDED and fails the installer
+# at the end: the import probe below loads a package whatever its version, so it alone would report
+# an xgboost the recipe refused, or a torch the lock does not name, as ok.
+refused=()
 if [[ $WITH_CELESCOPE -eq 1 ]]; then
     echo
     echo "== celescope =="
     echo "  see conf/env/install_cs_cb.sh - it pins the aligner and its reference tooling"
     SCQC_CONDA="$CONDA" bash "$CONF/install_cs_cb.sh" "$PREFIX" celescope || {
+        refused+=(celescope)
         echo "  WARNING: celescope install failed; core is still usable" >&2
     }
 fi
@@ -311,9 +356,10 @@ fi
 if [[ $WITH_CELLBENDER -eq 1 ]]; then
     echo
     echo "== cellbender =="
-    make_env cellbender 3.10
-    "$PREFIX/cellbender/bin/pip" install -q --no-input cellbender==0.3.2
-    echo "  cellbender 0.3.2"
+    SCQC_CONDA="$CONDA" bash "$CONF/install_cellbender.sh" "$PREFIX" || {
+        refused+=(cellbender)
+        echo "  WARNING: the denoiser environment was refused (above); core is still usable" >&2
+    }
 fi
 
 if [[ $WITH_DOUBLET -eq 1 ]]; then
@@ -323,7 +369,8 @@ if [[ $WITH_DOUBLET -eq 1 ]]; then
     # a compiler the conda R does not ship, and it cannot pin xgboost - and an unpinned xgboost
     # returns scDblFinder scores that look normal but were computed through a deprecation shim.
     SCQC_CONDA="$CONDA" bash "$CONF/install_rdoublet.sh" "$PREFIX" || {
-        echo "  WARNING: scDblFinder install failed; supply your own detector instead" >&2
+        refused+=(rdoublet)
+        echo "  WARNING: scDblFinder install failed or was refused; supply your own detector instead" >&2
     }
 fi
 
@@ -358,7 +405,7 @@ check() {
     fi
 }
 check core       "$PREFIX/core/bin/python"       scanpy anndata pandas numpy
-[[ $WITH_CELLBENDER -eq 1 ]] && check cellbender "$PREFIX/cellbender/bin/python" cellbender
+[[ $WITH_CELLBENDER -eq 1 ]] && check cellbender "$PREFIX/cellbender/bin/python" cellbender torch
 [[ $WITH_CELESCOPE  -eq 1 ]] && check celescope  "$PREFIX/celescope/bin/python"  celescope
 
 # rdoublet is R, so the python import check above does not apply to it. Load the packages that
@@ -379,6 +426,10 @@ if [[ $WITH_DOUBLET -eq 1 ]]; then
         printf '  %-12s BROKEN (scDblFinder did not load)\n' rdoublet; ok=0
     fi
 fi
+for c in ${refused[@]+"${refused[@]}"}; do
+    printf '  %-12s REFUSED by its own recipe: not the environment it pins (read its lines above)\n' "$c"
+    ok=0
+done
 
 cat <<EOF
 

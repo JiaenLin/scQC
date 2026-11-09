@@ -29,20 +29,22 @@
 # there is no point paying that before the gene set is settled; the command to run afterwards is
 # printed at the end.
 #
-# The defaults build Ensembl 112 / GRCm39. They are a shipped EXAMPLE of a complete runnable
-# invocation, not an assumption the pipeline makes: set SPECIES, ASSEMBLY and ENSEMBL_RELEASE for
-# any other Ensembl species or release.
+# THE REFERENCE IS NAMED BY THE CALLER. SPECIES, ASSEMBLY and ENSEMBL_RELEASE are required and none of
+# them has a default; the script refuses before it does anything else, naming all three. They used to
+# default to one calibration cohort's organism, assembly and release, so a project that set none of them
+# was given that cohort's genome without a word - an overfit no word list catches, because a default
+# spells nothing a list would hold.
 #
 # Usage:
-#   conf/env/build_reference.sh --out DIR [--celescope PATH]
-#                               [--expect-genes N] [--matrix-tar FILE]
+#   SPECIES=<species> ASSEMBLY=<assembly> ENSEMBL_RELEASE=<n> \
+#       conf/env/build_reference.sh --out DIR [--celescope PATH] [--expect-genes N] [--matrix-tar FILE]
 #
 # Environment:
+#   SPECIES           Ensembl species directory name, e.g. a lower-case binomial   (required)
+#   ASSEMBLY          the assembly name in Ensembl's file names                     (required)
+#   ENSEMBL_RELEASE   the release number, a whole number                           (required)
 #   SCQC_ENV_ROOT     where setup/install_env.sh put the environments; --celescope defaults to
 #                     $SCQC_ENV_ROOT/celescope/bin/celescope, then to celescope on PATH
-#   SPECIES           Ensembl species directory name   (default mus_musculus)
-#   ASSEMBLY          assembly name in the filename    (default GRCm39)
-#   ENSEMBL_RELEASE   release number                   (default 112)
 
 set -uo pipefail
 
@@ -51,20 +53,18 @@ CELESCOPE=""
 EXPECT_GENES=""
 MATRIX_TAR=""
 
-SPECIES="${SPECIES:-mus_musculus}"
-ASSEMBLY="${ASSEMBLY:-GRCm39}"
-ENSEMBL_RELEASE="${ENSEMBL_RELEASE:-112}"
-
 usage() {
     cat <<'USAGE'
-usage: build_reference.sh --out DIR [--celescope PATH] [--expect-genes N] [--matrix-tar FILE]
+usage: SPECIES=<species> ASSEMBLY=<assembly> ENSEMBL_RELEASE=<n> \
+           build_reference.sh --out DIR [--celescope PATH] [--expect-genes N] [--matrix-tar FILE]
 
   --out DIR           where to build the reference (created if absent)
   --celescope PATH    the celescope executable; defaults to $SCQC_ENV_ROOT/celescope/bin/celescope
   --expect-genes N    assert the filtered GTF contains exactly N genes
   --matrix-tar FILE   a counts-matrix archive containing features.tsv.gz, compared gene by gene
 
-  SPECIES / ASSEMBLY / ENSEMBL_RELEASE override the Ensembl build (default mus_musculus GRCm39 112).
+  SPECIES, ASSEMBLY and ENSEMBL_RELEASE name the Ensembl build: the species directory, the assembly
+  in the file names, and the release number. All three are required; none has a default.
 USAGE
     exit "${1:-0}"
 }
@@ -79,6 +79,25 @@ while [ $# -gt 0 ]; do
         *) echo "unknown argument: $1" >&2; usage 1 ;;
     esac
 done
+
+# Before anything is looked for, made or fetched.
+missing=""
+for v in SPECIES ASSEMBLY ENSEMBL_RELEASE; do
+    [ -n "${!v:-}" ] || missing="$missing $v"
+done
+if [ -n "$missing" ]; then
+    echo "ERROR: the reference is named by SPECIES, ASSEMBLY and ENSEMBL_RELEASE, and none of them" >&2
+    echo "       has a default. Not set:$missing." >&2
+    echo "       e.g. SPECIES=<ensembl species directory> ASSEMBLY=<assembly> ENSEMBL_RELEASE=<n> \\" >&2
+    echo "            $0 --out DIR" >&2
+    exit 2
+fi
+case "$ENSEMBL_RELEASE" in
+    *[!0-9]*)
+        echo "ERROR: ENSEMBL_RELEASE must be a whole number (got '$ENSEMBL_RELEASE'). The reference is" >&2
+        echo "       named by SPECIES, ASSEMBLY and ENSEMBL_RELEASE." >&2
+        exit 2 ;;
+esac
 
 [ -n "$OUT" ] || { echo "ERROR: --out is required" >&2; usage 1; }
 
@@ -122,7 +141,8 @@ mkdir -p "$OUT" || exit 1
 cd "$OUT" || exit 1
 
 SP_LC="$(printf '%s' "$SPECIES" | tr '[:upper:]' '[:lower:]')"
-SP_CAP="${SP_LC^}"
+# Upper-cases the first letter portably: `${SP_LC^}` is bash 4, and macOS ships bash 3.2.
+SP_CAP="$(printf '%s' "$SP_LC" | awk '{ print toupper(substr($0, 1, 1)) substr($0, 2) }')"
 
 BASE="https://ftp.ensembl.org/pub/release-${ENSEMBL_RELEASE}"
 GTF="${SP_CAP}.${ASSEMBLY}.${ENSEMBL_RELEASE}.gtf"

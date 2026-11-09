@@ -6,7 +6,10 @@
 #
 # <env-root> is the directory given to setup/install_env.sh --prefix. Environment names are fixed
 # by the pipeline: <env-root>/celescope and <env-root>/cellbender. Naming no component builds
-# both. An environment that already exists is left alone.
+# both. An existing celescope environment is left alone. The cellbender environment is built - or,
+# when it exists, checked and left alone - by conf/env/install_cellbender.sh, from its lock: that is
+# the one recipe for the denoiser. This script used to carry a second one, which installed whatever
+# torch the index held.
 #
 # WHY TWO ENVIRONMENTS. The aligner's solve pins an older numpy than the denoiser's torch build
 # tolerates. One environment holding both resolves only by relaxing a pin, and a relaxed pin is
@@ -30,7 +33,6 @@
 #
 # Environment:
 #   SCQC_CONDA        package manager to use; setup/install_env.sh passes the one it discovered
-#   TORCH_INDEX_URL   wheel index for torch (default the CUDA 12.1 build)
 
 set -uo pipefail
 
@@ -123,25 +125,13 @@ if [ $DO_CELESCOPE -eq 1 ]; then
 fi
 
 # ------------------------------------------------------------------ CellBender
+# The torch wheel has to match the CUDA runtime of the machine that will RUN the denoiser. The lock
+# names the CUDA 12.1 build, which works against any 12.x driver stack.
 CB="$ROOT/cellbender"
+CB_REFUSED=0
 if [ $DO_CELLBENDER -eq 1 ]; then
-    if [ ! -d "$CB" ]; then
-        echo; echo "--- creating cellbender env (python 3.9, per the upstream dev install docs) ---"
-        "$MM" create -y -p "$CB" -c conda-forge python=3.9 pytables
-
-        # The torch wheel has to match the CUDA runtime on the machine that will RUN the denoiser,
-        # which is not necessarily the machine installing it. The CUDA 12.1 build works against any
-        # 12.x driver stack; override TORCH_INDEX_URL for a different one, or point it at plain
-        # PyPI for a CPU-only install.
-        TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
-        echo; echo "--- torch from $TORCH_INDEX_URL ---"
-        "$CB/bin/pip" install --no-cache-dir torch --index-url "$TORCH_INDEX_URL"
-
-        echo; echo "--- cellbender 0.3.2 ---"
-        "$CB/bin/pip" install --no-cache-dir "cellbender==0.3.2"
-    else
-        echo; echo "--- cellbender env already present at $CB, skipping create ---"
-    fi
+    echo; echo "--- cellbender: conf/env/install_cellbender.sh, from conf/env/cellbender.lock.txt ---"
+    SCQC_CONDA="$MM" bash "$HERE/install_cellbender.sh" "$ROOT" || CB_REFUSED=1
 fi
 
 # ------------------------------------------------------------------ VERIFY
@@ -175,6 +165,7 @@ fi
 if [ $DO_CELLBENDER -eq 1 ]; then
     echo
     echo "--- CellBender ---"
+    chk "the environment is the one its lock describes (conf/env/install_cellbender.sh)" "$CB_REFUSED"
     CV=$("$CB/bin/cellbender" --version 2>&1 | head -1); echo "  cellbender --version: $CV"
     "$CB/bin/cellbender" remove-background --help >/dev/null 2>&1; chk "cellbender remove-background --help runs" $?
     "$CB/bin/python" -c "
