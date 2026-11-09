@@ -15,6 +15,7 @@
 #   setup/install_env.sh --prefix ~/scqc-env --all
 #   setup/install_env.sh --prefix ~/scqc-env --with-cellbender --with-doublet
 #   setup/install_env.sh --check --with-cellbender --with-doublet
+#   setup/install_env.sh --prefix ~/scqc-env --repair     (rebuild what an interrupted build left)
 #
 # Every Python environment is built from a LOCK in conf/env/ - every package of its closure at
 # one exact version, the interpreter's patch included - applied with `pip install --no-deps`, so
@@ -23,6 +24,11 @@
 # nothing; --check does only that, and builds nothing. An environment that already exists is
 # checked against its pins and never modified. A component whose own recipe refuses fails the
 # installer: it is not reported as built.
+#
+# An interrupted build leaves an environment directory holding conda-meta/ and no interpreter. It is
+# refused, and the refusal names --repair: with --repair such a directory - conda-meta/ present, the
+# interpreter absent, nothing else - is removed, rebuilt from its lock, and the removal is printed.
+# A directory without conda-meta/ is never removed: it is not known to be a build this made.
 #
 #   core        conf/env/requirements.lock.txt
 #   cellbender  conf/env/cellbender.lock.txt; it must pin cellbender 0.3.2, torch 2.5.1 and numpy
@@ -44,6 +50,7 @@ WITH_CELESCOPE=0
 WITH_CELLBENDER=0
 WITH_DOUBLET=0
 CHECK_ONLY=0
+REPAIR=0
 
 usage() {
     # Print the header block itself rather than a copy of it: a fixed line range goes stale the
@@ -61,6 +68,7 @@ while [[ $# -gt 0 ]]; do
         --with-doublet)    WITH_DOUBLET=1; shift ;;
         --all)             WITH_CELESCOPE=1; WITH_CELLBENDER=1; WITH_DOUBLET=1; shift ;;
         --check)           CHECK_ONLY=1; shift ;;
+        --repair)          REPAIR=1; shift ;;
         -h|--help)         usage 0 ;;
         *) echo "unknown argument: $1" >&2; usage 1 ;;
     esac
@@ -280,17 +288,31 @@ created=()
 
 make_env() {
     local name="$1" py="$2" path="$PREFIX/$1"
-    if [[ -d "$path" ]]; then
+    if [[ -d "$path" && ! -x "$path/bin/python" ]]; then
         # EXISTING IS NOT COMPLETE. A build killed mid-transaction leaves the directory with a
         # conda-meta/ and no interpreter, and this used to say "[skip] already exists" and then
         # die on the missing bin/python one line later, with exit 127 and no word about why - on
-        # every rerun, for ever (single-cell-harness ADR-0027, PBS 720421). Refused, not removed:
-        # an installer does not delete what it did not verify it made.
-        if [[ ! -x "$path/bin/python" ]]; then
+        # every rerun, for ever (single-cell-harness ADR-0027, PBS 720421). Refused by default:
+        # an installer does not delete what it did not verify it made. With --repair (harness
+        # autodev W020, B1-108) the one shape an interrupted build leaves - conda-meta/ present,
+        # the interpreter absent - is removed and rebuilt, and the removal is printed; the refusal
+        # had sent every reader to type the same rm -rf by hand.
+        if [[ $REPAIR -eq 1 && -d "$path/conda-meta" ]]; then
+            echo "  [repair] $path holds conda-meta/ and no bin/python - the remains of an interrupted build;"
+            echo "           removed, and $name is built again from its lock"
+            rm -rf "$path"
+        else
             echo "ERROR: $path exists but has no bin/python - the remains of an interrupted build." >&2
-            echo "       Remove it and run again:  rm -rf '$path'" >&2
+            if [[ -d "$path/conda-meta" ]]; then
+                echo "       Run again with --repair to remove and rebuild it, or remove it yourself:  rm -rf '$path'" >&2
+            else
+                echo "       It holds no conda-meta/, so it is not known to be a build this installer made, and" >&2
+                echo "       --repair will not remove it. Move it aside and run again." >&2
+            fi
             exit 1
         fi
+    fi
+    if [[ -d "$path" ]]; then
         echo "  [skip] $name already exists at $path"
         return 0
     fi
@@ -348,7 +370,7 @@ if [[ $WITH_CELESCOPE -eq 1 ]]; then
     echo
     echo "== celescope =="
     echo "  see conf/env/install_cs_cb.sh - it pins the aligner and its reference tooling"
-    SCQC_CONDA="$CONDA" bash "$CONF/install_cs_cb.sh" "$PREFIX" celescope || {
+    SCQC_CONDA="$CONDA" SCQC_REPAIR="$REPAIR" bash "$CONF/install_cs_cb.sh" "$PREFIX" celescope || {
         refused+=(celescope)
         echo "  WARNING: celescope install failed; core is still usable" >&2
     }
@@ -357,7 +379,7 @@ fi
 if [[ $WITH_CELLBENDER -eq 1 ]]; then
     echo
     echo "== cellbender =="
-    SCQC_CONDA="$CONDA" bash "$CONF/install_cellbender.sh" "$PREFIX" || {
+    SCQC_CONDA="$CONDA" SCQC_REPAIR="$REPAIR" bash "$CONF/install_cellbender.sh" "$PREFIX" || {
         refused+=(cellbender)
         echo "  WARNING: the denoiser environment was refused (above); core is still usable" >&2
     }
@@ -369,7 +391,7 @@ if [[ $WITH_DOUBLET -eq 1 ]]; then
     # install_rdoublet.sh, not install_scdblfinder.sh: the latter builds from source, which needs
     # a compiler the conda R does not ship, and it cannot pin xgboost - and an unpinned xgboost
     # returns scDblFinder scores that look normal but were computed through a deprecation shim.
-    SCQC_CONDA="$CONDA" bash "$CONF/install_rdoublet.sh" "$PREFIX" || {
+    SCQC_CONDA="$CONDA" SCQC_REPAIR="$REPAIR" bash "$CONF/install_rdoublet.sh" "$PREFIX" || {
         refused+=(rdoublet)
         echo "  WARNING: scDblFinder install failed or was refused; supply your own detector instead" >&2
     }

@@ -119,11 +119,24 @@ export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$ROOT/mamba}"
 echo "package manager: $MM  ($("$MM" --version 2>&1 | head -1))"
 
 if [ -d "$ENVDIR" ] && [ ! -x "$ENVDIR/bin/Rscript" ]; then
-    # EXISTING IS NOT COMPLETE (single-cell-harness ADR-0027): a build killed mid-transaction
-    # leaves the directory without its interpreter, and "exists" then skipped the build for ever.
-    echo "ERROR: $ENVDIR exists but has no bin/Rscript - the remains of an interrupted build." >&2
-    echo "       Remove it and run again:  rm -rf '$ENVDIR'" >&2
-    exit 1
+    # EXISTING IS NOT COMPLETE (single-cell-harness ADR-0027): a build killed mid-transaction leaves the
+    # directory without its interpreter. Refused by default; with setup/install_env.sh --repair
+    # (SCQC_REPAIR=1; harness autodev W020, B1-108) the shape an interrupted build leaves - conda-meta/
+    # present, the interpreter absent - is removed and built again, and the removal is printed.
+    if [ "${SCQC_REPAIR:-0}" = "1" ] && [ -d "$ENVDIR/conda-meta" ]; then
+        echo "  [repair] $ENVDIR holds conda-meta/ and no bin/Rscript - the remains of an interrupted build;"
+        echo "           removed, and it is built again"
+        rm -rf "$ENVDIR"
+    else
+        echo "ERROR: $ENVDIR exists but has no bin/Rscript - the remains of an interrupted build." >&2
+        if [ -d "$ENVDIR/conda-meta" ]; then
+            echo "       Run setup/install_env.sh again with --repair to remove and rebuild it, or remove it" >&2
+            echo "       yourself:  rm -rf '$ENVDIR'" >&2
+        else
+            echo "       It holds no conda-meta/, so it is not known to be a build; move it aside and run again." >&2
+        fi
+        exit 1
+    fi
 fi
 made=0
 if [ -d "$ENVDIR" ]; then

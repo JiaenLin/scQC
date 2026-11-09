@@ -35,7 +35,8 @@ incompatible pins. Select with `--with-celescope`, `--with-cellbender`, `--with-
 `conf/env/` — every package at one exact version, the interpreter's patch included — with
 `pip install --no-deps`, and every installed version is compared with the lock afterwards. The
 denoiser's lock must pin torch 2.5.1 and numpy 1.26.4; any other is refused before anything is built.
-`--check` reads the locks and builds nothing.
+`--check` reads the locks and builds nothing. An environment an interrupted build left behind -
+`conda-meta/` and no interpreter - is refused; `--repair` removes it and builds it again.
 
 ## Run
 
