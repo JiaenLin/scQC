@@ -13,6 +13,14 @@ It also caught its first defect on the day it was written, and not in the docume
 declared `min_mode_observations=8` in its signature and told the reader "default 30" in its own
 docstring, four lines apart. Whichever a reader believed, one of them was wrong.
 
+THE CODE SIDE IS THE IMPORTED VALUE, NOT ITS SPELLING (harness autodev W020, B1-107). This compared
+the document with the LITERAL TEXT of each assignment - `UMI_BOUNDS = {"snrna": (200, 1000), ...}`
+as written - and with a second copy of the value typed into this file. Changing a threshold then
+took three edits (the module, the document, and this test), and a change of spelling with no
+change of value (a reformatted dict, a comment) failed it. Now each value is read from the
+imported module, rendered the way the document writes it, and looked for in the document: edit
+the constant and the document together and this passes unedited; edit one alone and it fails.
+
 WHAT IT CANNOT DO
 
 It checks the NUMBERS, not the prose. A document can quote every constant correctly and still
@@ -22,6 +30,8 @@ cheapest and commonest kind of drift: a value edited in one place and not the ot
 
 from __future__ import annotations
 
+import importlib.util
+import inspect
 import re
 import sys
 from pathlib import Path
@@ -40,89 +50,101 @@ if not DOC.exists():
 doc = DOC.read_text(encoding="utf-8")
 
 
-def src(rel: str) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8")
+def load(rel: str):
+    """The module at `rel`, imported the way the pipeline imports its step modules."""
+    lib = str(ROOT / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    spec = importlib.util.spec_from_file_location(f"docs_check_{Path(rel).stem}", ROOT / rel)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def const(rel: str, name: str) -> str | None:
-    """A module-level constant's literal, as written, with any trailing comment removed."""
-    m = re.search(rf"^{name}\s*=\s*(.+?)(?:\s*#.*)?$", src(rel), re.M)
-    return m.group(1).strip() if m else None
+Q = load("modules/05_quality/quality.py")
+D = load("modules/04_doublets/doublet_health.py")
+L = load("modules/03_light_floor/light_floor.py")
+C = load("modules/06_cluster_check/cluster_flags.py")
+from adapters import scanpy_ops as S  # noqa: E402
+from engine import declare  # noqa: E402
+
+#: find_valley's procedure parameters, as its signature declares them.
+FV = {k: v.default for k, v in inspect.signature(S.find_valley).parameters.items()
+      if v.default is not inspect.Parameter.empty}
 
 
-Q = "modules/05_quality/quality.py"
-D = "modules/04_doublets/doublet_health.py"
-L = "modules/03_light_floor/light_floor.py"
-C = "modules/06_cluster_check/cluster_flags.py"
-S = "adapters/scanpy_ops.py"
+def counts(lo, hi) -> str:
+    """A count range as the document writes it: **200 – 1,000**."""
+    return f"**{int(lo):,} – {int(hi):,}**"
 
-#: (what it is, is it still that in the code, is it still that in the document)
+
+def percents(lo, hi) -> str:
+    """A percentage range as the document writes it: **5 – 10%**."""
+    return f"**{lo:g} – {hi:g}%**"
+
+
+def per_assay(table, render) -> bool:
+    """Every assay's value is in the document - one assay's alone would bound the other unseen."""
+    return bool(table) and all(render(*v) in doc for v in table.values())
+
+
+#: (what it is, the document states the code's value)
 CHECKS = [
     # Per assay since 2026-10-02: the nuclear pair is measured, the whole-cell pair declared,
     # and the document has to carry both or a reader of it bounds cells as nuclei.
-    ("UMI bounds",
-     const(Q, "UMI_BOUNDS") == '{"snrna": (200, 1000), "scrna": (500, 2000)}',
-     "**200 – 1,000**" in doc and "**500 – 2,000**" in doc),
-    ("gene bounds",
-     const(Q, "GENE_BOUNDS") == '{"snrna": (100, 600), "scrna": (250, 1500)}',
-     "**100 – 600**" in doc and "**250 – 1,500**" in doc),
-    ("valley spread review", const(Q, "SPREAD_REVIEW") == "2.0", "**2.0×**" in doc),
-    ("Tukey multiplier", const(Q, "IQR_MULT") == "1.5", "1.5 x IQR" in doc),
-    ("mitochondrial bounds",
-     const(Q, "MITO_BOUNDS") == '{"snrna": (5.0, 10.0), "scrna": (10.0, 30.0)}',
-     "**5 – 10%**" in doc and "**10 – 30%**" in doc),
-    # k is DERIVED per cohort on whole cells and DECLARED on nuclei, so what must stay true is
-    # that the document says which is which, and that the sanity limits on the derived value
-    # match the code. A single global k constant would be neither and is still refused.
+    ("UMI bounds", per_assay(Q.UMI_BOUNDS, counts)),
+    ("gene bounds", per_assay(Q.GENE_BOUNDS, counts)),
+    ("valley spread review", f"**{Q.SPREAD_REVIEW:.1f}×**" in doc),
+    ("Tukey multiplier", f"{Q.IQR_MULT:g} x IQR" in doc),
+    ("mitochondrial bounds", per_assay(Q.MITO_BOUNDS, percents)),
+    # k is DERIVED per cohort where the table holds None and DECLARED where it holds a number, so
+    # what must stay true is that the document says which is which, for every assay.
     ("MAD k is per assay, derived or declared",
-     const(Q, "MITO_MAD_K") == '{"snrna": 3, "scrna": None}'
-     and "def select_mad_k" in src(Q),
-     '`MITO_MAD_K["snrna"] = 3`' in doc and "**derived** from the cohort" in doc),
-    ("MAD k sanity limits", const(Q, "MAD_K_BOUNDS") == "(2, 10)",
-     "`MAD_K_BOUNDS = (2, 10)`" in doc),
-    ("MAD scale factor", const(Q, "MAD_SCALE") == "1.4826", "1.4826" in doc),
-    ("mito derivation max", const(S, "MITO_DERIVATION_MAX") == "50.0",
-     "`MITO_DERIVATION_MAX = 50.0`" in doc),
-    ("light floor default", const(L, "DEFAULT_FLOOR") == "200", "defaulting to **200**" in doc),
-    ("doublet silence", const(D, "ZERO_RATE") == "0.005", "< 0.5%" in doc),
-    ("doublet rate imposed", const(D, "SPREAD_IMPOSED") == "1.05", "1.05×" in doc),
-    ("doublet rate unstable", const(D, "SPREAD_UNSTABLE") == "5.0", "> 5×" in doc),
-    ("design differential", const(D, "DESIGN_REFUSE") == "3.0", "≥ 3×" in doc),
-    ("materiality floor", const(D, "MATERIAL") == "0.01", "≥ 1%" in doc),
-    ("cluster marker top-N", const(C, "TOPN") == "20", "top-20 markers" in doc),
-    ("KDE grid size", "grid_size=512" in src(S), "**512**" in doc),
-    ("valley depth", "min_valley_depth=0.10" in src(S), "`min_valley_depth = 0.10`" in doc),
-    ("mode separation", "min_mode_separation_log10=0.30" in src(S),
-     "`min_mode_separation_log10 = 0.30`" in doc),
-    ("bandwidth stability", "bw_stability_factor=1.5" in src(S),
-     "`bw_stability_factor = 1.5`" in doc),
-    ("KDE bandwidth rule", 'bw_method="scott"' in src(S), "Scott's bandwidth" in doc),
+     callable(getattr(Q, "select_mad_k", None)) and all(
+         ("**derived** from the cohort" in doc) if k is None
+         else (f'`MITO_MAD_K["{a}"] = {k}`' in doc)
+         for a, k in Q.MITO_MAD_K.items())),
+    ("MAD k sanity limits", f"`MAD_K_BOUNDS = {tuple(Q.MAD_K_BOUNDS)}`" in doc),
+    ("MAD scale factor", f"{Q.MAD_SCALE:g}" in doc),
+    ("mito derivation max", f"`MITO_DERIVATION_MAX = {S.MITO_DERIVATION_MAX!r}`" in doc),
+    ("light floor default", f"defaulting to **{L.DEFAULT_FLOOR}**" in doc),
+    ("doublet silence", f"< {100 * D.ZERO_RATE:g}%" in doc),
+    ("doublet rate imposed", f"{D.SPREAD_IMPOSED:g}×" in doc),
+    ("doublet rate unstable", f"> {D.SPREAD_UNSTABLE:g}×" in doc),
+    ("design differential", f"≥ {D.DESIGN_REFUSE:g}×" in doc),
+    ("materiality floor", f"≥ {100 * D.MATERIAL:g}%" in doc),
+    ("cluster marker top-N", f"top-{C.TOPN} markers" in doc),
+    ("KDE grid size", f"**{FV['grid_size']}**" in doc),
+    ("valley depth", f"`min_valley_depth = {FV['min_valley_depth']:.2f}`" in doc),
+    ("mode separation",
+     f"`min_mode_separation_log10 = {FV['min_mode_separation_log10']:.2f}`" in doc),
+    ("bandwidth stability", f"`bw_stability_factor = {FV['bw_stability_factor']:g}`" in doc),
+    ("KDE bandwidth rule", f"{str(FV['bw_method']).capitalize()}'s bandwidth" in doc),
 ]
 
-APPLIED = ("fail_not_cellbender_cell", "fail_umi_floor", "fail_gene_floor",
-           "fail_mito_ceiling", "fail_doublet")
-CHECKS.append(("applied criteria", all(c in src(S) for c in APPLIED),
-               all(c in doc for c in APPLIED)))
+#: The criteria step 7 applies on the denoised route, from the tool's own declaration.
+APPLIED = [c for c in declare.CRITERIA if c in ("fail_not_cellbender_cell", "fail_umi_floor",
+                                                "fail_gene_floor", "fail_mito_ceiling",
+                                                "fail_doublet")]
+CHECKS.append(("applied criteria", len(APPLIED) == 5 and all(c in doc for c in APPLIED)))
 
-for name, in_code, in_doc in CHECKS:
-    ok = bool(in_code) and bool(in_doc)
-    print(f"  {'ok    ' if ok else 'DRIFT '} {name:<22}"
-          f"code {'yes' if in_code else 'NO '}   document {'yes' if in_doc else 'NO '}")
+for name, ok in CHECKS:
+    ok = bool(ok)
+    print(f"  {'ok    ' if ok else 'DRIFT '} {name}")
     if not ok:
         fails.append(
-            f"{name}: the module says {'yes' if in_code else 'something else'} and the document "
-            f"says {'yes' if in_doc else 'something else'}. One of them has been edited without "
-            f"the other, and a reader cannot tell which.")
+            f"{name}: the document does not state the value the module holds. One of them has "
+            f"been edited without the other, and a reader cannot tell which.")
 
 # A signature and its own docstring must agree, which is the drift that needs no second file.
-sig = re.search(r"min_mode_observations=(\d+)", src(S))
-says = re.search(r"`min_mode_observations` of them \(default (\d+)\)", src(S))
-same = bool(sig and says and sig.group(1) == says.group(1))
+sig = FV.get("min_mode_observations")
+says = re.search(r"`min_mode_observations` of them \(default (\d+)\)", S.find_valley.__doc__ or "")
+same = bool(sig is not None and says and int(says.group(1)) == int(sig))
 print(f"  {'ok    ' if same else 'DRIFT '} {'signature vs docstring':<22}"
-      f"signature {sig.group(1) if sig else '?'}   docstring {says.group(1) if says else '?'}")
+      f"signature {sig if sig is not None else '?'}   docstring {says.group(1) if says else '?'}")
 if not same:
-    fails.append(f"find_valley declares min_mode_observations="
-                 f"{sig.group(1) if sig else '?'} and its docstring says "
+    fails.append(f"find_valley declares min_mode_observations={sig} and its docstring says "
                  f"{says.group(1) if says else '?'}.")
 
 # The README must point at each document, or nobody finds it. And a document the README

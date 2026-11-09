@@ -24,7 +24,8 @@ machine, exercises a filesystem where `exists()` is always the truth.
 
 HOW THIS SUITE MODELS IT, without needing NFS: a fake path whose `exists()` keeps returning False
 until the parent directory has been LISTED. That is the cache's one observable property, and it is
-enough to tell a real retry from a sleep. All four checks below fail against the old loop.
+enough to tell a real retry from a sleep. Sections B and C run the real wait under that model;
+section D shows the model itself separates the two loops.
 """
 
 from __future__ import annotations
@@ -63,30 +64,108 @@ check("a malformed override falls back instead of stopping the run",
 del os.environ["SCQC_LOG_VISIBILITY_S"]
 
 # ------------------------------------------------------- B. the wait LISTS the parent, not stats
+#
+# BEHAVIOUR, NOT SOURCE TEXT (harness autodev W020, B1-107). This section split executor.py on the
+# words of a COMMENT - "WAITING FOR THE LOG TO BECOME VISIBLE" - and looked for `os.listdir(...)`
+# in the text after it: a reworded comment failed it, and a listing that never ran passed it. Now
+# the real `PBSExecutor.shell()` runs against a stand-in qsub and qstat, under a filesystem model
+# in which the finished job's log stays INVISIBLE until its parent directory has been listed - the
+# negative dentry cache's one observable property (section D) - so what is checked is what the
+# wait does.
 
-# The source is the subject here: the behaviour needs a real NFS mount to exercise end to end, and
-# what regressed is whether the parent is listed at all.
-_src = (ROOT / "engine" / "executor.py").read_text(encoding="utf-8")
-_wait = _src.split("WAITING FOR THE LOG TO BECOME VISIBLE", 1)
-check("the wait is documented as a visibility wait", len(_wait) == 2)
-if len(_wait) == 2:
-    body = _wait[1].split("out = log.read_text", 1)[0]
-    check("the retry LISTS the parent directory", "os.listdir(log.parent)" in body,
-          "a stat()-only retry re-reads one cached answer and asks the server nothing")
-    check("...and it is not the old fixed-count loop", "for _ in range(30)" not in body)
-    check("the budget is used rather than a hardcoded count", "_log_visibility_s()" in body)
-    check("a directory listing error does not become the task's failure", "except OSError" in body)
+import contextlib  # noqa: E402
+import pathlib as _pl  # noqa: E402
+import tempfile  # noqa: E402
 
-# ------------------------------------------------------- C. the failure reports, does not diagnose
+from engine.task import TaskFailure  # noqa: E402
 
-check("the message no longer asserts the job died before its first line",
-      "died before its first line - a rejected" not in _src
-      or "may genuinely" in _src,
-      "an unconditional diagnosis contradicts an Exit_status the same function holds")
-check("it distinguishes 'not visible' from 'did not run'",
-      "not visible after" in _src and "Exit_status" in _src)
-check("it names the override so a slower filesystem has a route",
-      "SCQC_LOG_VISIBILITY_S" in _src)
+
+def _executor(td, exit_line=" Exit_status = 0"):
+    """A PBSExecutor whose qsub runs the script at once and whose qstat says it finished."""
+    qsub = td / "qsub"
+    qsub.write_text('#!/bin/bash\nbash "$1" >/dev/null 2>&1; echo "4242.fake"\n')
+    qstat = td / "qstat"
+    qstat.write_text(f"#!/bin/bash\necho ' job_state = F'\necho '{exit_line}'\n")
+    for f in (qsub, qstat):
+        f.chmod(0o755)
+    e = ex.PBSExecutor.__new__(ex.PBSExecutor)
+    e.queue, e.project, e.gpu_queue, e.poll_s = None, None, None, 1
+    e.cpus, e.memory_gb, e.walltime_h, e.gpu = 1, 1, 1, False
+    e._limits_by_queue, e._limits = {}, None
+    e.qsub, e.qstat, e.pbs_env = str(qsub), str(qstat), {}
+    return e
+
+
+@contextlib.contextmanager
+def _cached(log, visible_after_listing=True):
+    """`log.exists()` answers False until `os.listdir(log.parent)` has run (if ever)."""
+    state = {"listed": 0, "stats": 0}
+    real_listdir, real_exists = ex.os.listdir, _pl.Path.exists
+
+    def listdir(path="."):
+        if _pl.Path(path) == log.parent:
+            state["listed"] += 1
+        return real_listdir(path)
+
+    def exists(self, *a, **k):
+        if self == log:
+            state["stats"] += 1
+            if not (visible_after_listing and state["listed"]):
+                return False
+        return real_exists(self, *a, **k)
+
+    ex.os.listdir, _pl.Path.exists = listdir, exists
+    try:
+        yield state
+    finally:
+        ex.os.listdir, _pl.Path.exists = real_listdir, real_exists
+
+
+os.environ["SCQC_LOG_VISIBILITY_S"] = "3"
+try:
+    with tempfile.TemporaryDirectory() as td:
+        td = _pl.Path(td)
+        log = td / "logs" / "t.log"
+        e = _executor(td)
+        got, err = None, None
+        with _cached(log) as st:
+            try:
+                got = e.shell(["echo", "the job wrote this"], log)
+            except TaskFailure as x:
+                err = x
+        check("a log hidden by the cache is read once the parent is listed",
+              got is not None and "the job wrote this" in got,
+              f"shell() raised: {str(err)[:160]}" if err else f"got {got!r}")
+        check("...and the wait listed the parent directory to get it", st["listed"] >= 1,
+              "a stat()-only retry re-reads one cached answer and asks the server nothing")
+
+    # ------------------------------------------------- C. the failure reports, does not diagnose
+    for exit_line, label in ((" Exit_status = 0", "with"), (" comment = none", "without")):
+        with tempfile.TemporaryDirectory() as td:
+            td = _pl.Path(td)
+            log = td / "logs" / "t.log"
+            e = _executor(td, exit_line)
+            msg = ""
+            with _cached(log, visible_after_listing=False) as st:
+                try:
+                    e.shell(["echo", "never seen"], log)
+                except TaskFailure as x:
+                    msg = str(x)
+            check(f"a log never visible fails the task ({label} an Exit_status)",
+                  "not visible after" in msg, msg[:200] or "shell() returned")
+            check(f"...re-listing the parent on every attempt ({label} an Exit_status)",
+                  st["listed"] >= 2, f"listed {st['listed']} time(s) in a 3 s budget")
+            check(f"...naming the override for a slower filesystem ({label} an Exit_status)",
+                  "SCQC_LOG_VISIBILITY_S" in msg, msg[:200])
+            if label == "with":
+                check("with an Exit_status it says the job DID run, not that it died",
+                      "Exit_status = 0" in msg and "DID" in msg
+                      and "may genuinely" not in msg, msg[:240])
+            else:
+                check("without one it says the job MAY have died, not that it did",
+                      "may genuinely" in msg, msg[:240])
+finally:
+    os.environ.pop("SCQC_LOG_VISIBILITY_S", None)
 
 # --------------------------------------------------- D. the cache model: exists() lies until listed
 
