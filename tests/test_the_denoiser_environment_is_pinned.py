@@ -16,6 +16,9 @@ of it whatever the lock says: cellbender 0.3.2, torch 2.5.1, numpy 1.26.4.
      environment holds torch 2.5.1 and numpy 1.26.4
   5  a pip that installs another torch than the lock's is caught: the installer exits non-zero naming it
   6  an existing denoiser environment holding another torch is refused, and not modified
+  7  `install_cellbender.sh --check` says where each of the three comes from, and does not present numpy
+     1.26.4 as the reference environment's: only its torch is on record; numpy 1.26.4 is the pin drafted
+     with it (harness autodev W014's verifier, D3)
 
 The stand-in manager makes an environment whose interpreter answers the installer's version query and runs
 anything else in this interpreter over that environment's own site directory; the stand-in pip records its
@@ -277,6 +280,22 @@ with tempfile.TemporaryDirectory() as td:
                      f"{said.strip()[-240:]!r}")
     else:
         print(f"  5  a pip that installed torch 2.14.1 for the lock's 2.5.1 is caught (exit {rc})")
+
+# ---- 7. where each required version comes from
+r = subprocess.run(["bash", str(ROOT / "conf" / "env" / "install_cellbender.sh"), "--check"],
+                   capture_output=True, text=True, timeout=120,
+                   env={"PATH": os.pathsep.join(["/usr/bin", "/bin"]), "LC_ALL": "C"})
+basis = {name: next((ln for ln in r.stdout.splitlines() if ln.strip().startswith(f"{name} {v} ")), "")
+         for name, v in REQUIRED.items()}
+wrong = {n: ln.strip() for n, ln in basis.items()
+         if not ln or ("recorded" in ln) != (n != "numpy")
+         or (n == "numpy" and ("drafted" not in ln or "not on record" not in ln))}
+if r.returncode != 0 or wrong:
+    fails.append(f"7: --check exit {r.returncode}; the basis of each required version is not stated as it is "
+                 f"({wrong}): {r.stdout.strip()[-300:]!r}")
+else:
+    print("  7  --check states each version's basis: cellbender and torch recorded, numpy 1.26.4 drafted, "
+          "not on record")
 
 print("=" * 74)
 if fails:
