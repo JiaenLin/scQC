@@ -251,7 +251,6 @@ scQC/
 ├── docs/              design documents
 ├── lib/               shared code (input verification)
 ├── modules/NN_name/   one directory per step
-├── references/        reference registry (genomes are not tracked)
 ├── setup/             environment and project setup scripts
 └── tests/             unit suites, adversarial suite, acceptance test
 ```

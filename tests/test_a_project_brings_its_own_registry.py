@@ -88,6 +88,49 @@ if HAVE:
         else:
             print("  C  run without a project registry is refused at ingest; STATUS refused")
 
+# ---- D. a new project is scaffolded with its own registry, and a template that declares nothing
+#
+# `setup/init_project.sh` wrote no registry, so a new project had none to pass. And its decisions
+# template pre-filled step 6's three thresholds with one calibration cohort's numbers: a template
+# copied to decisions.yml unedited replaced what step 6 proposes from the project's own clusters
+# with that cohort's values. Every key of it that the code reads must be empty.
+import shutil  # noqa: E402
+
+try:
+    import yaml  # noqa: F401 - the decisions template is YAML
+    _YAML = True
+except ImportError:
+    _YAML = False
+
+if shutil.which("bash") and _YAML:
+    sys.path.insert(0, str(ROOT))
+    from engine.decisions import load as _load_decisions  # noqa: E402
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "new"
+        p = subprocess.run(["bash", str(ROOT / "setup" / "init_project.sh"), "--dir", str(proj),
+                            "--assay", "scrna", "--samples", "2"],
+                           capture_output=True, text=True, timeout=120)
+        reg = proj / "registry.tsv"
+        bad = len(fails)
+        if p.returncode != 0:
+            fails.append(f"D: init_project.sh failed (exit {p.returncode}): {p.stderr[-300:]}")
+        else:
+            if not reg.exists() or not reg.read_text().startswith("species\tbuild\tpath"):
+                fails.append("D: init_project.sh wrote no registry.tsv with the registry's header")
+            tpl = _load_decisions(proj / "decisions.template.yml")
+            cc = tpl.get("cluster_check") or {}
+            set_ = {k: cc.get(k) for k in ("a_umi_fraction", "b_mito_pct", "c_uninformative_pct")
+                    if cc.get(k) is not None}
+            if set_:
+                fails.append(f"D: the decisions template declares step 6's thresholds before "
+                             f"any evidence: {set_}")
+        if len(fails) == bad:
+            print("  D  a new project gets its registry's header and a template that declares "
+                  "nothing")
+else:
+    print("  D  not checked: no bash, or no PyYAML, on this machine")
+
 print("=" * 74)
 if fails:
     print(f"FAILED - {len(fails)}:")

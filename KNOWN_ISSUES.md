@@ -155,8 +155,9 @@ is not something to do in the middle of measuring a different change. Pin it.
   interpreter, which may lack `h5py`. `--python` governs subprocess tasks only. The failure
   arrives 40 lines into a run that looks healthy. Either document invoking it with the core
   interpreter, or have it re-exec.
-- The CLI hardcodes `samplesheet.csv`. `docs/QUICKSTART.md` says `samplesheet.tsv`. The delimiter
-  is auto-detected; the filename is not.
+- ~~The CLI hardcodes `samplesheet.csv`. `docs/QUICKSTART.md` says `samplesheet.tsv`.~~ — the
+  quick start names `samplesheet.csv` throughout (2026-11-09). The delimiter is auto-detected; the
+  filename is not, and `--samplesheet` names another.
 - ~~`03_light_floor` has no `STEP_TEXT` entry~~ — FIXED, and the first attempt was only half of
   it. Adding the entry was necessary and did nothing: `step_text()` is consulted only for steps
   that have TASKS, and no task carried the key `03_light_floor` — the floor is a declared
@@ -172,3 +173,61 @@ is not something to do in the middle of measuring a different change. Pin it.
 - ~~Four `adapters/*.pyc.tmp` build artefacts are tracked in git.~~ — FIXED. Removed from
   the index and `*.pyc.tmp` added to `.gitignore`. They are half-written byte-code CPython
   leaves behind when a compile is interrupted, and they were being shipped to every user.
+
+## 5. Fixed by the harness's autodev wave W007 (2026-11-09) — each with a test that fails before it
+
+- **Steps 6 and 7 applied different thresholds when a decisions file set them.** Step 6 clustered
+  on the derived floors and ceiling while step 7 applied the adjudicated ones, so the cluster
+  flags step 7 carries onto every delivered cell described a population the deliverable did not
+  hold. One resolver now serves both (`steps._resolve_thresholds`), and step 6's tasks carry the
+  decisions' quality block, so a changed decision re-runs them instead of being skipped as
+  unchanged. `tests/test_one_floor_for_steps_6_and_7.py`.
+- **The report called every observation a nucleus.** Captions, axis labels, F11's question and the
+  step texts now name nuclei or cells by the declared assay (`report/units.py`); a cohort with no
+  single assay is named in barcodes. The spine's floor class is read from the parameter table
+  (DECLARED on cells, where it printed DERIVED), and step 5's text no longer says k is derived on
+  nuclei, where it is declared. Single-cell suite, sections H and D4.
+- **A first cohort's reference was every project's default.** The registry scQC shipped held one
+  row, the first cohort's mouse reference, and ingest read it (after the project's parent
+  directory) whenever a project gave no `--registry`. Both fallbacks are gone and the file with
+  them; ingest and `validate` refuse without `--registry`, and `setup/init_project.sh` writes the
+  project's registry header. Wiring section N; `tests/test_a_project_brings_its_own_registry.py`.
+- **The decisions template pre-filled step 6's thresholds** with one calibration cohort's numbers
+  (0.5, 15.0, 50.0), so a template copied unedited replaced what step 6 proposes from the
+  project's own clusters. They are empty now, and the template's unread `doublets`, `resolution`
+  and `d_doublet_pct` keys are gone. Same suite, section D.
+- **A padded assay stopped the build.** Ingest strips `assay`; the graph only lowered it, so
+  ` scrna` passed ingest and stopped at step 6 with a KeyError (a padded and a capitalised value
+  were also read as two assays). Single-cell suite, A13 and D.
+- **Declared floors named the aligner's call on a library supplied already denoised.**
+  `count_floors.csv`'s `applied_to` and the parameter table's basis now follow each library's
+  route. Single-cell suite, A10 and G.
+- **The leak guard passed over 0 terms.** It read one path from `$SCQC_FORBIDDEN_TERMS`, so two
+  lists joined as PATH joins them scanned nothing and printed PASS. It reads every
+  `os.pathsep`-separated list and refuses one that is missing or holds no term.
+  `tests/test_leak_guard_reads_every_list.py`.
+- **Two local runs whose project folders shared a name shared their scratch** and failed each
+  other (`$TMPDIR/scqc_<folder name>`). Local and `SCQC_SCRATCH` scratch is named for the run;
+  the PBS scratch path is unchanged. `tests/test_runs_do_not_share_scratch.py`.
+- **`refuse_if_stale` had no caller** while the README said a stale report is refused. It is
+  removed, and the documents say what is true: staleness is flagged on the report's face and
+  counted as a defect, never refused.
+
+## 6. Open, found or confirmed while making W007
+
+- **Single cells get no ambient estimate and no library-level metrics** (the third item of the
+  single-cell audit). Nothing estimates the ambient fraction on a library this pipeline does not
+  denoise, and the report says NOT MEASURED. A capability, not a defect fixed here.
+- **`decisions.yml` is not in the run key.** An apply run with a changed decisions file runs in the
+  same `results/<digest>/`, re-runs steps 5 to 7 and replaces their outputs. Documented (README,
+  user guide), not changed.
+- **Step 6's declared thresholds need no attestation.** A `cluster_check` value in decisions.yml
+  replaces step 6's proposal as written, with no `approved_by` or `verbatim`, unlike the quality
+  thresholds step 7 applies.
+- **F15's caption names the light floor as the ceiling's population.** On single cells the
+  ceiling is derived over the called cells at or above the declared UMI floor; the figure draws
+  every barcode above the light floor.
+- **`scqc report --samplesheet` reads the delimiter from the file's first line, comment or not**
+  (`report/collect.collect`), so a tab-separated samplesheet that opens with a `#` line is read as
+  one column, and its design and assay are lost to the rebuilt report.
+

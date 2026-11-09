@@ -134,7 +134,8 @@ fell inside that noise. The empties/cells boundary is the aligner's cell call, a
 made; a valley over the same droplets would be a second cell caller.
 
 So on `scrna` the floors are **declared**: UMI ≥ **500**, genes ≥ **250**, applied to the
-aligner's called cells (`quality.DECLARED_FLOORS`). They are the lower ends of the whole-cell
+called cells - the aligner's, or the denoiser's on a library supplied already denoised - and
+`count_floors.csv` names which (`quality.DECLARED_FLOORS`). They are the lower ends of the whole-cell
 bounds, chosen by the PI to be lenient — "make reasonable QC, do not be too harsh, avoid removing
 true signal" — and the report classes them `DECLARED`, never `DERIVED`.
 

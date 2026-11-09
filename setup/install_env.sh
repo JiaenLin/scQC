@@ -383,15 +383,15 @@ fi
 cat <<EOF
 
 Environments created: ${#created[@]}
-Point scQC at them with:
+A run is pointed at them by its flags - --python for the analysis stack, and --celescope,
+--cellbender and --rscript for the tools - not by a variable. One script reads a variable:
+conf/env/build_reference.sh finds celescope under \$SCQC_ENV_ROOT, so for that script:
 
   export SCQC_ENV_ROOT="$PREFIX"
 
-Add that line to your shell profile, or pass --env-root on every run.
-
 RUN scqc ITSELF WITH core's INTERPRETER:
 
-  $PREFIX/core/bin/python bin/scqc run --project ... --python $PREFIX/core/bin/python
+  $PREFIX/core/bin/python bin/scqc run --project ... --registry ... --python $PREFIX/core/bin/python
 
 This is not a style preference. \`core\` is built unconditionally because the orchestrator needs
 the analysis stack in its OWN process: several steps read matrices directly, and under a bare

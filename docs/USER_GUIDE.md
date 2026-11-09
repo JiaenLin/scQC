@@ -10,7 +10,7 @@ New here? Start with the **[quick start](QUICKSTART.md)**.
 
 | command | what it does |
 |---|---|
-| `scqc validate <samplesheet>` | check a samplesheet before anything is computed |
+| `scqc validate --samplesheet <file> --registry <file>` | check a samplesheet before anything is computed |
 | `scqc run --project <dir>` | run the pipeline over a project |
 | `scqc report <results-dir>` | rebuild a finished run's report from its own files |
 | `scqc verify` | is a matrix raw? — from summary statistics you supply |
@@ -32,9 +32,8 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
 ```
 
 - `--registry` — the project's reference registry (TSV: `species`, `build`, `path`, ...). The
-  samplesheet's `reference` must be a `species/build` key in it. Without it, ingest uses the
-  registry shipped with scQC, which holds one example row; a project on any other reference
-  declares its own here rather than editing the tool.
+  samplesheet's `reference` must be a `species/build` key in it. **Required:** ingest refuses
+  every library without it, and scQC ships no registry to fall back to.
 - `--gpu-queue` — under `--executor pbs`, the queue a task that declares a GPU (the denoiser)
   is sent to; every other task goes to `--queue`. Without it, every task goes to `--queue`.
 
@@ -54,17 +53,18 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
 ## Run keys and resuming
 
 **Outputs are stored under a name derived from what produced them.** The run key is a digest of
-the samplesheet, the declared parameters and the mode:
+the samplesheet, the declared parameters, the mode and the pipeline's commit:
 
 ```
-results/8f2a91c4d7e0/    ← this samplesheet, these parameters, this mode
-results/INPUTS.json      ← what that digest was computed from
+results/8f2a91c4d7e0/              ← this samplesheet, these parameters, this mode, this code
+results/8f2a91c4d7e0/INPUTS.json   ← what that digest was computed from
 ```
 
-Same inputs → same directory, and completed work is reused. Change a threshold and the digest
-changes with it, so the new run writes **beside** the old one rather than over it. Nothing is
-overwritten by a run that would have produced something different, and that is a property of the
-layout rather than a rule anyone has to remember.
+Same inputs → same directory, and completed work is reused. Change a declared parameter, or the
+code, and the digest changes with it, so the new run writes **beside** the old one rather than
+over it. **The decisions file is the exception:** it is not in the digest, so an apply run with a
+changed `decisions.yml` runs in the same directory, re-runs the tasks that carry it (steps 5 to 7)
+and replaces their outputs.
 
 A task is skipped when all three hold: it completed before, its signature is unchanged, and every
 output it recorded is still on disk. **Delete an output to force its task to re-run** — deleting
@@ -75,7 +75,7 @@ report carries the findings the original raised. A step that re-runs replaces it
 
 ## Modes
 
-**`measure`** derives every threshold, writes every table and figure, and removes nothing. Use it
+**`evidence`** derives every threshold, writes every table and figure, and removes nothing. Use it
 to see what the data proposes before committing.
 
 **`apply`** does all of that and then writes the filtered objects. It is the default, and it is
@@ -145,8 +145,8 @@ results/<digest>/
     └── payload.json                     what the document was built from
 ```
 
-Every retained nucleus carries `sample`, `cluster`, `cluster_FLAG`, `cluster_WATCH` and the
-continuous values behind them, so nothing downstream has to re-cluster to recover what step 6
+Every retained observation - nucleus or cell - carries `sample`, `cluster`, `cluster_FLAG`,
+`cluster_WATCH` and the continuous values behind them, so nothing downstream has to re-cluster to recover what step 6
 found. Unknown is kept distinct from absent throughout: a nullable boolean is `pd.NA`, not
 `False`; a missing number is `NaN`, not `0.0`.
 
@@ -167,7 +167,8 @@ Point the orchestrator at a project on shared storage and let it submit. Two pra
 
 - **Give the orchestrator enough memory.** It reads matrices for some audits.
 - **Outputs are content-addressed**, so two runs with different parameters can share a project
-  directory without either overwriting the other.
+  directory without either overwriting the other - but not two runs that differ only in their
+  decisions file, which share one directory.
 
 ## Troubleshooting
 

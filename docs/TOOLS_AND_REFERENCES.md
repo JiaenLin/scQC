@@ -1,21 +1,28 @@
 # Tools and references
 
-## References — resolved by name, owned here
+## References — resolved by name, through the project's registry
+
+A samplesheet declares a reference by a `<species>/<build>` key, and the key is resolved through the
+**project's** registry: a tab-separated file kept with the project and passed as `scqc run
+--registry FILE` (and `scqc validate --registry FILE`). Paths are not accepted in the samplesheet,
+because a path records where an index happened to sit on one machine and says nothing about what is
+in it. `setup/init_project.sh` writes the file's header; the indexes themselves are large and live
+outside any repository.
+
+**scQC ships no registry and falls back to none.** Ingest refuses a run without `--registry`. Until
+2026-11-09 the repository shipped `references/_registry/registry.tsv` with one row - the first
+cohort's mouse reference - and ingest read it for any project that brought none, so such a project
+was resolved against another cohort's reference without a word.
 
 ```
-references/
-  _registry/registry.tsv              resolve a reference by NAME, not by path
-  <species>/<build>/                  the index itself — large, and not tracked by git
+species        build                 path              built_by                   star_version  notes
+mus_musculus   ensembl_112_filtered  <the index's path> celescope 2.7.3 rna mkref  2.7.11a       ...
 ```
 
-A samplesheet declares a reference by its registry name. Paths are not accepted, because a path
-records where an index happened to sit on one machine and says nothing about what is in it.
-
-The registry ships one worked example, `mus_musculus / ensembl_112_filtered`, built by
+That is a worked example of one complete row (tab-separated in the file). It was built by
 `celescope 2.7.3 rna mkref` with STAR 2.7.11a from the Ensembl 112 primary assembly and a GTF
-filtered by `celescope utils mkgtf` with its **default attributes, which retain introns**. It is an
-example of a complete registry row, not a reference you are expected to use; the index itself is
-not distributed. `conf/env/build_reference.sh` is the build, start to finish.
+filtered by `celescope utils mkgtf` with its **default attributes, which retain introns**.
+`conf/env/build_reference.sh` is the build, start to finish.
 
 That row records **34,290 genes**, and the count is the point of recording it. A gene count is the
 cheapest available check that an index is the one the registry claims: rebuild from the same

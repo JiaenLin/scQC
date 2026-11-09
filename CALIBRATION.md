@@ -17,11 +17,11 @@ repository. The libraries are referred to as `ctrl_01…ctrl_05` and `treat_01�
 design factor is a generic two-level `condition`. That renaming is cosmetic: the measured values
 below are the real ones.
 
-One thing that does name a species is `references/_registry/registry.tsv`, and it is worth saying
-what it is so it is not read as a leak. That row is a **worked example of a registry entry** — it
-exists to show what a complete one has to record: species, build, the command that built it, the
-aligner version, the gene count and whether introns are retained. It is not a statement about which
-reference this cohort was quantified against, and the index itself is not distributed.
+One thing that does name a species is the worked registry row in `docs/TOOLS_AND_REFERENCES.md`,
+and it is worth saying what it is so it is not read as a leak. It is an **example of a registry
+entry** — it shows what a complete one has to record: species, build, the command that built it,
+the aligner version, the gene count and whether introns are retained. No registry ships with scQC:
+each project passes its own with `--registry`, and the tool falls back to none.
 
 ## Why the numbers are here and the identity is not
 

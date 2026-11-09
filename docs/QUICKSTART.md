@@ -45,8 +45,8 @@ path the pipeline needs or a **design factor it discovers on its own**.
 
 ```tsv
 sample	platform	species	reference	assay	matrix	mt_prefix	ribo_pattern	condition
-S1	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S1/outs/raw	mt-	^Rp[sl]	control
-S2	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl]	treated
+S1	singleron	mus_musculus	mus_musculus/ensembl_112	snrna	/data/S1/outs/raw	mt-	^Rp[sl]	control
+S2	singleron	mus_musculus	mus_musculus/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl]	treated
 ```
 
 | column | required | what it is |
@@ -54,7 +54,7 @@ S2	singleron	mus_musculus	refs/ensembl_112	snrna	/data/S2/outs/raw	mt-	^Rp[sl]	t
 | `sample` | **yes** | unique library name; every output is keyed by it |
 | `platform` | **yes** | `10x` or `singleron`. Anything else refuses rather than guessing |
 | `species` | **yes** | for the record and the reference resolution |
-| `reference` | **yes** | the genome/annotation the counts were made against |
+| `reference` | **yes** | the genome/annotation the counts were made against, as a `<species>/<build>` key of the project's registry |
 | `assay` | **yes** | `snrna` (nuclei) or `scrna` (whole cells). It sets the mitochondrial bound and the ambient policy, and it has **no default**: until 2026-10-02 it was optional, never reached the mitochondrial step, and every cohort was bounded as single-nucleus |
 | `matrix` | to start from counts | a MatrixMarket directory, a CellRanger `.h5`, or an `.h5ad` |
 | `fastq_r1` / `fastq_r2` | to start from reads | alignment runs first and produces the matrix |
@@ -73,21 +73,28 @@ excludes identifiers: a replicate id in a four-sample cohort has four levels and
 make every differential check a ratio between single libraries — arithmetic with no evidence in
 it, reported in the same words as a real result.
 
-Check it before computing anything:
+**The project's reference registry** is `<project>/registry.tsv`, tab-separated, one row per
+reference the samplesheet names: `species`, `build`, `path`, then `built_by`, `star_version` and
+`notes` ([what a complete row records](TOOLS_AND_REFERENCES.md)). `init_project.sh` writes its
+header. scQC ships none, and both commands below refuse without `--registry`.
+
+Check the samplesheet before computing anything:
 
 ```bash
-scqc validate ~/projects/my-study/samplesheet.tsv
+scqc validate --samplesheet ~/projects/my-study/samplesheet.csv \
+              --registry ~/projects/my-study/registry.tsv
 ```
 
 ## 4 · Run
 
 ```bash
-scqc run --project ~/projects/my-study --jobs 8
+scqc run --project ~/projects/my-study --registry ~/projects/my-study/registry.tsv --jobs 8
 ```
 
 Independent tasks run concurrently; `--jobs 1` is serial, which is what you want when a failure
-has to be read in one log. The default mode is `apply`, which writes filtered objects. Nothing is
-ever overwritten — see [run keys](USER_GUIDE.md#run-keys-and-resuming).
+has to be read in one log. The default mode is `apply`, which writes filtered objects. A run asked
+for differently writes beside the old one rather than over it; the one exception is a changed
+`decisions.yml` — see [run keys](USER_GUIDE.md#run-keys-and-resuming).
 
 Outputs land under `results/<digest>/`:
 

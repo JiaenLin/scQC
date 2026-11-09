@@ -9,8 +9,9 @@
 #   setup/init_project.sh --dir ~/projects/my-study --assay snrna
 #   setup/init_project.sh --dir ~/projects/my-study --assay scrna --samples 8
 #
-# Creates the layout, a samplesheet template, a decisions template, and a README that records
-# what the directory is - so it is still interpretable by someone who did not create it.
+# Creates the layout, a samplesheet template, the header of the project's reference registry, a
+# decisions template, and a README that records what the directory is - so it is still
+# interpretable by someone who did not create it.
 
 set -euo pipefail
 
@@ -62,8 +63,8 @@ DIR="${DIR/#\~/$HOME}"
 
 # Refuse to write into a directory that already holds a project. Overwriting a samplesheet or a
 # decisions file silently would destroy the record of what a previous run was told to do.
-if [[ -e "$DIR/samplesheet.csv" || -e "$DIR/decisions.yml" ]]; then
-    echo "ERROR: $DIR already contains a project (samplesheet.csv or decisions.yml)." >&2
+if [[ -e "$DIR/samplesheet.csv" || -e "$DIR/decisions.yml" || -e "$DIR/registry.tsv" ]]; then
+    echo "ERROR: $DIR already contains a project (samplesheet.csv, decisions.yml or registry.tsv)." >&2
     echo "       Refusing to overwrite. Choose another --dir, or move the existing files aside." >&2
     exit 1
 fi
@@ -71,8 +72,8 @@ fi
 mkdir -p "$DIR"/{data,results/{tables,figures,reports,objects},work,logs}
 
 # --- samplesheet -------------------------------------------------------------------------------
-# The four REQUIRED columns are sample, platform, species and reference; they have no defaults
-# because every one of them changes how a later step behaves, and a wrong guess is silent. An
+# The five REQUIRED columns are sample, platform, species, reference and assay; they have no
+# defaults because every one of them changes how a later step behaves, and a wrong guess is silent. An
 # earlier version of this script omitted platform and species, so `scqc validate` rejected every
 # row of the file this script had just written - a generated template must pass the validator that
 # ships beside it.
@@ -83,7 +84,9 @@ mkdir -p "$DIR"/{data,results/{tables,figures,reports,objects},work,logs}
     echo "#   sample     unique library name; becomes the key in every output table"
     echo "#   platform   10x | singleron   (bgi is recognised but not implemented and will refuse)"
     echo "#   species    e.g. mus_musculus; gene-class patterns are species-specific"
-    echo "#   reference  a '<species>/<build>' key from references/_registry/registry.tsv"
+    echo "#   reference  a '<species>/<build>' key of this project's registry.tsv (scqc --registry)"
+    echo "#   assay      snrna | scrna. Nuclei are denoised (mandatory); single cells are not, and"
+    echo "#              each needs aligner_cells, the aligner's filtered matrix, as its cell call"
     echo "#"
     echo "# One of these two is required:"
     echo "#   matrix     absolute path to a RAW, UNFILTERED matrix"
@@ -91,7 +94,6 @@ mkdir -p "$DIR"/{data,results/{tables,figures,reports,objects},work,logs}
     echo "#"
     echo "# Optional:"
     echo "#   fastq_r2   absolute path"
-    echo "#   assay      snrna | scrna. Ambient correction is mandatory for snrna."
     echo "#"
     echo "# Design factors: add one column per factor (condition, batch, timepoint, ...)."
     echo "# Any column with 2-6 distinct values is treated as a design factor and every"
@@ -105,6 +107,13 @@ mkdir -p "$DIR"/{data,results/{tables,figures,reports,objects},work,logs}
             "$i" "$PLATFORM" "$SPECIES" "$REFERENCE" "$ASSAY"
     done
 } > "$DIR/samplesheet.csv"
+
+# --- reference registry --------------------------------------------------------------------------
+# THE PROJECT'S OWN. `scqc run` and `scqc validate` refuse without `--registry`, and scQC ships no
+# registry to fall back to: the one it used to ship was the first cohort's mouse reference, read for
+# any project that brought none. One row per reference the samplesheet names, tab-separated, keyed
+# `<species>/<build>`; docs/TOOLS_AND_REFERENCES.md shows what a complete row records.
+printf 'species\tbuild\tpath\tbuilt_by\tstar_version\tnotes\n' > "$DIR/registry.tsv"
 
 # --- decisions ---------------------------------------------------------------------------------
 cat > "$DIR/decisions.template.yml" <<'YAML'
@@ -120,12 +129,12 @@ cat > "$DIR/decisions.template.yml" <<'YAML'
 
 quality:
   umi_floor:
-    value:            # integer, bounded to [200, 1000]
-    class: ADJUDICATED
+    value:            # integer UMI. Applied as written: the bounds a DERIVED floor must fall
+    class: ADJUDICATED  # inside (docs/FILTERS.md) are not applied to a value a person chose
     approved_by:
     verbatim:
   gene_floor:
-    value:            # integer, bounded to [100, 600]
+    value:            # integer genes. Applied as written, as the UMI floor is
     class: ADJUDICATED
     approved_by:
     verbatim:
@@ -135,21 +144,18 @@ quality:
     approved_by:
     verbatim:
 
-doublets:
-  detector: scDblFinder
-  dbr:                # expected doublet rate, or null to use the detector's default
-  dbr_sd:             # uncertainty on that rate
+# The doublet rate is not decided here: it is DECLARED before the run, with --dbr and --dbr-sd or
+# the samplesheet's dbr and dbr_sd columns, and has no default. The clustering resolution is
+# --resolution on the command line.
 
 cluster_check:
-  # Recorded here for the reader; it is SET by --resolution, which defaults to 2.0.
-  # --extra-resolutions profiles further ones into sibling tables nothing downstream reads.
-  resolution: 2.0
-  a_umi_fraction: 0.5     # cluster median UMI below this fraction of the sample median
-  b_mito_pct: 15.0        # cluster median mitochondrial percentage above this
-  c_uninformative_pct: 50.0
-  d_doublet_pct: 70.0
-  approved_by:
-  verbatim:
+  # Step 6 PROPOSES these three from this cohort's own clusters. Leave a key empty to apply its
+  # proposal; a value replaces the proposal for that criterion, as written. They were pre-filled
+  # with one calibration cohort's numbers, so a template copied unedited applied that cohort's
+  # thresholds to every project.
+  a_umi_fraction:         # a cluster's median UMI below this fraction of its library's median
+  b_mito_pct:             # a cluster's median mitochondrial percentage above this
+  c_uninformative_pct:    # the share of a cluster's top markers that are uninformative, above this
 
 apply:
   # The exact action string this approval authorises. Changing any threshold above changes this
@@ -177,6 +183,7 @@ elsewhere and is never modified by a run.
 |---|---|
 | \`data/\` | inputs. Treat as read-only: never modify a delivered file |
 | \`samplesheet.csv\` | one row per library, plus design factor columns |
+| \`registry.tsv\` | this project's references, one row per \`<species>/<build>\` key the samplesheet names |
 | \`decisions.yml\` | operator decisions. Copy from \`decisions.template.yml\` |
 | \`results/tables/\` | CSV/TSV, small enough to open and read |
 | \`results/figures/\` | figures |
@@ -190,25 +197,28 @@ elsewhere and is never modified by a run.
 \`$ASSAY\`. $( [[ "$ASSAY" == "snrna" ]] \
   && echo "Ambient RNA correction is MANDATORY: nuclear preparations carry substantial ambient
 signal from lysed cells, and skipping it produces spurious cross-population expression." \
-  || echo "Ambient RNA correction is optional but recommended." )
+  || echo "Single cells are not denoised by this pipeline: each library's raw counts are the
+object and the aligner's call (\`aligner_cells\`) is the cell call. A library supplied already
+denoised (\`ambient_h5\`, with its provenance) is used as supplied." )
 
 ## How to run
 
 \`\`\`bash
-# 1. Fill in samplesheet.csv, then look at the data without touching it:
-scqc run --project . --mode evidence
+# 1. Fill in samplesheet.csv and registry.tsv, then look at the data without touching it:
+scqc run --project . --registry registry.tsv --mode evidence
 
 # 2. Read the report under results/<digest>/reports/. Optionally override a derived
 #    threshold by recording your own decision:
 cp decisions.template.yml decisions.yml && \$EDITOR decisions.yml
 
 # 3. Apply (the default mode): writes the filtered object and its ledger
-scqc run --project .
+scqc run --project . --registry registry.tsv
 \`\`\`
 
 ## Status
 
 - [ ] samplesheet.csv filled in
+- [ ] registry.tsv filled in
 - [ ] evidence mode run
 - [ ] report read
 - [ ] decisions.yml written (optional)
@@ -219,11 +229,12 @@ cat <<EOF
 Created $DIR
 
   samplesheet.csv         $NSAMPLES row(s), assay=$ASSAY  <- fill this in first
+  registry.tsv            the header only; one row per reference the samplesheet names
   decisions.template.yml  OPTIONAL: copy to decisions.yml to override a derived threshold
   README.md               what this directory is
   data/ results/ work/ logs/
 
 Next:
-  \$EDITOR $DIR/samplesheet.csv
-  scqc run --project $DIR --mode evidence
+  \$EDITOR $DIR/samplesheet.csv $DIR/registry.tsv
+  scqc run --project $DIR --registry $DIR/registry.tsv --mode evidence
 EOF

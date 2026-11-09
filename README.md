@@ -37,11 +37,15 @@ incompatible pins. Select with `--with-celescope`, `--with-cellbender`, `--with-
 
 ```bash
 setup/init_project.sh --dir ~/projects/my-study --assay snrna --samples 10
+# fill in samplesheet.csv, and registry.tsv with the references it names
 
-scqc run --project ~/projects/my-study --mode evidence   # measure, decide nothing
+R=~/projects/my-study/registry.tsv
+scqc run --project ~/projects/my-study --registry $R --mode evidence   # measure, decide nothing
 # read the report, record approvals in decisions.yml
-scqc run --project ~/projects/my-study --mode apply      # filter, once
+scqc run --project ~/projects/my-study --registry $R --mode apply      # filter, once
 ```
+
+The reference registry is the project's: `--registry` is required, and scQC ships none.
 
 scQC never writes inside its own directory. One installation serves any number of projects, and
 upgrading it cannot disturb an existing result. Runs execute locally or on PBS with one job per
@@ -86,7 +90,9 @@ Nuclei are denoised (mandatory), and the denoiser's call is the cell call. Singl
 **not denoised by this pipeline**: the raw counts are the object, the aligner's call
 (`aligner_cells`) is the cell call, and the count bounds and the cluster check are the
 whole-cell ones. Apply mode runs on single cells too: step 7's cell criterion is
-`fail_not_aligner_cell`, over the aligner's called cells.
+`fail_not_aligner_cell`, over the aligner's called cells. A library supplied already denoised
+(`ambient_h5`, with its provenance) is used as supplied on either assay, and its cell call is the
+denoiser's.
 Doublet scoring precedes quality filtering, as scDblFinder's documentation requires.
 
 📄 **[Why each step exists](docs/RATIONALE.md)** · **[How each filter is
@@ -120,10 +126,11 @@ does not support.
 ## Output
 
 Apply mode writes one filtered object per library plus a cohort object merged from those files
-read back from disk. Every retained nucleus carries `sample`, `cluster`, `cluster_FLAG`,
-`cluster_WATCH` and the continuous values behind them, so nothing downstream needs to re-cluster.
+read back from disk. Every retained observation - nucleus or cell - carries `sample`, `cluster`,
+`cluster_FLAG`, `cluster_WATCH` and the continuous values behind them, so nothing downstream needs
+to re-cluster.
 
-Every object carries `uns["scqc"]`: what the flag means, how many nuclei hold it, and a digest of
+Every object carries `uns["scqc"]`: what the flag means, how many observations hold it, and a digest of
 the exact set — so a consumer can act on the flag without inferring its meaning from a column
 name, and can verify the column is still the one scQC wrote. `scqc stamp <objects>` adds it to
 objects written before 0.4.0.
@@ -152,21 +159,28 @@ reader that will not read the code.
 
 All enforced today:
 
-- **Nothing is overwritten.** Outputs land under `results/<digest>/`, the digest computed from the
-  samplesheet content, the declared parameters and the mode. A directory records the inputs it was
-  claimed for and refuses a run described differently.
+- **Nothing is overwritten by a run asked for differently - except through the decisions file.**
+  Outputs land under `results/<digest>/`, the digest computed from the samplesheet content, the
+  declared parameters, the mode and the pipeline's commit. A directory records the inputs it was
+  claimed for and refuses a run described differently. `decisions.yml` is NOT in the digest: an
+  apply run with a changed decisions file runs in the same directory, re-runs steps 5 to 7, and
+  replaces their outputs.
 - **Gates return a verdict, not a warning.** Each reduces to `REFUSE`, `REVIEW` or `PASS`, and the
   subcommands exit 2 on refusal. Reporting and enforcing are separate calls.
 - **Every removal is recoverable with the criterion that made it.** Removed observations are paired
   with the criteria that fired; the removal refuses if that record and the mask disagree on the
   count. Persisted as CSV, readable with the standard library alone.
-- **Every threshold records who set it** — `DERIVED` or `ADJUDICATED` with an approver and their
-  own words — in the ledger, the object and the report.
+- **Every threshold records who set it** — `DERIVED`, `DECLARED`, or `ADJUDICATED` with an
+  approver and their own words — in the report's parameter table (`reports/report.json`); each
+  adjudicated one is also in `STATUS.json`, and step 7 records who authorised the removal in the
+  run's state. The removal ledger and the delivered objects do not carry it.
 - **Reports carry the commit and tool versions**, obtained by asking each tool rather than reading
   a lockfile, and audit themselves: anything the run should have recorded and did not is counted
   as a defect on the front page.
-- **A report older than its inputs is refused.** Freshness is recorded as True, False or **None** —
-  never False by default, because unchecked is not a pass.
+- **A report older than its inputs is flagged, not refused.** Freshness is computed, printed on
+  the report's face, counted as a defect when stale, and recorded as True, False or **None** —
+  never False by default, because unchecked is not a pass. Nothing in scQC publishes a report, so
+  nothing refuses one.
 
 📄 **[Principles](docs/PRINCIPLES.md)** — the four enforced rules.
 
@@ -184,8 +198,8 @@ Run `scqc` with `core`'s interpreter, not the system python — several steps re
 orchestrator's own process:
 
 ```bash
-$SCQC_ENV_ROOT/core/bin/python bin/scqc run --project my_project --mode evidence \
-    --python $SCQC_ENV_ROOT/core/bin/python
+~/scqc-env/core/bin/python bin/scqc run --project my_project --mode evidence \
+    --registry my_project/registry.tsv --python ~/scqc-env/core/bin/python
 ```
 
 The acceptance harness regression-tests against a dataset you supply; no data ships with this
