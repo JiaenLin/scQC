@@ -269,9 +269,11 @@ Open:
   `torch.save` raises `cannot pickle 'weakref'` after the last epoch and the posterior step finds no
   checkpoint. The calibration runs met this in the environment whose versions the lock pins, and saved
   through a wrapper outside this repository that detaches the attribute around the save.
-  `adapters/cellbender.py` refuses the empty result; it does not work around the cause. Until it does, a
-  denoiser task run inside scQC is expected to fail this way on any torch from 1.13 - an INFERENCE from
-  that record and the wrapper's own diagnosis, not measured inside scQC.
+  `adapters/cellbender.py` refuses the empty result; it does not work around the cause. MEASURED
+  (2026-11-09, torch 2.5.1, CPU build): `torch.save` of a `Parameter` carrying a weakref attribute raises
+  `TypeError: cannot pickle 'weakref.ReferenceType' object` - the message the failed cohort run died with -
+  while the bare `Parameter` pickles. So a denoiser task run inside scQC is expected to fail this way under
+  the pinned torch too; that last step is an INFERENCE, not measured inside scQC.
 - **The conda half is not locked.** The R environment pins R, scDblFinder (and with it its
   Bioconductor release) and xgboost; Matrix, the other CRAN packages and the BLAS are solved when it is
   built. The interpreters are pinned to the patch, their conda builds are not, and the micromamba the
