@@ -257,7 +257,10 @@ class Pipeline:
         act on. Accepts dicts or finding objects, because both are already in use and making
         each caller convert is one more place a message can be dropped.
         """
-        with self._prov_lock:
+        # THE MANIFEST'S OWN LOCK AS WELL: `_findings_by_step` IS a part of `state.data`, so
+        # appending to it while the run loop serialises the manifest is the race RunState.lock
+        # closes (harness autodev W020).
+        with self._prov_lock, self.state.lock:
             if step not in self._gated_this_run:
                 self._gated_this_run.add(step)
                 self._findings_by_step[step] = []

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 from .task import Status, Task, TaskResult
@@ -29,6 +30,13 @@ class RunState:
 
     def __init__(self, path: Path):
         self.path = Path(path)
+        # ONE LOCK FOR THE WHOLE MANIFEST (harness autodev W020). It was written from two places
+        # under two different locks - the run loop recording a finished task, a gate recording its
+        # findings - and each write serialises the whole dict, so one thread's json.dump iterated
+        # it while the other added to it: `RuntimeError: dictionary changed size during
+        # iteration`, and a run lost to bookkeeping. Re-entrant, so a caller that mutates `data`
+        # and then flushes can hold it across both (Pipeline.record_findings).
+        self.lock = threading.RLock()
         self.data: dict = {"version": MANIFEST_VERSION, "tasks": {}, "runs": []}
         if self.path.exists():
             try:
@@ -73,15 +81,21 @@ class RunState:
     # ---------------------------------------------------------------- updates
 
     def record(self, result: TaskResult) -> None:
-        self.data["tasks"][result.key] = result.to_json()
-        self.flush()
+        with self.lock:
+            self.data["tasks"][result.key] = result.to_json()
+            self.flush()
 
     def begin_run(self, meta: dict) -> None:
-        self.data["runs"].append(meta)
-        self.flush()
+        with self.lock:
+            self.data["runs"].append(meta)
+            self.flush()
 
     def flush(self) -> None:
         """Write atomically. A half-written manifest is worse than none: it parses."""
+        with self.lock:
+            self._flush()
+
+    def _flush(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), suffix=".tmp")
         try:
