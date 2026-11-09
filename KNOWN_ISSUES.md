@@ -257,8 +257,11 @@ Fixed, each with a test that fails before it:
   `tests/test_the_denoiser_environment_is_pinned.py`.
 - **The core lock built an environment its own suite failed in.** It had no pyarrow, which
   `tests/test_native_io.py` needs, and it was a workstation's freeze: a notebook stack, a Windows-only
-  package, and not a closure on linux. It is the cluster environment's 55 pins now, interpreter 3.12.13,
-  and `requirements.hpc.lock.txt`, which no script read, is gone.
+  package, and not a closure on linux. It is the cluster environment's 55 pins now, interpreter 3.12.12,
+  and `requirements.hpc.lock.txt`, which no script read, is gone. The interpreter was first pinned as
+  3.12.13, read from an older run's records written by another environment; the fresh-prefix build
+  measured the reference environment's 3.12.12 (2026-11-09), and on 3.12.13 the analysis call records
+  differed from the reference run's in `versions.python` alone.
   `tests/test_the_core_lock_carries_what_the_suite_needs.py`.
 - **Locks were resolved again at every build.** `pip install -r` re-resolved anything a lock left
   open. Every lock is applied with `--no-deps` now and every installed version compared with it; a lock

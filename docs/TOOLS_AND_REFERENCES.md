@@ -53,7 +53,7 @@ So the pipeline owns the **recipe**, never the directory:
 
 ```
 conf/env/
-  requirements.lock.txt       core: the analysis stack, 55 exact pins, python 3.12.13
+  requirements.lock.txt       core: the analysis stack, 55 exact pins, python 3.12.12
   cellbender.lock.txt         the denoiser: 165 exact pins, python 3.10.22, linux x86_64 only
   lock.sh                     reads, checks and applies a lock (sourced by the installers)
   install_cellbender.sh       the denoiser, from its lock: cellbender 0.3.2, torch 2.5.1, numpy 1.26.4

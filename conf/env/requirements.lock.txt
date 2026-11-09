@@ -1,13 +1,18 @@
-# scqc-python: 3.12.13
+# scqc-python: 3.12.12
 # The analysis environment (`core`): every package of its closure at one exact version. setup/install_env.sh
 # reads the interpreter above and refuses to install into another one, applies the pins below with
 # `pip install --no-deps`, so nothing is resolved at build time, and then compares every installed version
 # with this file; a difference refuses the build.
 #
 # These are the versions of the cluster environment the calibration runs used: its `pip freeze`, on
-# python 3.12.13 - the version every analysis call record writes down (`versions.python`), so the patch is
+# python 3.12.12 - the version every analysis call record writes down (`versions.python`), so the patch is
 # part of the lock. Every pin has a wheel for linux x86_64 with glibc >= 2.28 (pyarrow 25.0.0 has no older
 # one) and for macOS on arm64.
+#
+# 3.12.12 is that environment's interpreter as MEASURED (2026-11-09, harness autodev W014's fresh-prefix
+# build), and its runs' call records say the same. Until then this line named 3.12.13, read from an older
+# run's call records that another environment had written; a build on 3.12.13 wrote call records that
+# differed from the reference run's in `versions.python` alone, every table value being identical.
 #
 # pyarrow is here because the suite needs it: tests/test_native_io.py sets pandas' string storage to
 # "pyarrow", which pandas refuses where pyarrow is not installed. An earlier version of this file was a
