@@ -123,8 +123,9 @@ Read it in this order — it is arranged as an argument, not as a log:
    design with no aliased pair says so in one line.
 3. **Where each count floor came from, and what quality control did.** The density each valley
    was read off; then one row per criterion — the distribution before the cut, what survived it,
-   and the threshold with how it was arrived at (DERIVED from this data, or DECLARED before
-   seeing it; per library, or one cohort constant).
+   and the threshold with how it was arrived at (DERIVED from this data, DECLARED before seeing
+   it, or ADJUDICATED by a person after reading the evidence; per library, or one cohort
+   constant).
 4. **Findings.** Every REFUSE and REVIEW, with the step that raised it. REVIEW does not stop a
    run; it means a person has to look.
 5. **What this run could not establish.** Each step states its own limit. An omitted limit reads

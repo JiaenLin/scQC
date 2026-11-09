@@ -522,8 +522,9 @@ def cmd_selftest(a) -> int:
             print("\n".join("        " + ln for ln in out.strip().splitlines()[-12:]))
     print(f"\n{len(passed)} passed, {len(failed)} failed, {len(skipped)} skipped")
     if skipped:
-        print("A skipped suite has NOT been checked. It needs pandas (`pip install scqc[test]`)")
-        print("or a cohort directory (COHORT_DIR); it is not evidence of anything either way.")
+        print("A skipped suite has NOT been checked. It needs the analysis stack")
+        print("(conf/env/requirements.lock.txt) or a cohort directory (COHORT_DIR); it is not")
+        print("evidence of anything either way.")
     return 1 if failed else 0
 
 

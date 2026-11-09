@@ -163,8 +163,8 @@ All enforced today:
   Outputs land under `results/<digest>/`, the digest computed from the samplesheet content, the
   declared parameters, the mode and the pipeline's commit. A directory records the inputs it was
   claimed for and refuses a run described differently. `decisions.yml` is NOT in the digest: an
-  apply run with a changed decisions file runs in the same directory, re-runs steps 5 to 7, and
-  replaces their outputs.
+  apply run with a changed decisions file runs in the same directory, re-runs the tasks of steps 5
+  to 7 that carry it, and replaces their outputs.
 - **Gates return a verdict, not a warning.** Each reduces to `REFUSE`, `REVIEW` or `PASS`, and the
   subcommands exit 2 on refusal. Reporting and enforcing are separate calls.
 - **Every removal is recoverable with the criterion that made it.** Removed observations are paired
@@ -191,8 +191,10 @@ scqc selftest     # every bundled suite including the adversarial one; non-zero 
 ```
 
 Each suite reports PASS, FAIL or SKIP. A SKIP is reported as its own outcome, not as a pass.
-Everything except the cohort audit runs on the standard library alone; `pip install -e '.[test]'`
-adds pandas for the rest.
+The decision-layer suites run on the standard library alone. The suites that drive the CLI, read
+matrices or draw figures need the analysis stack (`conf/env/requirements.lock.txt`, or `core`
+from `setup/install_env.sh`) and report SKIP without it; the cohort audit also needs a cohort
+directory (`COHORT_DIR`).
 
 Run `scqc` with `core`'s interpreter, not the system python — several steps read matrices in the
 orchestrator's own process:

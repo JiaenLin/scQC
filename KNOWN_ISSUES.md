@@ -219,8 +219,8 @@ is not something to do in the middle of measuring a different change. Pin it.
   single-cell audit). Nothing estimates the ambient fraction on a library this pipeline does not
   denoise, and the report says NOT MEASURED. A capability, not a defect fixed here.
 - **`decisions.yml` is not in the run key.** An apply run with a changed decisions file runs in the
-  same `results/<digest>/`, re-runs steps 5 to 7 and replaces their outputs. Documented (README,
-  user guide), not changed.
+  same `results/<digest>/`, re-runs the tasks of steps 5 to 7 that carry it and replaces their
+  outputs. Documented (README, user guide), not changed.
 - **Step 6's declared thresholds need no attestation.** A `cluster_check` value in decisions.yml
   replaces step 6's proposal as written, with no `approved_by` or `verbatim`, unlike the quality
   thresholds step 7 applies.
