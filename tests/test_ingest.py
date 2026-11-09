@@ -15,6 +15,9 @@ right answer:
     row on single NUCLEI -> BLOCKED without FASTQ, rebuilt with it (harness autodev W020, B1-046:
     P2 is required where an empty-droplet model consumes it, and none runs on cells); a P1 failure
     is rejected on both; verify() takes no default assay
+  9 a platform with no aligner here ('bd') and a VERIFIED supplied matrix -> ACCEPTED, recorded
+    'processor: none (supplied matrix)'; the same platform with FASTQ only, or with a rejected
+    matrix to rebuild -> BLOCKED, naming the missing aligner (harness autodev W020, B1-048)
 """
 import sys
 from pathlib import Path
@@ -139,6 +142,25 @@ for bad in ("", "spatial"):
     except ValueError:
         pass
 
+# 9. THE PLATFORM SELECTS AN ALIGNER, WHICH ONLY THE FASTQ ROUTE RUNS (harness autodev W020, B1-048).
+print()
+for label, matrix, fastq, key, expect in (
+        ("9 bd + verified matrix", __file__, "", "ours_raw", "accept"),
+        ("9 bd + FASTQ only", "", "x_R1.fq.gz", "ours_raw", "blocked"),
+        ("9 bd + rejected matrix + FASTQ", __file__, "x_R1.fq.gz", "vendor_tar", "blocked")):
+    row = {"sample": label, "platform": "bd", "species": SPECIES, "reference": REF,
+           "assay": "snrna", "matrix": matrix, "fastq_r1": fastq}
+    p = plan_one(row, REG, stats_fn=lambda _p, k=key: STATS[k])
+    print(p)
+    if p.mode != expect:
+        fails.append(f"{label}: expected {expect}, got {p.mode}: {p.reason}")
+    if expect == "accept" and p.processor != "none (supplied matrix)":
+        fails.append(f"{label}: the record names processor {p.processor!r} for a matrix nothing "
+                     f"aligned")
+    if expect == "blocked" and "no aligner" not in p.reason:
+        fails.append(f"{label}: blocked without naming the missing aligner: {p.reason}")
+    print()
+
 # THE THREE LISTS OF ASSAYS ARE ONE LIST. Ingest admits an assay, ambient chooses a policy for it
 # and quality bounds it; an assay admitted by one and unknown to another refuses three steps late.
 import ast  # noqa: E402
@@ -163,6 +185,6 @@ if fails:
     for f in fails:
         print(" -", f)
     raise SystemExit(1)
-print("proved: all 8 cases behave as specified - the two pre-filtered vendor artifacts are")
+print("proved: all 9 cases behave as specified - the two pre-filtered vendor artifacts are")
 print("REJECTED and rebuilt for nuclei, a cell-called matrix is ACCEPTED and named for cells, and an")
 print("undeclared species or assay blocks rather than defaulting")

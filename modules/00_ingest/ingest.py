@@ -30,7 +30,9 @@ nothing on this route reads.
 WHAT IS DECLARED AND WHAT IS NOT
 
 `platform`, `species` and `reference` are DECLARED with no defaults, because the pipeline cannot
-infer them and a wrong guess is silent. The doublet-rate model is platform-specific: applying one
+infer them and a wrong guess is silent. The platform names the aligner that would rebuild a matrix
+from FASTQ, so it must be one this pipeline can align only on that route; a verified supplied matrix
+from any declared platform is accepted, and the record says no processor was involved. The doublet-rate model is platform-specific: applying one
 platform's loading formula to another platform's run imported a 19.65% against 14.98% condition
 differential into the calibration cohort's primary readout. Gene-class patterns are equally
 specific - the regex that selects mitochondrial or ribosomal genes depends on the naming
@@ -64,8 +66,24 @@ REQUIRED = ("sample", "platform", "species", "reference", "assay")
 #: pipeline had run WAS single-nucleus. A cell or a nucleus is a fact about the experiment; it has
 #: no default.
 ASSAYS = ("snrna", "scrna")
+#: The aligner that REBUILDS a matrix from FASTQ, per platform. Read on the FASTQ route only
+#: (harness autodev W020, B1-048): a verified supplied matrix needs no aligner, so any declared
+#: platform is accepted with one and recorded `processor: none (supplied matrix)` when it has none.
 PROCESSOR = {"10x": "cellranger", "singleron": "celescope"}
 FUTURE = {"bgi": "not implemented - declare it and the run will refuse rather than guess"}
+#: What the record says when a supplied matrix was accepted on a platform this pipeline cannot
+#: align: nothing was, or would have been, rebuilt.
+NO_PROCESSOR = "none (supplied matrix)"
+
+
+def _processor_refusal(p: str) -> str:
+    """Why the FASTQ route cannot run for platform `p`, or '' when it can."""
+    if p in FUTURE:
+        return f"platform '{p}': {FUTURE[p]}"
+    if p not in PROCESSOR:
+        return (f"platform '{p}' has no aligner here ({', '.join(sorted(PROCESSOR))} do), so "
+                f"nothing can be rebuilt from FASTQ - supply a verified matrix instead")
+    return ""
 
 @dataclass
 class Plan:
@@ -98,10 +116,13 @@ def validate_row(row: dict, registry: dict) -> list:
         if not str(row.get(c, "")).strip():
             errs.append(f"'{c}' is required and has no default - the pipeline cannot infer it")
     p = str(row.get("platform", "")).strip().lower()
-    if p in FUTURE:
-        errs.append(f"platform '{p}': {FUTURE[p]}")
-    elif p and p not in PROCESSOR:
-        errs.append(f"platform '{p}' unknown; supported: {', '.join(sorted(PROCESSOR))}")
+    # THE PLATFORM SELECTS AN ALIGNER, AND ONLY THE FASTQ ROUTE RUNS ONE (B1-048). It is checked
+    # here only where the route is already certain - no matrix, FASTQ given; a supplied matrix's
+    # route is the verdict's, and plan_one checks the platform if that verdict sends it to FASTQ.
+    if p and not str(row.get("matrix", "")).strip() and str(row.get("fastq_r1", "")).strip():
+        why = _processor_refusal(p)
+        if why:
+            errs.append(why)
     a = str(row.get("assay", "")).strip().lower()
     if a and a not in ASSAYS:
         errs.append(f"assay '{a}' unknown; supported: {', '.join(ASSAYS)} - a cell and a nucleus "
@@ -119,7 +140,7 @@ def plan_one(row: dict, registry: dict, stats_fn) -> Plan:
     """Decide how this sample is ingested. `stats_fn(path)` returns matrix summary stats."""
     sample = str(row.get("sample", "?")).strip()
     platform = str(row.get("platform", "")).strip().lower()
-    proc = PROCESSOR.get(platform, "?")
+    proc = PROCESSOR.get(platform, NO_PROCESSOR)
 
     errs = validate_row(row, registry)
     if errs:
@@ -128,14 +149,19 @@ def plan_one(row: dict, registry: dict, stats_fn) -> Plan:
     matrix = str(row.get("matrix", "")).strip()
     has_fastq = bool(str(row.get("fastq_r1", "")).strip())
 
+    def fastq_route(why: str, v=None) -> Plan:
+        # Every route to the aligner comes through here, so the platform is checked on each.
+        refusal = _processor_refusal(platform)
+        if refusal:
+            return Plan(sample, platform, proc, "blocked", f"{why}; {refusal}", v)
+        return Plan(sample, platform, proc, "run", why, v)
+
     if not matrix:
-        return Plan(sample, platform, proc, "run",
-                    "no matrix supplied - running the processor from FASTQ")
+        return fastq_route("no matrix supplied - running the processor from FASTQ")
 
     if not Path(matrix).exists():
         if has_fastq:
-            return Plan(sample, platform, proc, "run",
-                        f"matrix '{matrix}' does not exist - falling back to FASTQ")
+            return fastq_route(f"matrix '{matrix}' does not exist - falling back to FASTQ")
         return Plan(sample, platform, proc, "blocked",
                     f"matrix '{matrix}' does not exist and no FASTQ was given")
 
@@ -156,8 +182,7 @@ def plan_one(row: dict, registry: dict, stats_fn) -> Plan:
     if has_fastq:
         # NOT a warning. A matrix that fails is not usable, and continuing with it is how a
         # cell-called matrix reaches an ambient model that needs empty droplets.
-        return Plan(sample, platform, proc, "run",
-                    "supplied matrix REJECTED - rebuilding from FASTQ", v)
+        return fastq_route("supplied matrix REJECTED - rebuilding from FASTQ", v)
     return Plan(sample, platform, proc, "blocked",
                 "supplied matrix REJECTED and no FASTQ to rebuild from", v)
 

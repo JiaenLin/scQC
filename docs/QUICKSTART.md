@@ -53,7 +53,7 @@ S2	singleron	mus_musculus	mus_musculus/ensembl_112	snrna	/data/S2/outs/raw	mt-	^
 | column | required | what it is |
 |---|---|---|
 | `sample` | **yes** | unique library name; every output is keyed by it |
-| `platform` | **yes** | `10x` or `singleron`. Anything else refuses rather than guessing |
+| `platform` | **yes** | declared, no default. To rebuild a matrix from FASTQ it must be `10x` or `singleron` (the aligners this pipeline runs), and anything else refuses rather than guessing; a verified supplied `matrix` from any platform is accepted, recorded `processor: none (supplied matrix)` |
 | `species` | **yes** | for the record and the reference resolution |
 | `reference` | **yes** | the genome/annotation the counts were made against, as a `<species>/<build>` key of the project's registry |
 | `assay` | **yes** | `snrna` (nuclei) or `scrna` (whole cells). It sets the mitochondrial bound and the ambient policy, and it has **no default**: until 2026-10-02 it was optional, never reached the mitochondrial step, and every cohort was bounded as single-nucleus |
