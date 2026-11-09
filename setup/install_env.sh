@@ -27,7 +27,8 @@
 #   core        conf/env/requirements.lock.txt
 #   cellbender  conf/env/cellbender.lock.txt; it must pin cellbender 0.3.2, torch 2.5.1 and numpy
 #               1.26.4, and no other version of those is accepted (conf/env/install_cellbender.sh)
-#   rdoublet    R 4.3.3, scDblFinder 1.16.0, xgboost 1.7.6 (conf/env/install_rdoublet.sh)
+#   rdoublet    R 4.3.3, scDblFinder 1.16.0, xgboost 1.7.6 (R reports 1.7.6.1) and Matrix 1.6.5
+#               (conf/env/install_rdoublet.sh)
 #
 # Uses micromamba by default and FETCHES it into --prefix/bin if absent; mamba is used if
 # present, conda only as a last resort. Nothing is installed outside --prefix.

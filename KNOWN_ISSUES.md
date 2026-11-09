@@ -130,8 +130,15 @@ unrunnable, silently, until the next run was attempted. `R_HOME` does not overri
 `conf/env/install_rdoublet.sh` also pinned `r-base` and `r-xgboost` but **not**
 `bioconductor-scdblfinder`, so rebuilding to repair a move could change the doublet caller — which
 is not something to do in the middle of measuring a different change. **Pinned** by the harness's
-autodev wave W014: R 4.3.3, scDblFinder 1.16.0 (Bioconductor 3.18), SingleCellExperiment 1.24.0 and
-xgboost 1.7.6, each read back after the build and refused if different. The rest of that conda
+autodev wave W014, at the versions the calibration run's own report records for the environment that
+scored its doublets: R 4.3.3, scDblFinder 1.16.0 (Bioconductor 3.18), SingleCellExperiment 1.24.0,
+xgboost and Matrix. A package has two numbers here: the specification names conda's (`r-xgboost=1.7.6`
+as a cpu build, `r-matrix=1.6_5`), and the check after the build reads R's, which is what scDblFinder
+runs against - xgboost **1.7.6.1** (conda-forge's 1.7.6 installs that CRAN release) and Matrix 1.6.5 - and
+reads the cpu build from the environment's conda record. Any difference is refused; an environment that
+existed is not modified, and the refusal says to remove it and re-run, or build into a new prefix.
+W014's first version compared R's report with conda's 1.7.6 and so refused every correct environment;
+`tests/test_the_doublet_environment_is_read_as_r_reports_it.py` fails on it. The rest of that conda
 environment is not pinned (section 7).
 
 ## 4. Smaller, all confirmed
@@ -244,7 +251,10 @@ Fixed, each with a test that fails before it:
   other than the one this pipeline was calibrated with. The environment is one lock now,
   `conf/env/cellbender.lock.txt`, built by one recipe, `conf/env/install_cellbender.sh`, which requires
   cellbender 0.3.2, torch 2.5.1 and numpy 1.26.4 of the lock and refuses any other before anything is
-  built, and refuses an environment holding any other after. `tests/test_the_denoiser_environment_is_pinned.py`.
+  built, and refuses an environment holding any other after. Of the three, cellbender 0.3.2 and torch
+  2.5.1 are on record for the environment that made the calibration's denoised objects; numpy 1.26.4 is
+  not - it is the pin drafted together with torch - and `--check` says which is which.
+  `tests/test_the_denoiser_environment_is_pinned.py`.
 - **The core lock built an environment its own suite failed in.** It had no pyarrow, which
   `tests/test_native_io.py` needs, and it was a workstation's freeze: a notebook stack, a Windows-only
   package, and not a closure on linux. It is the cluster environment's 55 pins now, interpreter 3.12.13,
@@ -267,7 +277,7 @@ Open:
 - **The pin does not make CellBender 0.3.2 able to write its checkpoint.** pyro attaches a weakref
   (`.unconstrained`) to every parameter it manages; recent torch pickles a parameter's `__dict__`, so
   `torch.save` raises `cannot pickle 'weakref'` after the last epoch and the posterior step finds no
-  checkpoint. The calibration runs met this in the environment whose versions the lock pins, and saved
+  checkpoint. The calibration runs met this in the environment whose torch the lock pins, and saved
   through a wrapper outside this repository that detaches the attribute around the save.
   `adapters/cellbender.py` refuses the empty result; it does not work around the cause. MEASURED
   (2026-11-09, torch 2.5.1, CPU build): `torch.save` of a `Parameter` carrying a weakref attribute raises
@@ -275,7 +285,7 @@ Open:
   while the bare `Parameter` pickles. So a denoiser task run inside scQC is expected to fail this way under
   the pinned torch too; that last step is an INFERENCE, not measured inside scQC.
 - **The conda half is not locked.** The R environment pins R, scDblFinder (and with it its
-  Bioconductor release) and xgboost; Matrix, the other CRAN packages and the BLAS are solved when it is
+  Bioconductor release), xgboost and Matrix; the other CRAN packages and the BLAS are solved when it is
   built. The interpreters are pinned to the patch, their conda builds are not, and the micromamba the
   installer fetches is the newest.
 - **Linux x86_64 only, for the denoiser.** Its lock names torch's CUDA 12.1 build, which exists for no

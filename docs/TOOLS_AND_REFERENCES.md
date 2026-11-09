@@ -58,7 +58,7 @@ conf/env/
   lock.sh                     reads, checks and applies a lock (sourced by the installers)
   install_cellbender.sh       the denoiser, from its lock: cellbender 0.3.2, torch 2.5.1, numpy 1.26.4
   install_cs_cb.sh            celescope 2.7.3; its cellbender component calls install_cellbender.sh
-  install_rdoublet.sh         R 4.3.3, scDblFinder 1.16.0, xgboost 1.7.6 — the supported route
+  install_rdoublet.sh         R 4.3.3, scDblFinder 1.16.0, xgboost, Matrix — the supported route
   install_scdblfinder.sh      superseded: the same packages built from source
   build_reference.sh          the reference build, start to finish
   conda_pkgs_v2.7.3.txt       the celescope solve
@@ -74,9 +74,12 @@ checked against its pins and never modified, so re-running it cannot disturb an 
 is currently using — and an environment that does not match is refused, not reused.
 
 The denoiser's lock must pin torch 2.5.1 and numpy 1.26.4: the installer refuses a lock naming any other
-version, or naming torch unpinned, before anything is built. The R environment's conda half is pinned
-only where it decides the scores (R, scDblFinder and its Bioconductor release, xgboost); Matrix, the
-other CRAN packages and the BLAS are solved at build time, and the versions solved are printed.
+version, or naming torch unpinned, before anything is built. Torch 2.5.1 is on record for the environment
+that made the calibration's denoised objects; numpy 1.26.4 is the pin drafted with it, and `--check` says
+so. The R environment's conda half is pinned only where it decides the scores (R, scDblFinder and its
+Bioconductor release, xgboost, Matrix); the other CRAN packages and the BLAS are solved at build time.
+A pinned R package is checked as R reports it, which is not always conda's number: conda-forge's
+`r-xgboost` 1.7.6 is R's xgboost 1.7.6.1, and `r-matrix` 1.6_5 is Matrix 1.6.5.
 
 ## One version fact worth carrying
 
