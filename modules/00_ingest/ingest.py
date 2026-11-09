@@ -19,6 +19,14 @@ So a supplied matrix is not accepted because it exists. It is accepted because i
 A matrix can pass P1 and fail P2 - that is the usual failure - and P2 is the one that matters
 next: an ambient model learns the background profile FROM the empty droplets.
 
+ON SINGLE CELLS A CELL-CALLED MATRIX IS ACCEPTED, AND SAID TO BE ONE (harness autodev W020, B1-046).
+No ambient model runs on cells and nothing in their route reads an empty droplet, so P2 is required
+on `snrna` only (`verify_raw.P2_REQUIRED`). A single-cell matrix that fails P2 alone - the authors'
+filtered cells, which is how most public single-cell data is published - is ACCEPTED as a
+cell-called input: the plan says so, the run records it, and nothing downstream treats its barcodes
+as droplets. A FASTQ given beside it is not used: rebuilding the droplets would buy empties that
+nothing on this route reads.
+
 WHAT IS DECLARED AND WHAT IS NOT
 
 `platform`, `species` and `reference` are DECLARED with no defaults, because the pipeline cannot
@@ -44,7 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
-from verify_raw import verify # noqa: E402
+from verify_raw import CALLED_INPUT_NOTE, verify # noqa: E402
 
 REQUIRED = ("sample", "platform", "species", "reference", "assay")
 #: The assays this pipeline has a policy for. `modules/01_ambient` (ASSAYS) and `modules/05_quality`
@@ -68,12 +76,17 @@ class Plan:
     reason: str = ""
     verdict: object = None
 
+    @property
+    def input_kind(self):
+        """'raw_droplets', 'called_cells', or None where no supplied matrix was verified."""
+        return None if self.verdict is None else self.verdict.input_kind
+
     def __str__(self) -> str:
         head = {"accept": "ACCEPT", "run": "RUN ", "blocked": "BLOCKED"}[self.mode]
         s = f"[{head}] {self.sample:12s} {self.platform:10s} -> {self.processor}"
         if self.reason:
             s += f"\n {self.reason}"
-        if self.verdict is not None and not self.verdict.usable:
+        if self.verdict is not None and (not self.verdict.usable or self.verdict.called_input):
             for r in self.verdict.reasons:
                 s += f"\n - {r}"
         return s
@@ -127,7 +140,16 @@ def plan_one(row: dict, registry: dict, stats_fn) -> Plan:
                     f"matrix '{matrix}' does not exist and no FASTQ was given")
 
     st = stats_fn(matrix)
-    v = verify(name=matrix, **st)
+    assay = str(row.get("assay", "")).strip().lower()
+    v = verify(name=matrix, assay=assay, **st)
+    if v.usable and v.called_input:
+        # ACCEPTED AND NAMED. Not a pass of P2 - the verdict keeps p2_raw_droplets False - and not
+        # a silent one: the plan, the run's input record and STATUS.json all say cell-called.
+        return Plan(sample, platform, proc, "accept",
+                    f"supplied matrix verified: raw values; CELL-CALLED, no empty droplets - "
+                    f"accepted on {assay}, where nothing reads an empty droplet ({CALLED_INPUT_NOTE})"
+                    + (". The FASTQ given was not used: rebuilding the droplets buys empties nothing "
+                       "on this route reads" if has_fastq else ""), v)
     if v.usable:
         return Plan(sample, platform, proc, "accept",
                     "supplied matrix verified: raw values AND raw droplets", v)

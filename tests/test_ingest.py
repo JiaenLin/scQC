@@ -11,6 +11,10 @@ right answer:
   5 missing 'species' DECLARED field with no default -> must BLOCK
   6 missing 'assay' -> must BLOCK (it had a silent default of single-nucleus)
   7 an assay with no policy -> must BLOCK, not be read as either
+  8 a CELL-CALLED matrix (min UMI 500) on SINGLE CELLS -> ACCEPTED and named cell-called; the same
+    row on single NUCLEI -> BLOCKED without FASTQ, rebuilt with it (harness autodev W020, B1-046:
+    P2 is required where an empty-droplet model consumes it, and none runs on cells); a P1 failure
+    is rejected on both; verify() takes no default assay
 """
 import sys
 from pathlib import Path
@@ -93,6 +97,48 @@ for label, assay, says in (("6 assay omitted", "", "'assay' is required"),
     if p.mode != "blocked" or says not in p.reason:
         fails.append(f"{label}: expected blocked saying {says!r}, got {p.mode}: {p.reason}")
 
+# 8. A CELL-CALLED MATRIX ON SINGLE CELLS (harness autodev W020, B1-046). The register's CHECK:
+# a scrna row with min_counts 500 is accepted; the same snrna row is blocked.
+print()
+for assay, fastq, expect in (("scrna", "", "accept"), ("snrna", "", "blocked"),
+                             ("scrna", "x_R1.fq.gz", "accept"), ("snrna", "x_R1.fq.gz", "run")):
+    row = {"sample": f"8 {assay} cell-called{' +FASTQ' if fastq else ''}", "platform": "10x",
+           "species": SPECIES, "reference": REF, "assay": assay, "matrix": __file__,
+           "fastq_r1": fastq}
+    p = plan_one(row, REG, stats_fn=lambda _p: STATS["vendor_tar"])
+    print(p)
+    if p.mode != expect:
+        fails.append(f"8 {assay}{' +FASTQ' if fastq else ''}: expected {expect}, got {p.mode}: "
+                     f"{p.reason}")
+    if assay == "scrna":
+        kind = getattr(p, "input_kind", None)
+        if kind != "called_cells" or "CELL-CALLED" not in p.reason:
+            fails.append(f"8 {assay}: accepted without being named a cell-called input "
+                         f"(input_kind {kind!r}): {p.reason}")
+        if p.verdict is None or p.verdict.p2_raw_droplets:
+            fails.append(f"8 {assay}: the P2 failure was not kept in the verdict")
+    print()
+# P1 is required on every assay: the vendor's capped, gene-subset object is rejected for cells too.
+row = {"sample": "8 scrna capped object", "platform": "10x", "species": SPECIES, "reference": REF,
+       "assay": "scrna", "matrix": __file__}
+p = plan_one(row, REG, stats_fn=lambda _p: STATS["vendor_h5ad"])
+print(p)
+if p.mode != "blocked":
+    fails.append(f"8 scrna with a P1 failure: expected blocked, got {p.mode}")
+sys.path.insert(0, str(HERE.parent / "lib"))
+import verify_raw as _vr  # noqa: E402
+try:
+    _vr.verify(name="x", **STATS["vendor_tar"])
+    fails.append("8: verify() ran with no assay - a default assay would lend one assay's rule to the other")
+except TypeError:
+    pass
+for bad in ("", "spatial"):
+    try:
+        _vr.verify(name="x", assay=bad, **STATS["vendor_tar"])
+        fails.append(f"8: verify() accepted assay {bad!r}")
+    except ValueError:
+        pass
+
 # THE THREE LISTS OF ASSAYS ARE ONE LIST. Ingest admits an assay, ambient chooses a policy for it
 # and quality bounds it; an assay admitted by one and unknown to another refuses three steps late.
 import ast  # noqa: E402
@@ -105,6 +151,7 @@ def _literal(rel, name):
     raise AssertionError(f"{name} not found in {rel}")
 
 _lists = {"ingest.ASSAYS": set(_ing.ASSAYS),
+          "verify_raw.P2_REQUIRED": set(_vr.P2_REQUIRED),
           "ambient.ASSAYS": set(_literal("modules/01_ambient/ambient.py", "ASSAYS")),
           "quality.MITO_BOUNDS": set(_literal("modules/05_quality/quality.py", "MITO_BOUNDS"))}
 if len({frozenset(v) for v in _lists.values()}) != 1:
@@ -116,5 +163,6 @@ if fails:
     for f in fails:
         print(" -", f)
     raise SystemExit(1)
-print("proved: all 7 cases behave as specified - the two pre-filtered vendor artifacts are")
-print("REJECTED and rebuilt, and an undeclared species or assay blocks rather than defaulting")
+print("proved: all 8 cases behave as specified - the two pre-filtered vendor artifacts are")
+print("REJECTED and rebuilt for nuclei, a cell-called matrix is ACCEPTED and named for cells, and an")
+print("undeclared species or assay blocks rather than defaulting")

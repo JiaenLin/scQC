@@ -3358,10 +3358,18 @@ def _op_convert(adata, params, out_prefix) -> tuple:
     #     cells). Every barcode in it must be a droplet of the raw matrix: a call naming droplets
     #     the matrix does not hold is a call from a different run.
     #   * no `cell_barcodes` - the denoiser's own: a droplet it called empty keeps zero counts.
+    #   * `all_called` - a CELL-CALLED input (harness autodev W020, B1-046): the matrix holds
+    #     called cells only, and every barcode in it is the call. Said so in `cell_call`.
     key = params.get("cell_key")
     if key:
         names = [str(b) for b in ad_.obs_names]
-        if params.get("cell_barcodes"):
+        if params.get("all_called"):
+            if params.get("cell_barcodes"):
+                raise TaskFailure("convert: `all_called` and `cell_barcodes` are two different "
+                                  "cell calls; pass one.")
+            mask = np.ones(len(names), dtype=bool)
+            met["cell_call"] = "input"
+        elif params.get("cell_barcodes"):
             wanted = mx.called_barcodes(params["cell_barcodes"])
             have = set(names)
             absent = [b for b in wanted if b not in have]

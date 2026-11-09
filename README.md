@@ -86,7 +86,7 @@ threshold afterwards and they no longer apply.
 
 | # | step | does | removes |
 |---|---|---|---|
-| 0 | ingest | validate samplesheet, resolve reference, verify input is raw | — |
+| 0 | ingest | validate samplesheet, resolve reference, verify the input: raw values always, raw droplets where a denoiser needs them (nuclei) | — |
 | 1 | ambient | denoise (CellBender) or accept a denoised object; audit the removal | — |
 | 2 | cell call | compare aligner and denoiser calls; gate the loss | — |
 | 3 | light floor | technical floor for doublet scoring — not a quality filter | — |
@@ -100,9 +100,13 @@ Nuclei are denoised (mandatory), and the denoiser's call is the cell call. Singl
 **not denoised by this pipeline**: the raw counts are the object, the aligner's call
 (`aligner_cells`) is the cell call, and the count bounds and the cluster check are the
 whole-cell ones. Apply mode runs on single cells too: step 7's cell criterion is
-`fail_not_aligner_cell`, over the aligner's called cells. A library supplied already denoised
-(`ambient_h5`, with its provenance) is used as supplied on either assay, and its cell call is the
-denoiser's.
+`fail_not_aligner_cell`, over the aligner's called cells. A single-cell library may also arrive
+as called cells only - the authors' filtered matrix, as most public single-cell data is published:
+it is accepted as a **cell-called input**, its own barcodes are the cell call, and the run records,
+per library and in STATUS.json, that it holds no empty droplets - so no ambient estimate, no
+empty-droplet model and no barcode-rank figure. On nuclei a cell-called matrix is still rejected:
+the denoiser needs the empties. A library supplied already denoised (`ambient_h5`, with its
+provenance) is used as supplied on either assay, and its cell call is the denoiser's.
 Doublet scoring precedes quality filtering, as scDblFinder's documentation requires.
 
 📄 **[Why each step exists](docs/RATIONALE.md)** · **[How each filter is

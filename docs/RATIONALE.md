@@ -34,7 +34,9 @@ rather than by preference.
   its name, not its shape, not a header field. That matters immediately, because an ambient model
   learns its background profile **from the empty droplets**. Hand it a cell-called matrix and
   "ambient correction is not possible with these files" becomes available as a conclusion, and it
-  reads on the page exactly like a real finding.
+  reads on the page exactly like a real finding. That is a nucleus's requirement: on single cells
+  no ambient model runs, so a cell-called matrix is accepted there - and named, with what it cannot
+  support - rather than refused.
 - **1 · ambient** — a nucleus holds roughly an order of magnitude less RNA than the cell it came
   from, and the ambient pool in a nuclear prep *is* the cytoplasm of the cells lysed to make it.
   A pipeline that leaves that in place for snRNA-seq is not applying a lighter touch; it is

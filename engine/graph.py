@@ -148,9 +148,18 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             f"05_quality: `cellreads_stats` is declared for single-cell libraries "
             f"({', '.join(nf_on_cells)}). The nuclear-fraction criterion is calibrated on nuclei "
             f"and points the other way in a whole cell; remove the column for scrna.")
+    # A CELL-CALLED INPUT IS ITS OWN CELL CALL (harness autodev W020, B1-046). Step 0 accepts, on
+    # single cells, a matrix that holds called cells only - the authors' filtered cells - and says
+    # so in its metrics. Such a matrix needs no `aligner_cells`: every barcode in it is a cell
+    # somebody called, and that is recorded as the cell call (`input`). A RAW-droplet matrix with
+    # no `aligner_cells` is still refused: its barcodes are droplets, and taking them as cells is
+    # the one thing this route must never do.
+    called_input = {s for s in by_sample
+                    if (ingest.get(s) or {}).get("input_kind") == "called_cells"}
     if not_denoised:
         lacking = [s for s in not_denoised
-                   if not str(by_sample[s].get("aligner_cells") or "").strip()]
+                   if not str(by_sample[s].get("aligner_cells") or "").strip()
+                   and s not in called_input]
         if lacking:
             raise Refusal(
                 f"01_ambient: {', '.join(lacking)} {'is' if len(lacking) == 1 else 'are'} not "
@@ -158,7 +167,9 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 f"the aligner's - and the samplesheet gives no `aligner_cells` for "
                 f"{'it' if len(lacking) == 1 else 'them'}. Name the aligner's filtered matrix "
                 f"directory (CellRanger filtered_feature_bc_matrix, CeleScope outs/filtered). "
-                f"Refused before anything is submitted.")
+                f"The matrix given holds its empty droplets, so its barcodes are not cells; a "
+                f"matrix of called cells only would be its own call. Refused before anything is "
+                f"submitted.")
         # Apply mode was refused here until step 7 could name its cell criterion for the
         # aligner: `fail_not_aligner_cell`, read from the column step 1 wrote, over the called
         # cells only (adapters/scanpy_ops, ALIGNER_CELL_CRITERION).
@@ -181,9 +192,12 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             aligner = str(by_sample[s].get("aligner_cells") or "").strip()
             tasks.append(Task(
                 key=k, step="01_ambient", sample=s, fn=steps._ambient_none, needs=needs,
-                inputs=(str(raw_of[s]), aligner),
+                inputs=tuple(x for x in (str(raw_of[s]), aligner) if x),
                 params={"raw": str(raw_of[s]), "assay": assay.get(s),
-                        "python_exe": python_exe, "aligner_cells": aligner},
+                        "python_exe": python_exe, "aligner_cells": aligner,
+                        # The input's own barcodes are the call: a cell-called matrix, no
+                        # `aligner_cells`. Absent otherwise, so the task is what it was.
+                        **({"cell_call": "input"} if not aligner else {})},
                 # A conversion, not a denoising: no GPU. The raw matrix holds every droplet
                 # (two million on a 10x run), sparse, read once.
                 outputs=(str(h5),), cpus=2, memory_gb=32, walltime_h=2,
@@ -254,6 +268,9 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 "no_raw": [s for s in by_sample if not raw_of.get(s)],
                 # Named, not dropped: no corrected matrix exists to measure a fraction against.
                 "not_denoised": not_denoised,
+                # And a cell-called input has no empty droplets to estimate ambient RNA from at
+                # all, by any method. Passed only when there is one.
+                **({"called_input": sorted(called_input)} if called_input else {}),
                 "supplied": supplied_of,
                 "design": design},
     ))
@@ -272,7 +289,10 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     call_paths = {}
     # Who called each library's cells: the denoiser, or - where none ran - the aligner. Every step
     # that selects cells reads the call from the column step 1 wrote for that caller.
-    call_by = {s: ("aligner" if s in not_denoised else "denoiser") for s in by_sample}
+    call_by = {s: ("denoiser" if s not in not_denoised else
+                   "input" if (s in called_input
+                               and not str(by_sample[s].get("aligner_cells") or "").strip())
+                   else "aligner") for s in by_sample}
     call_key = {s: ("aligner_cell" if s in not_denoised else None) for s in by_sample}
     for s, row in by_sample.items():
         cb_csv = str(row.get("cellbender_barcodes") or "").strip()

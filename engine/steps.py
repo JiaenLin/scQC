@@ -236,10 +236,23 @@ def _ingest(task, pipeline, log):
              "p1_raw_values": None if v is None else bool(v.p1_raw_values),
              "p2_raw_droplets": None if v is None else bool(v.p2_raw_droplets),
              "reasons": list(getattr(v, "reasons", []) or [])}
+    # A CELL-CALLED INPUT, NAMED WHERE IT IS FOUND (harness autodev W020, B1-046). On single cells a
+    # matrix that fails P2 alone is accepted, and the record has to say so in a field a reader and a
+    # host can test, not only in a reason's words: what it holds, that P2 was not required here, and
+    # what that input cannot support. Absent on a raw-droplet input, whose record is as it was.
+    called = bool(v is not None and getattr(v, "called_input", False))
+    if called:
+        lib = step_module("verify_raw")
+        check.update({"input_kind": "called_cells", "p2_required": False,
+                      "note": lib.CALLED_INPUT_NOTE})
 
     outs: list = []
     curve = measured.get("barcode_rank")
-    if curve:
+    # NO CURVE FROM A CELL-CALLED INPUT. F1 is the picture of a raw droplet matrix - the knee where
+    # cells give way to empties - and a matrix holding only called cells has no empties: its curve
+    # would be drawn on the same axes and read as a droplet curve with the empties missing. F1 is
+    # UNAVAILABLE for that library, and the record above says why.
+    if curve and not called:
         import csv as _csv
 
         out = _tables(pipeline) / f"{sample}.barcode_rank.csv"
@@ -253,8 +266,9 @@ def _ingest(task, pipeline, log):
     return {"outputs": outs,
             "metrics": {"mode": plan.mode, "processor": plan.processor,
                         "reason": plan.reason,
-                        "n_rank_points": len(curve) if curve else None,
-                        "input_check": check},
+                        "n_rank_points": len(curve) if (curve and not called) else None,
+                        "input_check": check,
+                        **({"input_kind": "called_cells"} if called else {})},
             "versions": {}}
 
 
@@ -327,18 +341,28 @@ def _ambient_none(task, pipeline, log):
             f"is the route for one that is not. The graph sent it the wrong way.")
     print(f"    {plan}")
     out_h5 = _objects(pipeline) / f"{s}_ambient.h5"
+    # A CELL-CALLED INPUT (harness autodev W020, B1-046): the matrix holds called cells only and no
+    # `aligner_cells` was given, so every barcode in it is the call - written into the same column,
+    # recorded as the input's call, never as an aligner's and never as droplets.
+    called_input = task.params.get("cell_call") == "input"
     conv = _scanpy(pipeline, "convert", Path(task.params["raw"]),
                    pipeline.scratch / f"{s}_convert",
                    {"source": str(task.params["raw"]), "dest": str(out_h5),
                     "cell_key": "aligner_cell",
-                    "cell_barcodes": str(task.params["aligner_cells"])}, log,
+                    **({"all_called": True} if called_input else
+                       {"cell_barcodes": str(task.params["aligner_cells"])})}, log,
                    task.params["python_exe"])
     m = conv.get("metrics", {}) or {}
-    print(f"    {s:<14} {m.get('droplets', 0):>9,} droplets kept   "
-          f"{m.get('cells_called', 0):>7,} called by the aligner   (NOT denoised)")
+    if called_input:
+        print(f"    {s:<14} {m.get('cells_called', 0):>9,} cells - a CELL-CALLED input: no empty "
+              f"droplets, every barcode the input's call   (NOT denoised)")
+    else:
+        print(f"    {s:<14} {m.get('droplets', 0):>9,} droplets kept   "
+              f"{m.get('cells_called', 0):>7,} called by the aligner   (NOT denoised)")
     return {"outputs": [str(out_h5)],
             "metrics": {"state": plan.state, "reason": plan.reason, "converted": m,
-                        "cell_call": "aligner", "corrected_here": 0},
+                        "cell_call": "input" if called_input else "aligner", "corrected_here": 0,
+                        **({"input_kind": "called_cells"} if called_input else {})},
             "versions": {}}
 
 
@@ -434,6 +458,22 @@ def _ambient_audit(task, pipeline, log):
         print(f"    NOT DENOISED: {len(not_denoised)} library(ies) "
               f"({', '.join(sorted(not_denoised))}) - this pipeline does not denoise their assay "
               f"(modules/01_ambient, DENOISE). Their ambient fraction is NOT MEASURED.")
+    # NOT ESTIMABLE, a stronger statement than not measured (harness autodev W020, B1-046): a
+    # cell-called input holds no empty droplets, so no method could estimate its ambient RNA from
+    # it, and no empty-droplet model can run on it. Recorded as a finding the report carries.
+    called_input = list(task.params.get("called_input") or [])
+    if called_input:
+        print(f"    CELL-CALLED INPUT: {len(called_input)} library(ies) "
+              f"({', '.join(sorted(called_input))}) hold called cells only - no empty droplets, "
+              f"so ambient RNA is NOT ESTIMABLE from them and no empty-droplet model can run.")
+        aa_mod = step_module("audit_ambient")
+        pipeline.record_findings("01_ambient", [aa_mod.Finding(
+            "cell-called input: no empty droplets", "REVIEW",
+            f"{len(called_input)} library(ies) arrived as called cells only "
+            f"({', '.join(sorted(called_input))}). With no empty droplets, ambient RNA cannot be "
+            f"estimated from them by any method and no empty-droplet model can run; the barcode-"
+            f"rank figure (F1) is unavailable for them. Their cell call is the input's own.",
+            [f"{s}: cell-called input" for s in sorted(called_input)])])
     if not rows:
         pipeline.gate("01_ambient", [], "NOT RUN")
         return {"outputs": [str(out)],
@@ -587,18 +627,22 @@ def _cellcall(task, pipeline, log):
     calls, missing, notes, aligner_only = {}, [], [], {}
     for s in task.params["samples"]:
         pth = paths.get(s) or {}
-        if by.get(s) == "aligner":
+        if by.get(s) in ("aligner", "input"):
             # NOTHING TO COMPARE. With no denoiser the aligner's call IS the cell call (step 1
             # wrote it), and comparing it with itself would print "0 lost" - a tautology that
             # reads exactly like a gate that ran and passed. Counted, and said to be uncompared.
+            # A cell-called input (`input`) is the same case: its own barcodes are the call.
             r = pipeline.results_by_key.get(f"05_quality/{s}")
             n = (getattr(r, "metrics", None) or {}).get("n_called") if r else None
             if n is None:
                 missing.append(f"{s}: no aligner call was measured from {s}_ambient.h5")
                 continue
             aligner_only[s] = int(n)
-            print(f"    {s:<14} aligner {int(n):>7,}   (no denoiser: the aligner's call is the "
-                  f"cell call, and there is nothing to compare it with)")
+            print(f"    {s:<14} aligner {int(n):>7,}   " + (
+                "(a cell-called input: its own barcodes are the cell call, and there is nothing "
+                "to compare them with)" if by.get(s) == "input" else
+                "(no denoiser: the aligner's call is the cell call, and there is nothing to "
+                "compare it with)"))
             continue
         a_path = pth.get("aligner")
         if not a_path:
@@ -1489,7 +1533,9 @@ def _cohort_assay(declared) -> str:
 
 #: Whose call the cells were, by the route a library took through step 1 (graph.py `call_by`).
 CALLED_CELLS_OF = {"aligner": "the aligner's called cells",
-                   "denoiser": "the denoiser's called cells"}
+                   "denoiser": "the denoiser's called cells",
+                   # A cell-called input: the matrix held called cells only (B1-046).
+                   "input": "the called cells the input matrix holds (a cell-called input)"}
 
 
 def _floors_applied_to(call_by, samples) -> str:

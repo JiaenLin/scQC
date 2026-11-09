@@ -282,7 +282,7 @@ def cmd_verify(a) -> int:
     verdict = v.verify(
         name=a.name, n_barcodes=a.barcodes, n_genes=a.genes, min_counts=a.min_counts,
         max_counts=a.max_counts, p98_counts=a.p98_counts,
-        expected_genes=a.expected_genes, integer_counts=not a.non_integer)
+        expected_genes=a.expected_genes, integer_counts=not a.non_integer, assay=a.assay)
     print(verdict)
     return 0 if verdict.usable else 2
 
@@ -706,10 +706,21 @@ def cmd_run(a) -> int:
                                                  "value": prm.get("value")}})
         except NameError:
             pass
+        # WHAT THIS RUN'S INPUTS CANNOT SHOW, beside what the tool never can. A cell-called input
+        # (harness autodev W020, B1-046) holds no empty droplets: said here, per library, in the
+        # file a host reads first.
+        cannot = []
+        for r in pipe.results_by_key.values():
+            m = getattr(r, "metrics", None) or {}
+            if r.key.startswith("00_ingest/") and m.get("input_kind") == "called_cells":
+                s = r.key.split("/", 1)[1]
+                cannot.append(f"{s}: a cell-called input - no empty droplets, so no ambient "
+                              f"estimate and no empty-droplet model; F1 (barcode rank) unavailable")
         run_status.finish(pipe.results, status=st, headline=stopped or {
             "ok": f"{len(rows)} libraries; deliverable written", "refused": "a gate refused",
             "failed": "a task failed"}[st], exit_code=code, refusal=refusal, escapes=escapes,
-            expected=["reports/report.json", "reports/payload.json"])
+            expected=["reports/report.json", "reports/payload.json"],
+            cannot_show=sorted(cannot))
         return code
 
     try:
@@ -771,6 +782,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--p98-counts", dest="p98_counts", type=float, required=True)
     r.add_argument("--expected-genes", dest="expected_genes", type=int)
     r.add_argument("--non-integer", action="store_true")
+    # REQUIRED, no default: whether the empty droplets must be there is the assay's (verify_raw,
+    # P2_REQUIRED) - a cell-called matrix is rejected for nuclei and accepted, named, for cells.
+    r.add_argument("--assay", required=True, choices=["snrna", "scrna"],
+                   help="snrna or scrna - P2 (raw droplets) is required on snrna only")
     r.set_defaults(fn=cmd_verify)
 
     g = sub.add_parser("gate-cells", help="did the denoiser drop cells the aligner kept?")

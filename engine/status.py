@@ -82,12 +82,16 @@ def begin(results: Path, *, tool: str, version: str, commit: str | None, state_v
 def finish(results: Path, *, status: str, headline: str, exit_code: int,
            refusal: dict | None = None, escapes: list | None = None,
            wrapped_versions: dict | None = None, absent: list | None = None,
-           expected: list | None = None) -> dict:
+           expected: list | None = None, cannot_show: list | None = None) -> dict:
     """Rewrite STATUS.json with the outcome and replace RUNNING.txt with a seal.
 
     `expected` names the products the run was supposed to write, relative to the run; a seal is
     SEALED only when the exit code is 0 AND every expected product is present and non-empty.
     A green light indistinguishable from a failure is worse than no light.
+
+    `cannot_show` adds what THIS run cannot show to what the tool declares it never can - a
+    cell-called input's missing empty droplets, for one (harness autodev W020, B1-046). Added,
+    never replacing the declaration's.
     """
     if status not in STATUSES:
         raise ValueError(f"status {status!r} is not one of {STATUSES}")
@@ -115,6 +119,9 @@ def finish(results: Path, *, status: str, headline: str, exit_code: int,
         "absent": list(absent or []),
         "missing": missing,
     })
+    if cannot_show:
+        rec["cannot_show"] = list(rec.get("cannot_show") or []) + [
+            c for c in cannot_show if c not in (rec.get("cannot_show") or [])]
     p.write_text(json.dumps(rec, indent=1, default=str) + "\n", encoding="utf-8")
     sealed = status == "ok" and exit_code == 0 and not missing
     seal = results / ("SEALED.txt" if sealed else "FAILED.txt")

@@ -161,7 +161,7 @@ All CSV, all readable with the standard library alone.
 | `<sample>_doublets.csv` | scored barcode | `barcode`, `doublet_score`, `doublet_class` |
 | `cell_calls.csv` | library | `aligner`, `denoiser`, `lost` |
 | `valleys_umi.csv`, `valleys_genes.csv` | library | `valley`, `bimodal`, `note` |
-| `<sample>.barcode_rank.csv` | **rank point** | the raw matrix's barcode-rank curve, downsampled log-uniformly: `rank`, `total_counts`, `n_barcodes`. Figure F1. Absent for a library rebuilt from FASTQ, which has no supplied matrix to measure |
+| `<sample>.barcode_rank.csv` | **rank point** | the raw matrix's barcode-rank curve, downsampled log-uniformly: `rank`, `total_counts`, `n_barcodes`. Figure F1. Absent for a library rebuilt from FASTQ, which has no supplied matrix to measure, and for a cell-called input on single cells, which has no empty droplets and so no droplet curve |
 | `<sample>.valley_density.csv` | grid point × metric | the KDE the valley was read off: `grid`, `grid_log10`, `density`, `is_valley`, `is_mode`. Figures F6 and F13 |
 | `<sample>.embedding.csv` | **barcode** | the 2-D coordinates of every barcode the denoiser called, with `clustered` and `cluster` joined on: `x`, `y`. Figures F10 and F11 |
 | `<sample>.light_floor.csv` | library | that library's export: how many barcodes cleared the floor, how many sat below it, how many were not selected |

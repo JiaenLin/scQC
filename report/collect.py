@@ -196,7 +196,11 @@ def _f1(tables: Path) -> dict:
     """The raw barcode-rank curve per library, and the aligner's cut where step 2 recorded one."""
     curves = _per_sample_tables(tables, ".barcode_rank.csv")
     if not curves:
-        raise FileNotFoundError("no <sample>.barcode_rank.csv in tables/")
+        # A cell-called input writes none (harness autodev W020, B1-046): it holds no empty
+        # droplets, so it has no droplet curve to draw. Its input record says so.
+        raise FileNotFoundError("no <sample>.barcode_rank.csv in tables/ - none is written for a "
+                                "cell-called input (no empty droplets: F1 unavailable) or for a "
+                                "library rebuilt from FASTQ")
     libraries = {}
     for s, rows in curves.items():
         pairs = [(_num(r.get("rank")), _num(r.get("total_counts"))) for r in rows]

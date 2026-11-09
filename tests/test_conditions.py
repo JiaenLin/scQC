@@ -15,6 +15,11 @@ and asserts each one completes - or is refused for its stated reason, never cras
   cells_depths     one deep and one shallow library
   mixed_assays     a cohort that mixes cells and nuclei - refused, by name
   no_mito_genes    a reference whose symbols match no mitochondrial prefix - refused, by name
+  cells_called_only  single cells delivered as the aligner's FILTERED matrices only, no
+                   `aligner_cells` - as most public single-cell data is published. Accepted as a
+                   cell-called input and named so: no barcode-rank table, STATUS.json says what it
+                   cannot show, the cell call is the input's own (harness autodev W020, B1-046)
+  cells_raw_no_call  the RAW matrices with no `aligner_cells` - refused: droplets are not cells
 
 The detector is a stand-in, so nothing here says the doublet calls are right; it says that the
 pipeline around them carries any honest cohort to a report, and to a deliverable where asked.
@@ -170,6 +175,51 @@ if HAVE:
         for r in rows:
             r["mt_prefix"] = "MITO-"
         refused("no_mito_genes", td, rows, HUMAN_REG, "MITO-")
+
+    # ---- a CELL-CALLED input on single cells (harness autodev W020, B1-046)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rows = cells(td, ["WT_1", "MUT_1"])
+        for r in rows:
+            r["matrix"], r["aligner_cells"] = r["aligner_cells"], ""
+
+        def called_only(R):
+            st = json.loads((R / "STATUS.json").read_text())
+            said = [c for c in st.get("cannot_show") or [] if "cell-called input" in c]
+            if sorted(c.split(":", 1)[0] for c in said) != ["MUT_1", "WT_1"]:
+                fails.append(f"cells_called_only: STATUS.json cannot_show does not name each "
+                             f"cell-called library: {said}")
+            if list((R / "tables").glob("*.barcode_rank.csv")):
+                fails.append("cells_called_only: a barcode-rank table was written for a matrix of "
+                             "called cells - a cells-only curve posing as a droplet curve")
+            pay = json.loads((R / "reports" / "payload.json").read_text())
+            checks = ((pay.get("provenance") or {}).get("input_check") or [])
+            kinds = {c.get("name"): (c.get("input_kind"), c.get("p2_raw_droplets"),
+                                     c.get("p2_required")) for c in checks}
+            if kinds != {"WT_1": ("called_cells", False, False),
+                         "MUT_1": ("called_cells", False, False)}:
+                fails.append(f"cells_called_only: the input record does not say cell-called: {kinds}")
+            with open(R / "tables" / "count_floors.csv", encoding="utf-8") as fh:
+                applied = {r["applied_to"] for r in csv.DictReader(fh)}
+            if not all("cell-called input" in a for a in applied):
+                fails.append(f"cells_called_only: the floors name another caller: {applied}")
+        completes("cells_called_only", td, rows, "evidence", HUMAN_REG, called_only)
+
+        def called_only_apply(R):
+            called_only(R)
+            with open(R / "tables" / "removal_by_criterion.csv", encoding="utf-8") as fh:
+                fired = {r["sample"]: int(r["n_fired"]) for r in csv.DictReader(fh)
+                         if r["criterion"] == "fail_not_aligner_cell"}
+            if fired.get("ALL") != 0:
+                fails.append(f"cells_called_only/apply: the input's own call removed cells: {fired}")
+        completes("cells_called_only", td, rows, "apply", HUMAN_REG, called_only_apply)
+
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rows = cells(td, ["WT_1", "MUT_1"])
+        for r in rows:
+            r["aligner_cells"] = ""
+        refused("cells_raw_no_call", td, rows, HUMAN_REG, "no `aligner_cells`")
 
 print("=" * 74)
 if fails:

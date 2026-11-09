@@ -1119,7 +1119,12 @@ def build_provenance(payload, defects: list, *, now=None) -> dict:
                 # from any numpy-backed table, was printed as NOT CHECKED - and rather than a
                 # bare truth test, which would read the string "false" as a pass.
                 "p1": "NOT CHECKED" if p1 is None else ("PASS" if p1 else "FAIL"),
-                "p2": "NOT CHECKED" if p2 is None else ("PASS" if p2 else "FAIL"),
+                # A P2 failure on an assay that does not require it is a cell-called input,
+                # accepted and named (harness autodev W020, B1-046) - not a pass, and not a
+                # rejection either.
+                "p2": "NOT CHECKED" if p2 is None else ("PASS" if p2 else (
+                    "FAIL - not required: cell-called input, no empty droplets, F1 unavailable"
+                    if _get(c, "p2_required") is False else "FAIL")),
                 "reasons": [str(r) for r in _as_list(_get(c, "reasons"))]})
 
     run = _get(payload, "run")
