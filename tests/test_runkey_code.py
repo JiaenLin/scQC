@@ -22,6 +22,11 @@ WHAT IS CHECKED
   4. a dirty tree does not key as a clean one, and unchecked is neither
   5. the description carries the code, so a reader can see WHY two runs diverged
   6. the index gains a `code` column and an older index is migrated, not appended to crookedly
+  7. THE CODE IS KEYED BY ITS CONTENT, NOT ITS COMMIT (harness autodev W020, B1-106): in a copy of
+     this tree, a docs-only or tests-only edit keeps the key - a commit that changed only a
+     docstring no longer costs every project its completed work - while an edit to a module that
+     runs moves it, committed or not; the commit and dirty flag are kept beside the key in
+     INPUTS.json, one record per run that used the directory
 """
 
 from __future__ import annotations
@@ -88,11 +93,66 @@ _, described = runkey.compute(samplesheet_rows=ROWS, tools=TOOLS, mode="apply", 
 check("the description carries the code identity",
       described.get("code") == CLEAN_A, f"{described.get('code')}")
 
-# The real accessor must return something usable on this checkout, or the default is a fiction.
+# The real accessors must return something usable on this checkout, or the default is a fiction.
+import json  # noqa: E402
+import re  # noqa: E402
+import shutil  # noqa: E402
+
 ident = runkey.code_identity()
-check("code_identity() reads this checkout",
-      isinstance(ident, dict) and isinstance(ident.get("commit"), str)
-      and ident["commit"] != "", f"{ident}")
+check("code_identity() is a digest of this checkout's code, and holds no commit",
+      isinstance(ident, dict) and re.fullmatch(r"[0-9a-f]{64}", str(ident.get("digest") or ""))
+      is not None and "commit" not in ident, f"{ident}")
+rec = getattr(runkey, "code_record", lambda: {})()
+check("code_record() reads this checkout's commit, for the manifest",
+      isinstance(rec.get("commit"), str) and rec["commit"] != "", f"{rec}")
+
+# 7 - content, not commit. A copy of the tree, edited one class of file at a time.
+with tempfile.TemporaryDirectory() as td:
+    tree = Path(td) / "tree"
+    shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+
+    def ident_of():
+        return runkey.code_identity(tree)
+
+    first = ident_of()
+    check("the same tree keys the same twice", ident_of() == first, f"{first}")
+    (tree / "docs" / "FILTERS.md").write_text(
+        (tree / "docs" / "FILTERS.md").read_text(encoding="utf-8") + "\nan edited sentence\n",
+        encoding="utf-8")
+    (tree / "README.md").write_text("a README rewritten\n", encoding="utf-8")
+    check("a docs-only edit keeps the key", ident_of() == first,
+          "a commit that changed only a document must not cost a project its completed work")
+    (tree / "tests" / "test_runkey_code.py").write_text("# a test rewritten\n", encoding="utf-8")
+    check("a tests-only edit keeps the key", ident_of() == first)
+    (tree / "engine" / "__pycache__").mkdir(exist_ok=True)
+    (tree / "engine" / "__pycache__" / "x.cpython-312.pyc").write_bytes(b"\x00compiled")
+    check("a compiled cache beside the code keeps the key", ident_of() == first)
+    q = tree / "modules" / "05_quality" / "quality.py"
+    q.write_text(q.read_text(encoding="utf-8") + "\n# a modules/ edit, uncommitted\n",
+                 encoding="utf-8")
+    check("an edit to a module that runs moves the key, committed or not", ident_of() != first,
+          "the code that derives a threshold changed, and the key must say so")
+    after_module = ident_of()
+    a = tree / "adapters" / "scanpy_ops.py"
+    a.write_text(a.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
+    check("an edit to an adapter moves it again", ident_of() != after_module)
+
+# The record goes BESIDE the description, never into it: reusing the directory from a second
+# commit with an equal description is allowed, and both commits are listed.
+with tempfile.TemporaryDirectory() as td:
+    root = Path(td)
+    try:
+        d1 = runkey.claim(root, "samekey00000", described,
+                          record={"commit": "a" * 40, "dirty": False})
+        d2 = runkey.claim(root, "samekey00000", described,
+                          record={"commit": "b" * 40, "dirty": False})
+        man = json.loads((d2 / runkey.MANIFEST).read_text(encoding="utf-8"))
+        commits = [r.get("commit") for r in man.get("code_records") or []]
+        check("a second commit with an equal description reuses the directory", d1 == d2)
+        check("...and the manifest lists both commits beside the description",
+              commits == ["a" * 40, "b" * 40], f"{commits}")
+    except TypeError as e:
+        check("claim() takes the commit record beside the description", False, str(e))
 
 # 6 - the index. A pre-existing index written without the column must be migrated, not appended
 #     to with rows of a different width.
@@ -102,7 +162,8 @@ with tempfile.TemporaryDirectory() as td:
     old.write_text("digest\tmode\tsamples\tparameters\tfirst_seen\tnote\n"
                    "oldkey000000\tapply\t2\tlight_floor=200\t2026-08-11T00:00:00+0800\tapply\n",
                    encoding="utf-8")
-    runkey.index(root, "newkey000000", described, note="apply")
+    runkey.index(root, "newkey000000", described, note="apply",
+                 **({"record": CLEAN_A} if "record" in runkey.index.__code__.co_varnames else {}))
     lines = old.read_text(encoding="utf-8").splitlines()
     widths = {len(ln.split("\t")) for ln in lines}
     check("the index has one row width after migration", len(widths) == 1, f"widths {widths}")

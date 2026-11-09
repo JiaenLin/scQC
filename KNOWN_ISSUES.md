@@ -113,13 +113,16 @@ key. Re-running would have resolved to the previous run's directory, found every
 SKIPPED all of them, and republished the old numbers under the new code — exiting zero, with a
 report that opens and reads like a correct one.
 
-The commit is now part of the description and `results/INDEX.tsv` carries a `code` column, so a
-code change writes BESIDE the old run exactly as a parameter change does. The cost is accepted and
-real: any commit invalidates resume for every project, including one that changed only a docstring.
+The code is now part of the description and `results/INDEX.tsv` carries a `code` column, so a
+code change writes BESIDE the old run exactly as a parameter change does.
 
-**Residual.** Two runs from the same commit with UNCOMMITTED edits still share a key. `dirty` is
-recorded, but a modified tree has no identity to hash cheaply. Commit before a run whose output
-anyone will rely on.
+**2026-11-09 (harness autodev W020, B1-106): keyed by content, not by commit.** The key held the
+commit, so any commit - one that changed only a docstring - invalidated resume for every project.
+It now holds a digest of the output-bearing code's bytes (`engine/runkey.py`, `OUTPUT_BEARING`): a
+docs- or tests-only commit keeps the key, and an UNCOMMITTED edit to code that runs moves it, which
+closes the residual this section used to carry (two runs from one commit with uncommitted edits
+shared a key). The commit and dirty flag are recorded beside the key in INPUTS.json and in
+STATUS.json.
 
 ## 3. Environments are not relocatable — OPEN, bit once
 

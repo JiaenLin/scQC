@@ -53,7 +53,12 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
 ## Run keys and resuming
 
 **Outputs are stored under a name derived from what produced them.** The run key is a digest of
-the samplesheet, the declared parameters, the mode and the pipeline's commit:
+the samplesheet, the declared parameters, the mode and the pipeline's OUTPUT-BEARING CODE - the
+bytes of `engine/`, `modules/`, `adapters/`, `report/`, `lib/`, `scqc_cli.py`, `conf/env/` and
+`VERSION` (`engine/runkey.py`, `OUTPUT_BEARING`). A commit that changes only docs or tests keeps
+the key, so completed work is reused; an edit to code that runs moves it, committed or not. The
+commit and dirty flag are recorded beside the key in INPUTS.json (`code_records`) and in
+STATUS.json:
 
 ```
 results/8f2a91c4d7e0/              ← this samplesheet, these parameters, this mode, this code

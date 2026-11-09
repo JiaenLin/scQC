@@ -8,7 +8,7 @@ an adapter is a field mapping rather than a reading of the source.
 
 STATE_VERSION versions the numbers, not the code. It goes up whenever the same samplesheet and
 the same parameters would produce a different deliverable — a changed derivation, a changed
-default, a changed criterion. The commit already keys the run directory (engine/runkey.py); this
+default, a changed criterion. The code already keys the run directory (engine/runkey.py); this
 is the coarser, human-legible statement that the numbers moved, and a cached materialisation
 anywhere downstream is keyed on it.
 """

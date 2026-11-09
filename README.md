@@ -170,8 +170,9 @@ All enforced today:
 
 - **Nothing is overwritten by a run asked for differently - except through the decisions file.**
   Outputs land under `results/<digest>/`, the digest computed from the samplesheet content, the
-  declared parameters, the mode and the pipeline's commit. A directory records the inputs it was
-  claimed for and refuses a run described differently. `decisions.yml` is NOT in the digest: an
+  declared parameters, the mode and a digest of the pipeline's output-bearing code - a commit that
+  changes only docs or tests keeps it, and the commit itself is recorded beside it. A directory
+  records the inputs it was claimed for and refuses a run described differently. `decisions.yml` is NOT in the digest: an
   apply run with a changed decisions file runs in the same directory, re-runs the tasks of steps 5
   to 7 that carry it, and replaces their outputs.
 - **Gates return a verdict, not a warning.** Each reduces to `REFUSE`, `REVIEW` or `PASS`, and the

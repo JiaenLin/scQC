@@ -147,12 +147,15 @@ class Pipeline:
         self.tools = dict(tools or {})
         self.run_key, self.run_described = runkey.compute(
             samplesheet_rows=samples, tools=self.tools, mode=mode)
+        # The commit and dirty flag, recorded beside the key and not in it (engine/runkey.py).
+        self.code_record = runkey.code_record()
         try:
             self.results = runkey.claim(self.project / "results", self.run_key,
-                                        self.run_described)
+                                        self.run_described, record=self.code_record)
         except runkey.RunKeyMismatch as e:
             raise SystemExit(f"scqc: {e}") from None
-        runkey.index(self.project / "results", self.run_key, self.run_described, note=mode)
+        runkey.index(self.project / "results", self.run_key, self.run_described, note=mode,
+                     record=self.code_record)
         self.work = self.project / "work" / self.run_key
         self.logs = self.project / "logs" / self.run_key
 
