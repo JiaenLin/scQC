@@ -71,9 +71,11 @@ Two corollaries:
 ## 2 · Only one step removes anything
 
 Steps 0–6 measure, score, flag and refuse. **Step 7 is the only code path permitted to drop an
-observation**, it requires a recorded approval containing the operator's own words for that
-specific action, and **there is no force flag**. The approval is matched against the action text,
-not against a description of it: words spoken about a different action are not consent to this one.
+observation.** Apply mode, the default, applies the DERIVED and DECLARED thresholds and records who
+decided each one; `decisions.yml` is optional, and an ADJUDICATED override needs a value, the
+approver and the approver's own words. Where a decisions file gives approval words for the removal,
+they are matched against the action text, not against a description of it: words spoken about a
+different action are not consent to this one.
 
 This is why the modules read as if they are over-explaining what they do not do. A reviewer needs
 to be able to establish, quickly, that a step cannot silently cost them cells.

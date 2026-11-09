@@ -90,11 +90,11 @@ flowchart TD
 
     subgraph S7["Step 7 — Apply"]
         Y1["Pre-flight: contradictions<br/>step 6 already found"]
-        Y2{"Recorded approval,<br/>verbatim, for THIS action?"}
+        Y2{"Approval words given<br/>for an ADJUDICATED override:<br/>do they name THIS action?"}
     end
     Y1 --> Y2
-    Y2 -- "no" --> X7["REFUSE · raises<br/>no force flag exists"]
-    Y2 -- "yes" --> OUT["The removal is applied —<br/>the only step that removes —<br/>and every removed observation is<br/>written out with the criteria<br/>that fired on it"]
+    Y2 -- "no" --> X7["REFUSE · raises<br/>words given for another action"]
+    Y2 -- "yes, or no override:<br/>DERIVED / DECLARED applied" --> OUT["The removal is applied —<br/>the only step that removes —<br/>and every removed observation is<br/>written out with the criteria<br/>that fired on it"]
 
     style X0 fill:#8B2635,color:#fff
     style XG1 fill:#8B2635,color:#fff
@@ -197,27 +197,23 @@ flowchart LR
         E2 --> E3["Write report +<br/>decisions.template.yml"]
         E4["Removes nothing.<br/>Applies nothing."]
     end
-    E3 --> H["Operator reads the report<br/>and writes decisions.yml<br/>in their own words"]
+    E3 --> H["Optional: the operator reads the report<br/>and writes an override into decisions.yml<br/>(value, approved_by, verbatim)"]
     H --> A
-    subgraph A["--mode apply"]
+    subgraph A["--mode apply (the default)"]
         direction TB
-        A1["Re-run with<br/>decisions.yml"] --> A2["Verify each ADJUDICATED<br/>value has verbatim text"]
-        A2 --> A3["Apply · report ·<br/>keep every removal recoverable"]
+        A1["Run, with decisions.yml<br/>if there is one"] --> A2["DERIVED / DECLARED applied;<br/>an override counts only with<br/>approver and verbatim"]
+        A2 --> A3["Apply · report who decided each ·<br/>keep every removal recoverable"]
     end
     style E fill:#1F4E5F,color:#fff
     style A fill:#3A5F3A,color:#fff
     style H fill:#B8860B,color:#fff
 ```
 
-Looking at the data and cutting it are separated in time and recorded separately. That separation
-is the design — not a workflow convenience.
-
-> **What differs from this diagram today.** `scqc run --mode evidence|apply` drives the steps in
-> sequence and writes the report, and apply mode writes the filtered object with its removal
-> ledger. Two departures: apply mode is the **default**, and a `decisions.yml` is **optional** —
-> without one the pipeline applies the thresholds it derived and records them as `DERIVED` rather
-> than `ADJUDICATED`. No figure is produced by any step. See the Status table in
-> [README.md](../README.md) and the specification in [REPORT_DESIGN.md](REPORT_DESIGN.md).
+Apply mode is the **default**, and a `decisions.yml` is **optional** — without one the pipeline
+applies the thresholds it derived (and the ones declared) and records them as `DERIVED` or
+`DECLARED`, never as `ADJUDICATED`. Evidence mode is there to look before cutting; it is not a
+required first phase. Who decided each threshold is what is recorded, in the report's parameter
+table and in STATUS.json.
 
 ## Parameter classes
 

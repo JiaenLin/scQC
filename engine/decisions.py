@@ -1,22 +1,24 @@
-"""Reading decisions.yml, and refusing to proceed on one that is incomplete.
+"""Reading decisions.yml, and what makes an entry in it count.
 
-A decisions file is an INPUT, not a command line. That is the point of the two-phase design: the
-adjudicated values are chosen against the evidence report, written down in the operator's own
-words, and versioned beside the results. Two runs with the same data and the same decisions file
-are the same run; two runs with the same command line are not, because a command line is not kept.
+THE FILE IS OPTIONAL. Apply mode, the default, applies the DERIVED and DECLARED thresholds and
+records who decided each one; nothing waits for a person. A decisions file is how a person
+OVERRIDES one of them, and it is an INPUT, not a command line: it is versioned beside the results,
+so two runs with the same data and the same decisions file are the same run, while two runs with
+the same command line need not be, because a command line is not kept.
 
-WHAT THIS REFUSES, AND WHY EACH REFUSAL IS NOT PEDANTRY
+WHAT MAKES AN OVERRIDE COUNT
 
-  * An ADJUDICATED value with no `verbatim` text. The whole weight of an adjudicated parameter is
-    that a person looked at the evidence and decided; a value with no words attached is
-    indistinguishable from a default someone forgot to change.
-  * A `verbatim` that is only the value ("350") or a bare acknowledgement ("ok", "yes", "fine").
-    Those are consent to be asked, not a decision about the data.
-  * An adjudicated block whose `approved_by` is absent. An approval nobody is named on cannot be
-    questioned later.
+An ADJUDICATED value needs three things: a `value`, an `approved_by`, and the approver's own words
+in `verbatim`. A value missing either attestation is not an override - `engine/steps.py::_attested`
+reads it as absent, the derived or declared value is applied instead, and the report says so. The
+whole weight of an adjudicated parameter is that a named person looked at the evidence and decided;
+a value with no words attached is indistinguishable from a default someone forgot to change.
 
-None of these can be waived by a flag. There is deliberately no --force: a gate with an override
-is a gate that gets overridden, and this one guards the only step that deletes data.
+`check_verbatim()` is the stricter reading of the words - not empty, not a bare acknowledgement
+("ok", "yes", "fine"), not too short to be a decision - and `validate()` applies it to every
+required entry at once, listing every problem in one pass. Where approval words are given for the
+removal itself (`apply.verbatim`), step 7 matches them against the exact action text they were
+given for (`action_string()`): words spoken about a different action are not consent to this one.
 """
 
 from __future__ import annotations
@@ -43,9 +45,10 @@ def load(path: Path) -> dict:
     if not path.exists():
         raise DecisionError(
             f"scqc: no decisions file at {path}.\n"
-            f"       Run `scqc run --mode evidence` first, read the report, then copy\n"
-            f"       decisions.template.yml to decisions.yml and record your choices.\n"
-            f"       Apply mode has no defaults for the adjudicated values, on purpose.")
+            f"       --decisions names a file that does not exist. A decisions file is optional:\n"
+            f"       without one, apply mode applies the derived and declared thresholds and\n"
+            f"       records them as such. Write one only to override a threshold, with its\n"
+            f"       value, approved_by and verbatim.")
     try:
         import yaml
     except ImportError:

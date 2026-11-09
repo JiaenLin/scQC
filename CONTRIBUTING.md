@@ -19,9 +19,9 @@ changes.
 ## 1. Anything that removes observations goes through step 7
 
 Steps 0–6 measure, score, flag and refuse. **Step 7 is the only step permitted to drop an
-observation**, it requires a recorded approval carrying the operator's own words for that specific
-action, and there is no force flag. A pull request that adds a removal anywhere else will be
-declined regardless of how well it is tested.
+observation.** It applies the DERIVED and DECLARED thresholds and records who decided each one; an
+ADJUDICATED override in `decisions.yml` needs a value, the approver and their own words. A pull
+request that adds a removal anywhere else will be declined regardless of how well it is tested.
 
 A pull request that adds or changes a removal answers the removal checklist from
 [docs/PRINCIPLES.md](docs/PRINCIPLES.md) in its description:

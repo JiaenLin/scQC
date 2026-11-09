@@ -39,11 +39,11 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
 
 - `--jobs` — independent tasks run at once. `0` (default) uses the machine, capped at 16. Use `1`
   when a failure has to be read in a single log.
-- `--mode` — `apply` (default) writes filtered objects; `evidence` computes and reports every
-  threshold but writes no filtered object. **Evidence mode refuses `--decisions`**, because it
-  exists to produce the evidence those decisions are made from.
-- `--decisions` — a YAML file recording thresholds a person has approved, and their words. See
-  [approvals](#approvals-and-adjudicated-values).
+- `--mode` — `apply` (default) applies the DERIVED and DECLARED thresholds, records who decided
+  each one, and writes filtered objects; `evidence` computes and reports every threshold but writes
+  no filtered object.
+- `--decisions` — optional; a YAML file recording overrides a person has approved, and their words.
+  See [approvals](#approvals-and-adjudicated-values).
 
 > This guide documented the second mode as `measure` until 2026-08-11. The CLI has only ever
 > accepted `evidence`, so `--mode measure` failed at argument parsing — a reader following this
@@ -103,8 +103,11 @@ Every parameter in the report carries a class:
 | `DECLARED` | supplied by the operator up front, before seeing the result |
 | `ADJUDICATED` | a person decided, after seeing the result, in their own words |
 
-An ADJUDICATED value requires the words. A threshold nobody can attribute is a threshold nobody
-can review, and "someone approved this" is not a record of who or why.
+`decisions.yml` is optional: without it apply mode applies what the data proposed (DERIVED) and
+what was declared (DECLARED), and says so. An ADJUDICATED override needs a `value`, an
+`approved_by` and the approver's `verbatim` words. A threshold nobody can attribute is a threshold
+nobody can review, and "someone approved this" is not a record of who or why: a value missing
+either attestation is not an override, and the derived value is applied instead.
 
 ## When a gate refuses
 

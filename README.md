@@ -44,9 +44,9 @@ setup/init_project.sh --dir ~/projects/my-study --assay snrna --samples 10
 # fill in samplesheet.csv, and registry.tsv with the references it names
 
 R=~/projects/my-study/registry.tsv
-scqc run --project ~/projects/my-study --registry $R --mode evidence   # measure, decide nothing
-# read the report, record approvals in decisions.yml
-scqc run --project ~/projects/my-study --registry $R --mode apply      # filter, once
+scqc run --project ~/projects/my-study --registry $R                  # apply, the default: derive, apply, deliver
+scqc run --project ~/projects/my-study --registry $R --mode evidence  # optional: measure everything, remove nothing
+# optional: override a threshold in decisions.yml (value, approved_by, verbatim) and run apply again
 ```
 
 The reference registry is the project's: `--registry` is required, and scQC ships none.
@@ -71,10 +71,15 @@ is not treated as an approval, and the derived value is used instead.
 
 ## Two phases
 
-**Evidence mode** measures every criterion, writes the report, and removes nothing.
-**Apply mode** takes the same measurements plus the recorded approvals and performs the removal.
-An approval is matched against the thresholds it was given for; move a threshold afterwards and
-the approval no longer applies. There is no force flag.
+**Apply mode**, the default, takes every measurement, applies the DERIVED and DECLARED
+thresholds, records who decided each one, and performs the removal - at step 7, the only step that
+removes. **Evidence mode** takes the same measurements, writes the report, and removes nothing.
+
+`decisions.yml` is optional. An ADJUDICATED override of a threshold needs a `value`, an
+`approved_by` and the approver's `verbatim` words; a value missing either attestation is not an
+override, and the derived value is applied and reported as derived. Where a decisions file gives
+approval words for the removal, they are matched against the thresholds they were given for: move a
+threshold afterwards and they no longer apply.
 
 ## Steps
 

@@ -177,12 +177,11 @@ Stated plainly, because this is the section that is usually omitted:
 
 ## How to calibrate on your own data
 
-Run `--mode evidence`. It derives every DERIVED parameter, refuses to apply anything, and writes
-the report described in `docs/REPORT_DESIGN.md`. Read it, decide the ADJUDICATED rows, write them
-into `decisions.yml` with your own words, then run `--mode apply`.
-
-The two modes exist so that the act of looking at the data and the act of cutting it are separated
-in time and recorded separately. That separation is the whole design.
+Run `--mode evidence` to see what the data proposes: it derives every DERIVED parameter, applies
+nothing, and writes the report described in `docs/REPORT_DESIGN.md`. Apply mode, the default,
+applies the DERIVED and DECLARED values and records them as such. Where you disagree with one, write
+an ADJUDICATED override into `decisions.yml` - the value, who approved it and their own words - and
+run apply again; the report then shows the override beside what the data proposed.
 
 Both modes are built and run end to end, locally or on a scheduler. The per-step subcommands remain
 for judging tables you produced elsewhere — `scqc quality --valleys … --metric umi` will propose the
