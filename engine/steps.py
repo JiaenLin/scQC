@@ -1192,8 +1192,17 @@ def _doublet_health(task, pipeline, log):
     if not known:
         raise Refusal("04_doublets: no library produced a doublet rate, so the health check was "
                       "not run. NOT CHECKED is its own outcome and does not read as a pass.")
+    # THE RATE EACH LIBRARY WAS DECLARED AT, AND HOW MANY IT SCORED, from its own step-4 result -
+    # the `dbr` the adapter cross-checked against what the detector reports it was given. A
+    # silence is judged against them (doublet_health, B1-103).
+    m4 = {s: (getattr(pipeline.results_by_key.get(f"04_doublets/{s}"), "metrics", None) or {})
+          for s in known}
     findings = dh.health(known, task.params["design"], n_kept_unscored=unscored_total,
-                         detector_name="scDblFinder", reproducible=True)
+                         detector_name="scDblFinder", reproducible=True,
+                         declared_rate={s: m.get("dbr") for s, m in m4.items()
+                                        if isinstance(m.get("dbr"), (int, float))},
+                         n_scored={s: m.get("n_scored") for s, m in m4.items()
+                                   if isinstance(m.get("n_scored"), int)})
     pipeline.gate("04_doublets", findings, dh.verdict(findings))
 
     # THE RATES THIS GATE JUDGED, written down. They were returned as metrics and the task

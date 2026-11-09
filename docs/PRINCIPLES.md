@@ -102,7 +102,9 @@ forms that bound takes:
   operator's own — but whitespace is not consent.
 
 A gate with no escape hatch gets disabled wholesale. Every deliberate bypass in this pipeline is
-therefore *possible and logged*, never silent and never impossible.
+therefore *possible and logged*, never silent and never impossible: a refusal is lifted only by an
+`accept` entry in `decisions.yml` naming the gate's check, the person, and their own words, and the
+acceptance is recorded in the report and in STATUS.json.
 
 ---
 

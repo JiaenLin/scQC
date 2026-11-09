@@ -64,6 +64,13 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     """
     tasks: list[Task] = []
     design = steps._design(pipeline.samples)
+
+    def accepted(step: str) -> dict:
+        """The decisions file's `accept` entries for a gate, as a param - so a changed acceptance
+        re-runs the task that gates (B1-103). Empty when there are none, so the task is as it was."""
+        got = [e for e in ((pipeline.decisions or {}).get("accept") or [])
+               if isinstance(e, dict) and str(e.get("step") or "").strip().lower() == step]
+        return {"accept": got} if got else {}
     by_sample = {r["sample"]: r for r in pipeline.samples}
     # STRIPPED AS WELL AS LOWERED, as ingest's own check strips it. Lowered only, a padded
     # ` scrna` passed ingest - `validate_row` strips before comparing - and then reached the
@@ -268,6 +275,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 "no_raw": [s for s in by_sample if not raw_of.get(s)],
                 # Named, not dropped: no corrected matrix exists to measure a fraction against.
                 "not_denoised": not_denoised,
+                **accepted("01_ambient"),
                 # And a cell-called input has no empty droplets to estimate ambient RNA from at
                 # all, by any method. Passed only when there is one.
                 **({"called_input": sorted(called_input)} if called_input else {}),
@@ -309,7 +317,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # samplesheet, from a run nothing verified was this one.
         needs=tuple(f"05_quality/{s}" for s in by_sample),
         params={"design": design, "samples": list(by_sample), "call_paths": call_paths,
-                "call_by": call_by},
+                "call_by": call_by, **accepted("02_cells")},
     ))
 
     # --- steps 3-4: the light floor, then doublet scoring on what clears it.
@@ -348,7 +356,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
 
     tasks.append(Task(
         key="04_doublet_health", step="04_doublets", fn=steps._doublet_health,
-        needs=tuple(dbl_keys), params={"design": design, "samples": list(by_sample)},
+        needs=tuple(dbl_keys), params={"design": design, "samples": list(by_sample),
+                                       **accepted("04_doublets")},
         outputs=(str(pipeline.results / "tables" / "doublet_health.csv"),),
     ))
 
@@ -531,6 +540,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         tasks.append(Task(
             key="07_apply", step="07_apply", fn=steps._apply,
             needs=tuple(measure_keys) + ("06_cluster_flags",),
+            # `decisions` already carries the accept entries, so this task's signature moves
+            # with them; nothing is added for 07_apply.
             params={"decisions": pipeline.decisions, "samples": list(by_sample),
                     "python_exe": python_exe, "light_floor": tools.get("light_floor", 200)},
             cpus=8, memory_gb=48, walltime_h=4,

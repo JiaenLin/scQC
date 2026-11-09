@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # A stand-in for `Rscript adapters/scdblfinder.R ...`, for tests that drive the CLI without R.
 """Honours the scDblFinder adapter's contract and nothing more: it reads the exported barcodes,
-calls every 20th one a doublet (deterministically, so a run is reproducible), writes the calls CSV
-the adapter reads, and prints the version and metric lines the adapter cross-checks - the rate,
-the seed and the counts it was asked for. It scores nothing: a test using it checks the pipeline
-around the detector, never the detector.
+calls the DECLARED rate's share of them a doublet - every round(1/dbr)-th, deterministically, so a
+run is reproducible; every 20th at the 0.05 the conditions declare - writes the calls CSV the
+adapter reads, and prints the version and metric lines the adapter cross-checks - the rate, the
+seed and the counts it was asked for. It scores nothing: a test using it checks the pipeline around
+the detector, never the detector. Calling the declared rate is what lets a test give two arms of a
+design different rates (harness autodev W020, B1-103/B1-104).
 
     fake_rscript.py SCRIPT MTX_DIR OUT_CSV DBR SD_TOKEN SEED [key=value ...]
 """
@@ -19,7 +21,8 @@ if not os.path.exists(path):
     path, opener = path + ".gz", gzip.open
 with opener(path, "rt") as fh:
     bcs = [ln.strip().split("\t")[0] for ln in fh if ln.strip()]
-cls = ["doublet" if i % 20 == 19 else "singlet" for i in range(len(bcs))]
+every = max(1, int(round(1.0 / float(dbr))))
+cls = ["doublet" if i % every == every - 1 else "singlet" for i in range(len(bcs))]
 for name, ver in (("R", "fake 0"), ("Matrix", "0"), ("SingleCellExperiment", "0"),
                   ("scDblFinder", "0"), ("xgboost", "0")):
     print(f"##scqc-version\t{name}\t{ver}")

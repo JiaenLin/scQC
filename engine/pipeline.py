@@ -235,6 +235,8 @@ class Pipeline:
         # what it recorded when it last ran.
         self._findings_by_step: dict = dict(self.state.data.get("findings_by_step") or {})
         self._gated_this_run: set = set()
+        # REFUSALS A PERSON ACCEPTED, recorded for STATUS.json's `escapes` (see `gate`).
+        self.accepted: list = []
 
     # ------------------------------------------------------------------ gates
 
@@ -292,13 +294,91 @@ class Pipeline:
         # `_gated_this_run`, and the second one's reset discards what the first had just
         # recorded. It cost five of thirty-five findings on the first run after this store was
         # added - a silent partial loss, in the direction that makes a cohort look cleaner.
+        findings, verdict, half = self._apply_accepts(step, list(findings), verdict)
         self.record_findings(step, findings)
         if verdict == "REFUSE":
             worst = [f for f in findings if getattr(f, "severity", "") == "REFUSE"]
             raise Refusal(
                 f"{step} refused.\n" + "\n".join(f"  {f}" for f in worst)
-                + "\n\nNothing after this step has run. Fix the cause, or record a decision that\n"
-                  "accepts it, and run again - the completed steps will be reused.")
+                + "".join(f"\n  (an accept entry for {c!r} is in the decisions file but does not "
+                          f"count: {why})" for c, why in half)
+                + "\n\nNothing after this step has run. Fix the cause, or accept the refusal in "
+                  "decisions.yml (apply mode) and run again - the completed steps will be reused:\n"
+                + "".join(f"    accept: [{{step: {step}, check: \"{getattr(f, 'check', '?')}\", "
+                          f"approved_by: <who>, verbatim: <their own words about why>}}]\n"
+                          for f in worst))
+
+    def _apply_accepts(self, step: str, findings: list, verdict: str) -> tuple:
+        """(findings, verdict, incomplete): a REFUSE a person accepted becomes an accepted REVIEW.
+
+        A REFUSE COULD NOT BE LIFTED (harness autodev W020, B1-103). Every refusal said "record a
+        decision that accepts it", and no code read one: detecting a design-confounded loss is
+        worth keeping, but making it impossible to proceed past broke the project's own rule
+        (docs/PRINCIPLES.md section 3: every deliberate bypass is "possible and logged, never
+        silent and never impossible"). decisions.yml may now carry
+
+            accept: [{step, check, approved_by, verbatim}]
+
+        and a REFUSE finding of that step whose check matches is recorded as REVIEW, its message
+        naming who accepted it and their words, and the acceptance goes to STATUS.json's
+        `escapes`. Half an approval accepts nothing: an entry without `approved_by`, or whose
+        `verbatim` is empty, a bare "ok" or too short to be a decision (decisions.check_verbatim),
+        leaves the refusal standing, and the refusal says why. Decisions are read in apply mode
+        only, so an evidence run is not changed by them.
+        """
+        import dataclasses
+
+        from .decisions import check_verbatim
+
+        entries = [e for e in ((getattr(self, "decisions", None) or {}).get("accept") or [])
+                   if isinstance(e, dict)]
+        if not entries or verdict != "REFUSE":
+            return findings, verdict, []
+
+        def norm(x) -> str:
+            return " ".join(str(x or "").split()).lower()
+
+        def attr(f, k):
+            return f.get(k, "") if isinstance(f, dict) else getattr(f, k, "")
+
+        out, half = [], []
+        for f in findings:
+            if attr(f, "severity") != "REFUSE":
+                out.append(f)
+                continue
+            mine = [e for e in entries
+                    if norm(e.get("step")) == norm(step)
+                    and norm(e.get("check")) == norm(attr(f, "check"))]
+            ok = None
+            for e in mine:
+                why = ([] if str(e.get("approved_by") or "").strip()
+                       else ["`approved_by` is empty"]) + check_verbatim(e.get("verbatim"),
+                                                                         "verbatim")
+                if why:
+                    half.append((attr(f, "check") or "?", "; ".join(why)))
+                else:
+                    ok = e
+                    break
+            if ok is None:
+                out.append(f)
+                continue
+            who, words = str(ok["approved_by"]).strip(), str(ok["verbatim"]).strip()
+            msg = f"ACCEPTED by {who} (\"{words}\") - the gate refused: {attr(f, 'message')}"
+            if dataclasses.is_dataclass(f):
+                f2 = dataclasses.replace(f, severity="REVIEW", message=msg)
+            else:
+                f2 = dict(f, severity="REVIEW", message=msg)
+            out.append(f2)
+            with self._prov_lock:
+                if not hasattr(self, "accepted"):
+                    self.accepted = []
+                self.accepted.append({
+                    "ask": {"gate": step, "check": attr(f, "check") or "?", "verdict": "REFUSE",
+                            "message": attr(f, "message")},
+                    "decision": {"by": who, "why": words, "value": "accepted"}})
+        sev = [attr(f, "severity") for f in out]
+        new_verdict = ("REFUSE" if "REFUSE" in sev else "REVIEW")
+        return out, new_verdict, half
 
     # ------------------------------------------------------------------ running
 

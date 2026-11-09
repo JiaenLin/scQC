@@ -123,6 +123,24 @@ pass/fail. Collapsing it trains a reader to ignore both.
 **A run that refuses still writes its report.** Refusing to write the document would destroy the
 only record of why the run stopped.
 
+**A refusal can be accepted, by a named person, in their own words.** In apply mode, an entry in
+`decisions.yml`
+
+```yaml
+accept:
+  - step: 04_doublets
+    check: "design differential: genotype"
+    approved_by: Jane Doe
+    verbatim: the two genotypes were loaded at different densities, so their doublet rates differ by design
+```
+
+turns that one REFUSE into a REVIEW whose message names who accepted it and their words, and the
+acceptance is recorded in STATUS.json's `escapes`. `step` and `check` are the ones the refusal
+names (it prints the entry to copy). Half an approval accepts nothing: without `approved_by`, or
+with `verbatim` empty, a bare "ok" or under three words, the refusal stands and says why. A library
+under the doublet "silent" line is refused only where its own declared rate predicted doublets -
+too few cells scored to expect one, or a rate declared under the line, is a REVIEW.
+
 Read what the refusal says before deciding it is wrong. Each one names the numbers behind it and
 what would have to be true for it to pass. The common ones:
 

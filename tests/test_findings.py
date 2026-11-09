@@ -37,6 +37,8 @@ class _FakeState:
 
     def __init__(self, data=None):
         self.data = dict(data or {})
+        # RunState's own lock (engine/state.py), which record_findings holds while it writes.
+        self.lock = threading.RLock()
 
     def flush(self):
         pass

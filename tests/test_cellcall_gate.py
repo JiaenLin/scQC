@@ -44,13 +44,20 @@ if not any(x.severity == "REVIEW" and "condition" in x.check for x in f):
 
 print("\n" + "-" * 74)
 print("B. injected: CellBender stricter than the aligner")
+# STRICTER IS A FILTER WHEN IT COSTS CELLS (harness autodev W020, B1-103): a ratio below 1.0 with
+# under REVIEW_LOST of the aligner's cells lost is REVIEW; with REVIEW_LOST or more it is REFUSED.
 b = {k: dict(v) for k, v in COHORT.items()}
 b["ctrl_05"]["cellbender"] = 11000 # below the aligner's 13,140
 f2 = gate(b, DESIGN)
 hit = [x for x in f2 if "stricter" in x.check]
 print(hit[0])
+if hit[0].severity != "REVIEW":
+    fails.append("B: a ratio below 1.0 that loses under the REVIEW line must be REVIEW")
+b["ctrl_05"]["lost"] = int(0.06 * b["ctrl_05"]["aligner"])
+hit = [x for x in gate(b, DESIGN) if "stricter" in x.check]
+print(hit[0])
 if hit[0].severity != "REFUSE":
-    fails.append("B: a ratio below 1.0 must REFUSE")
+    fails.append("B: a ratio below 1.0 that loses 6% of the aligner's cells must REFUSE")
 
 print("\n" + "-" * 74)
 print("C. injected: 14% of aligner cells lost in one sample")

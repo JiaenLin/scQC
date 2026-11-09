@@ -90,25 +90,56 @@ class HealthFinding:
         return s
 
 def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=None,
-           detector_name="detector", reproducible=True) -> list:
+           detector_name="detector", reproducible=True, declared_rate=None,
+           n_scored=None) -> list:
     """per_sample_rate: {sample: fraction of that library called a doublet}.
     design: {factor: {sample: level}} - without it the check that matters most cannot run.
     deep_decile_rate: fraction of the deepest UMI decile called, if it was computed.
     n_kept_unscored: nuclei in the deliverable that were never scored.
+    declared_rate, n_scored: {sample: the doublet rate declared for it}, {sample: barcodes it
+    scored} - what a silence is judged against (below). Absent, a library under the line is
+    refused as before.
     Returns findings. Use `verdict()` to summarise them and `enforce()` to act on them.
     """
     out = []
     rates = per_sample_rate
     v = list(rates.values())
 
+    # SILENCE IS JUDGED AGAINST WHAT THE LIBRARY'S OWN DECLARATION PREDICTS (harness autodev W020,
+    # B1-103). The line marks a detector that collapsed and returned (almost) nothing. A library
+    # under it is that failure only where its declared rate predicted something: if the cells it
+    # scored times its declared rate is under one doublet, zero calls IS the prediction, and if the
+    # rate it was declared at is itself under the line, falling under the line agrees with it.
+    # Either is REVIEW, naming the declared rate and the expected count; a library whose
+    # declaration expected doublets and that called under the line is still REFUSED. No number is
+    # added: the line is ZERO_RATE and the rest is the library's own declaration.
     zero = {s: r for s, r in rates.items() if r < ZERO_RATE}
+    silent, expected_so = {}, {}
+    for s, r in zero.items():
+        d = (declared_rate or {}).get(s)
+        n = (n_scored or {}).get(s)
+        if d is None or n is None:
+            silent[s] = f"{s}: {100*r:.2f}%"
+        elif d < ZERO_RATE:
+            expected_so[s] = (f"{s}: {100*r:.2f}% of {n:,} scored, declared at {100*d:.2f}% - "
+                              f"the declaration itself is under the line")
+        elif n * d < 1:
+            expected_so[s] = (f"{s}: {100*r:.2f}% of {n:,} scored - at the declared "
+                              f"{100*d:.2f}% that is {n * d:.2f} doublet(s) expected, under one")
+        else:
+            silent[s] = (f"{s}: {100*r:.2f}% of {n:,} scored, where the declared {100*d:.2f}% "
+                         f"expected {n * d:.1f}")
     out.append(HealthFinding(
-        "silent libraries", "REFUSE" if zero else "ok",
-        (f"{len(zero)} library(ies) called under {100*ZERO_RATE:.1f}% - the threshold has "
+        "silent libraries", "REFUSE" if silent else ("REVIEW" if expected_so else "ok"),
+        (f"{len(silent)} library(ies) called under {100*ZERO_RATE:.1f}% - the threshold has "
          f"collapsed and returned silence, which is not the same as finding no doublets. This "
          f"is Scrublet's failure signature: 0% in seven of ten"
-         if zero else f"every library called above {100*ZERO_RATE:.1f}%"),
-        [f"{s}: {100*r:.2f}%" for s, r in sorted(zero.items())]))
+         if silent else
+         f"{len(expected_so)} library(ies) called under {100*ZERO_RATE:.1f}%, which their own "
+         f"declared rate predicts - too few cells scored to expect a doublet, or a rate declared "
+         f"under the line. Reported, not refused: this is not a silence the line can tell"
+         if expected_so else f"every library called above {100*ZERO_RATE:.1f}%"),
+        sorted(silent.values()) + sorted(expected_so.values())))
 
     if not v:
         sev, msg = "REVIEW", ("no per-sample rates were given, so the spread could not be "

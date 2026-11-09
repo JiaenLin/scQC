@@ -112,17 +112,27 @@ def gate(calls, design=None) -> list:
 
     strict = {s: v["cellbender"] / max(v["aligner"], 1) for s, v in calls.items()}
     bad = {s: r for s, r in strict.items() if r < REFUSE_RATIO}
+    lost = {s: v["lost"] / max(v["aligner"], 1) for s, v in calls.items()}
+    # STRICTER IS A FILTER ONLY WHEN IT COSTS CELLS (harness autodev W020, B1-103). A denoiser that
+    # calls fewer cells than the aligner while losing under REVIEW_LOST of the aligner's own cells
+    # has dropped droplets the aligner called and kept nearly every cell - the loss check below
+    # judges exactly that, and refusing on the ratio alone stopped runs the loss check passed.
+    # Such a library is REVIEW; one that is stricter AND loses at least REVIEW_LOST is REFUSED.
+    material = {s for s in bad if lost[s] >= REVIEW_LOST}
     out.append(GateFinding(
         "CellBender must not be stricter than the aligner",
-        "REFUSE" if bad else "ok",
-        (f"{len(bad)} sample(s) call FEWER cells than the aligner - the boundary has become a "
-         f"filter, and a cell-selection decision has migrated into a denoiser"
+        "REFUSE" if material else ("REVIEW" if bad else "ok"),
+        (f"{len(material)} sample(s) call FEWER cells than the aligner and lose at least "
+         f"{100*REVIEW_LOST:.0f}% of the aligner's cells - the boundary has become a filter, and "
+         f"a cell-selection decision has migrated into a denoiser"
+         if material else
+         f"{len(bad)} sample(s) call fewer cells than the aligner, but each loses under "
+         f"{100*REVIEW_LOST:.0f}% of the aligner's cells - reported, not refused"
          if bad else
          f"all {len(strict)} call more (ratio {min(strict.values()):.2f}-"
          f"{max(strict.values()):.2f})"),
-        [f"{s}: ratio {r:.2f}" for s, r in sorted(bad.items())]))
+        [f"{s}: ratio {r:.2f}, lost {100*lost[s]:.1f}%" for s, r in sorted(bad.items())]))
 
-    lost = {s: v["lost"] / max(v["aligner"], 1) for s, v in calls.items()}
     refuse = {s: f for s, f in lost.items() if f > REFUSE_LOST}
     review = {s: f for s, f in lost.items() if REVIEW_LOST <= f <= REFUSE_LOST}
     sev = "REFUSE" if refuse else ("REVIEW" if review else "ok")

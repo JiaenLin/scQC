@@ -650,6 +650,8 @@ def cmd_run(a) -> int:
     print(f"jobs     : {jobs} concurrent")
     print()
 
+    refused_detail: list = []
+
     def finish(code: int, stopped=None) -> int:
         # UNDER THE RUN'S OWN DIRECTORY, not beside it. This wrote to
         # `<project>/results/reports/`, outside the content-addressed directory the rest of the
@@ -693,9 +695,17 @@ def cmd_run(a) -> int:
         st = {0: "ok", 2: "refused"}.get(code, "failed")
         refusal = None
         if st == "refused":
-            refusal = {"reason": stopped or "a gate refused",
-                       "fix": "read the refusal in reports/report.json; change the input, or record "
-                              "an adjudicated value in decisions.yml with approved_by and verbatim"}
+            # THE REFUSAL'S OWN WORDS, not only the name of the task that refused (harness
+            # autodev W020): a host reading STATUS.json is told which check refused and the exact
+            # `accept` entry that would lift it, without opening the run's manifest.
+            said = [f"{k}: {str(r.message).strip()[:2000]}"
+                    for k, r in sorted(pipe.results_by_key.items())
+                    if r.status.value == "refused" and str(r.message or "").strip()]
+            refusal = {"reason": "\n".join([stopped or "a gate refused"] + said
+                                            + ([refused_detail[0]] if refused_detail else [])),
+                       "fix": "read the refusal in reports/report.json; change the input, override "
+                              "a threshold in decisions.yml (value, approved_by, verbatim), or accept "
+                              "a gate's refusal there: accept: [{step, check, approved_by, verbatim}]"}
         escapes = []
         try:
             for prm in (payload.get("parameters") or []):
@@ -706,6 +716,9 @@ def cmd_run(a) -> int:
                                                  "value": prm.get("value")}})
         except NameError:
             pass
+        # A REFUSAL A PERSON ACCEPTED (decisions.yml `accept`, B1-103) is an escape like an
+        # adjudicated threshold: what the gate asked, who decided, in their words.
+        escapes += list(getattr(pipe, "accepted", []) or [])
         # WHAT THIS RUN'S INPUTS CANNOT SHOW, beside what the tool never can. A cell-called input
         # (harness autodev W020, B1-046) holds no empty droplets: said here, per library, in the
         # file a host reads first.
@@ -738,7 +751,9 @@ def cmd_run(a) -> int:
         pipe.run(graph.main_stage(pipe, python_exe, tools, ingest))
     except Refusal as e:
         print(f"\nREFUSED\n{e}")
-        return finish(2)
+        # A refusal raised while the graph was built is no task's: its words go to STATUS.json.
+        refused_detail.append(str(e).strip()[:2000])
+        return finish(2, stopped=str(e).strip().splitlines()[0][:300] if str(e).strip() else None)
     except BaseException as e:                                        # noqa: BLE001
         # A crash or an interrupt: the seal says FAILED and STATUS.json says failed, with the
         # exception named, before the traceback reaches whoever launched this. Then re-raised.

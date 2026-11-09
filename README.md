@@ -181,7 +181,9 @@ All enforced today:
   apply run with a changed decisions file runs in the same directory, re-runs the tasks of steps 5
   to 7 that carry it, and replaces their outputs.
 - **Gates return a verdict, not a warning.** Each reduces to `REFUSE`, `REVIEW` or `PASS`, and the
-  subcommands exit 2 on refusal. Reporting and enforcing are separate calls.
+  subcommands exit 2 on refusal. Reporting and enforcing are separate calls. A REFUSE can be
+  accepted in `decisions.yml` (`accept: [{step, check, approved_by, verbatim}]`), by a named person
+  in their own words; it is then recorded as an accepted REVIEW and in STATUS.json's `escapes`.
 - **Every removal is recoverable with the criterion that made it.** Removed observations are paired
   with the criteria that fired; the removal refuses if that record and the mask disagree on the
   count. Persisted as CSV, readable with the standard library alone.
