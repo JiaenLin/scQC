@@ -1780,24 +1780,31 @@ def cluster_profile(adata, cluster_key, uninformative_genes, *, sample=None, sam
                          f"{min_cells_for_markers} cells and cannot be ranked; criterion C is "
                          f"UNKNOWN for them and evaluated for the other {len(ranked)}")
         mkey = f"scqc_rank_{cluster_key}"
-        try:
-            if not ranked:
-                raise ValueError("no cluster has enough cells to rank")
-            sc.tl.rank_genes_groups(adata, groupby=cluster_key, method=marker_method,
-                                    n_genes=int(marker_topn), key_added=mkey,
-                                    groups=("all" if not too_small
-                                            else [str(g) for g in ranked]),
-                                    reference="rest")
-        except Exception as e:                              # noqa: BLE001 - reported, not hidden
-            raise TaskFailure(
-                f"rank_genes_groups(method={marker_method!r}) failed on obs[{cluster_key!r}]: "
-                f"{type(e).__name__}: {e}. Criterion C depends on it; pass markers=False to "
-                f"report C as UNKNOWN rather than continuing without saying so.")
-        try:
-            top_by_cluster = pd.DataFrame(adata.uns[mkey]["names"])
-        except Exception as e:                              # noqa: BLE001 - structure, measured
-            raise TaskFailure(f"could not read uns[{mkey!r}]['names'] as a table of ranked "
-                              f"symbols: {type(e).__name__}: {e}")
+        # NOT ONE CLUSTER LARGE ENOUGH TO RANK IS THE SAME CASE, ALL THE WAY DOWN (harness autodev
+        # W020, B1-045). This raised "no cluster has enough cells to rank" and failed the task, and
+        # with it the run. Every cluster then carries criterion C as UNKNOWN, named in the notes,
+        # and the profile is still written: depth, mitochondrial share and doublet share do not
+        # need a ranking.
+        if not ranked:
+            notes.append(f"no cluster has {min_cells_for_markers} or more cells, so none can be "
+                         f"ranked; criterion C is UNKNOWN for all {len(too_small)} of them")
+        else:
+            try:
+                sc.tl.rank_genes_groups(adata, groupby=cluster_key, method=marker_method,
+                                        n_genes=int(marker_topn), key_added=mkey,
+                                        groups=("all" if not too_small
+                                                else [str(g) for g in ranked]),
+                                        reference="rest")
+            except Exception as e:                          # noqa: BLE001 - reported, not hidden
+                raise TaskFailure(
+                    f"rank_genes_groups(method={marker_method!r}) failed on obs[{cluster_key!r}]: "
+                    f"{type(e).__name__}: {e}. Criterion C depends on it; pass markers=False to "
+                    f"report C as UNKNOWN rather than continuing without saying so.")
+            try:
+                top_by_cluster = pd.DataFrame(adata.uns[mkey]["names"])
+            except Exception as e:                          # noqa: BLE001 - structure, measured
+                raise TaskFailure(f"could not read uns[{mkey!r}]['names'] as a table of ranked "
+                                  f"symbols: {type(e).__name__}: {e}")
     else:
         notes.append("markers=False - pct_uninformative, pct_mt_markers and pct_ribo_markers are "
                      "UNKNOWN on every row, and criteria C, FLAG and WATCH are withheld")
