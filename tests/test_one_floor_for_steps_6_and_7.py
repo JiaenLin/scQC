@@ -129,11 +129,18 @@ for label, decisions, expect in (
 print("A. step 6 clusters on the thresholds step 7 applies: adjudicated, absent, unattested")
 
 # ---- B. a changed decision re-runs step 6
+#
+# The same directory both times, so the decisions file is the only thing that differs: a task's
+# signature hashes its parameters, and every path in them would differ between two directories.
 with tempfile.TemporaryDirectory() as td:
-    _, t1 = _steps_6_and_7(Path(td) / "one", DECIDED)
+    _, t1 = _steps_6_and_7(Path(td), DECIDED)
     changed = {"quality": {**DECIDED["quality"], "umi_floor": {"value": 2000, **ATTESTED}}}
-    _, t2 = _steps_6_and_7(Path(td) / "two", changed)
-    if t1["06_cluster/A1"].signature() == t2["06_cluster/A1"].signature():
+    _, t2 = _steps_6_and_7(Path(td), changed)
+    _, t3 = _steps_6_and_7(Path(td), DECIDED)
+    if t1["06_cluster/A1"].signature() != t3["06_cluster/A1"].signature():
+        fails.append("B: step 6's signature changes with nothing changed; this check cannot "
+                     "tell a changed decision from noise")
+    elif t1["06_cluster/A1"].signature() == t2["06_cluster/A1"].signature():
         fails.append("B: step 6's signature does not change with the decisions file, so a "
                      "changed floor would leave step 6 skipped on the old population")
 print("B. step 6's signature follows the decisions file")
