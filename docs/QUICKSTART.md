@@ -68,11 +68,14 @@ S2	singleron	mus_musculus	mus_musculus/ensembl_112	snrna	/data/S2/outs/raw	mt-	^
 (`mt-` against `MT-`), and a wrong prefix gives every cell `pct_counts_mt == 0` — which is
 indistinguishable from a clean library and passes every mitochondrial gate silently.
 
-**Design factors are discovered, never declared.** Any extra column becomes a factor if it varies,
-has at most six levels, and leaves at least one level holding more than one sample. That last rule
-excludes identifiers: a replicate id in a four-sample cohort has four levels and would otherwise
-make every differential check a ratio between single libraries — arithmetic with no evidence in
-it, reported in the same words as a real result.
+**Design factors are discovered, and may be declared.** Any extra column becomes a factor if it
+varies, has at most six levels, and leaves at least one level holding more than one sample. That
+last rule excludes identifiers: a replicate id in a four-sample cohort has four levels and would
+otherwise make every differential check a ratio between single libraries — arithmetic with no
+evidence in it, reported in the same words as a real result. Every discovered factor is checked;
+with `--design-factors genotype[,...]` a differential REFUSES only on a declared factor, and one on
+a column discovered but not declared (a lane, a chemistry) is a REVIEW that says so. With nothing
+declared, any discovered factor can refuse.
 
 **The project's reference registry** is `<project>/registry.tsv`, tab-separated, one row per
 reference the samplesheet names: `species`, `build`, `path`, then `built_by`, `star_version` and

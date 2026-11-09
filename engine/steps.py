@@ -98,7 +98,8 @@ NOT_FACTORS = frozenset({
 
 
 def _design(samples: list[dict], max_levels: int = 6) -> dict:
-    """Design factors discovered from the samplesheet, never declared.
+    """Design factors discovered from the samplesheet. Which of them ARE the design may also be
+    declared (`--design-factors`); `_declared_only` then lets only those refuse.
 
     Three exclusions, and the third is the one that is easy to miss:
 
@@ -123,6 +124,41 @@ def _design(samples: list[dict], max_levels: int = 6) -> dict:
         vals = {r.get(col) for r in samples if str(r.get(col) or "").strip()}
         if 2 <= len(vals) <= ceiling:
             out[col] = {r["sample"]: r[col] for r in samples if r.get(col)}
+    return out
+
+
+#: The check names under which a gate reports a differential across one design factor.
+_DIFFERENTIAL_CHECKS = ("design differential: ", "loss differential: ")
+
+
+def _declared_only(findings, declared):
+    """Findings, with a REFUSE on a factor the design did not DECLARE turned into a REVIEW.
+
+    DESIGN FACTORS WERE DISCOVERED, NEVER DECLARED (harness autodev W020, B1-104). Every column
+    that varies across libraries - a lane, a chemistry, a batch - fed the differential checks with
+    the power to stop the run, and the user could not say which columns were the design. Discovery
+    stays: a technical column whose differential tracks the libraries is exactly what a confound
+    check is for, and it is still computed and shown. But once the design is declared
+    (`--design-factors`), a differential REFUSES only on a declared factor; on a column that was
+    discovered and not declared it is a REVIEW, saying so. With nothing declared, every discovered
+    factor refuses as before.
+    """
+    if not declared:
+        return findings
+    import dataclasses
+
+    keep = {str(x) for x in declared}
+    out = []
+    for f in findings:
+        check = str(getattr(f, "check", ""))
+        factor = next((check[len(p):] for p in _DIFFERENTIAL_CHECKS if check.startswith(p)), None)
+        if factor is not None and factor not in keep and getattr(f, "severity", "") == "REFUSE":
+            f = dataclasses.replace(
+                f, severity="REVIEW",
+                message=(f"REVIEW, not refused: `{factor}` was discovered from the samplesheet and "
+                         f"is not a declared design factor ({', '.join(sorted(keep))}). "
+                         + str(getattr(f, "message", ""))))
+        out.append(f)
     return out
 
 
@@ -481,7 +517,8 @@ def _ambient_audit(task, pipeline, log):
                             "supplied": len(supplied), "not_denoised": len(not_denoised)},
                 "versions": {}}
 
-    findings = aa.audit(rows, per_gene, task.params["design"])
+    findings = _declared_only(aa.audit(rows, per_gene, task.params["design"]),
+                              task.params.get("design_declared"))
 
     # --- IS ANY FIT UNLIKE ITS SIBLINGS? modules/01_ambient/lr_policy.py has answered this since
     # it was written and nothing had ever called it - neither it nor the two adapter entry points
@@ -713,7 +750,8 @@ def _cellcall(task, pipeline, log):
             f"{len(calls)} a denoiser's. One cohort, one cell call: a cohort that mixes them "
             f"compares libraries whose cells were selected by different rules.")
 
-    findings = cg.gate(calls, task.params["design"])
+    findings = _declared_only(cg.gate(calls, task.params["design"]),
+                              task.params.get("design_declared"))
 
     # THE TWO OBSERVATIONS ABOUT ONE DENOISING, READ TOGETHER.
     #
@@ -1203,6 +1241,7 @@ def _doublet_health(task, pipeline, log):
                                         if isinstance(m.get("dbr"), (int, float))},
                          n_scored={s: m.get("n_scored") for s, m in m4.items()
                                    if isinstance(m.get("n_scored"), int)})
+    findings = _declared_only(findings, task.params.get("design_declared"))
     pipeline.gate("04_doublets", findings, dh.verdict(findings))
 
     # THE RATES THIS GATE JUDGED, written down. They were returned as metrics and the task

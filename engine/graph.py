@@ -64,6 +64,20 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     """
     tasks: list[Task] = []
     design = steps._design(pipeline.samples)
+    # THE DESIGN, WHERE IT IS DECLARED (`--design-factors`, B1-104). A declared factor must be a
+    # samplesheet column; the differentials then refuse on declared factors only, and a discovered
+    # column's differential is a REVIEW (steps._declared_only). Passed to the gating tasks only
+    # when declared, so a run that declares none is the run it was.
+    declared = [str(x) for x in (tools.get("design_factors") or [])]
+    if declared:
+        cols = set().union(*(set(r) for r in pipeline.samples)) if pipeline.samples else set()
+        absent = [f for f in declared if f not in cols]
+        if absent:
+            raise Refusal(
+                f"--design-factors names {', '.join(absent)}, which "
+                f"{'is' if len(absent) == 1 else 'are'} not a samplesheet column (columns: "
+                f"{', '.join(sorted(cols))}). A declared factor is a column the design varies.")
+    design_declared = {"design_declared": declared} if declared else {}
 
     def accepted(step: str) -> dict:
         """The decisions file's `accept` entries for a gate, as a param - so a changed acceptance
@@ -275,7 +289,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 "no_raw": [s for s in by_sample if not raw_of.get(s)],
                 # Named, not dropped: no corrected matrix exists to measure a fraction against.
                 "not_denoised": not_denoised,
-                **accepted("01_ambient"),
+                **accepted("01_ambient"), **design_declared,
                 # And a cell-called input has no empty droplets to estimate ambient RNA from at
                 # all, by any method. Passed only when there is one.
                 **({"called_input": sorted(called_input)} if called_input else {}),
@@ -317,7 +331,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # samplesheet, from a run nothing verified was this one.
         needs=tuple(f"05_quality/{s}" for s in by_sample),
         params={"design": design, "samples": list(by_sample), "call_paths": call_paths,
-                "call_by": call_by, **accepted("02_cells")},
+                "call_by": call_by, **accepted("02_cells"), **design_declared},
     ))
 
     # --- steps 3-4: the light floor, then doublet scoring on what clears it.
@@ -357,7 +371,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     tasks.append(Task(
         key="04_doublet_health", step="04_doublets", fn=steps._doublet_health,
         needs=tuple(dbl_keys), params={"design": design, "samples": list(by_sample),
-                                       **accepted("04_doublets")},
+                                       **accepted("04_doublets"), **design_declared},
         outputs=(str(pipeline.results / "tables" / "doublet_health.csv"),),
     ))
 

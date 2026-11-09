@@ -631,6 +631,10 @@ def cmd_run(a) -> int:
         # DECLARED per-step resources over the graph's defaults (B1-043); keyed into the run key
         # when given, absent otherwise, so a run that declares none is keyed exactly as before.
         "resources": _resources(getattr(a, "resources", None)),
+        # DECLARED design factors (B1-104): the differentials refuse on these only, and a column
+        # discovered and not declared is a REVIEW. Absent, every discovered factor refuses.
+        "design_factors": ([x.strip() for x in str(a.design_factors).split(",") if x.strip()]
+                           if getattr(a, "design_factors", None) else None),
         # Same treatment, same reason: a malformed list is a usage error before any file is
         # opened. The default resolution is dropped if it appears here, so `--resolution 2
         # --extra-resolutions 1,2,3` profiles 2 once rather than twice under two names.
@@ -917,6 +921,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the queue a task that declares a GPU (the denoiser) is sent to - or "
                          "several, comma-separated, the first whose limits admit the task; "
                          "default: --queue, as every other task")
+    r2.add_argument("--design-factors", dest="design_factors",
+                    help="comma-separated samplesheet columns that ARE the design (e.g. from the "
+                         "harness's design resolver); differentials refuse only on these, and a "
+                         "column discovered but not declared is REVIEW. Default: every discovered "
+                         "factor can refuse")
     r2.add_argument("--resources",
                     help="STEP=cpus:mem_gb:walltime_h[,...] over a task's declared resources; STEP "
                          "is a step (07_apply) or a task-key prefix (07_measure, 06_cluster)")
