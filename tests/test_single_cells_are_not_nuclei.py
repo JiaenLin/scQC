@@ -14,7 +14,7 @@ Each check below fails on the code that preceded it:
 
   A  the graph: a single-cell library is not denoised, takes the aligner's call, and every step that
      selects cells reads that call; `aligner_cells` is required before anything is submitted; apply
-     mode is refused rather than run under a denoiser's criterion name.
+     mode builds, with step 7's cell criterion named for the aligner (A8).
   B  the conversion writes the cell call as a column - the aligner's for cells, the denoiser's for
      nuclei (Q10: no conversion in this tool ever wrote `cellbender_cell`).
   C  step 5's measurement takes the call from that column, not from "has counts", and places the

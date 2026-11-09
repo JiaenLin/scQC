@@ -129,8 +129,8 @@ cohort was bounded by it.
 `quality.FLOOR_METHOD`: `valley` on `snrna`, `declared` on `scrna`. A single-cell object is the
 aligner's raw matrix, every droplet of it, and its density has **three** populations — barcodes
 carrying a handful of UMI, empty droplets carrying ambient RNA, and cells. On the first
-single-cell cohort the two tallest modes were both in the integer-count noise and the "valley"
-was 2.5 UMI in every library. The empties/cells boundary is the aligner's cell call, already
+single-cell cohort the two tallest modes were both in the integer-count noise, so the "valley"
+fell inside that noise. The empties/cells boundary is the aligner's cell call, already
 made; a valley over the same droplets would be a second cell caller.
 
 So on `scrna` the floors are **declared**: UMI ≥ **500**, genes ≥ **250**, applied to the

@@ -34,8 +34,9 @@ values decide WHAT the constant should be; they are not themselves applied.
 
 THE BOUNDS, AND WHY THEY ARE NOT THE THRESHOLD
 
-`UMI_BOUNDS = (200, 1000)`. These do not choose a floor - the data does. They catch a floor that
-cannot be right:
+`UMI_BOUNDS` is per assay (below). For nuclei (`snrna`: 200, 1000) the bounds do not choose a
+floor - the data does - and they catch a floor that cannot be right. Single cells (`scrna`) take
+the declared floors further down (`FLOOR_METHOD`). For nuclei:
 
   below 200    the quality floor would sit at or under the doublet-scoring light floor,
                inverting the pipeline's ordering. Step 3 already refuses a light floor that is
@@ -83,15 +84,15 @@ BOUNDS_SOURCE = {"snrna": "measured: the calibration cohort's nuclear valleys",
 #: nuclei. A single-cell object is the aligner's raw matrix, every droplet of it, and its density
 #: has three populations - barcodes carrying a handful of UMI, empty droplets carrying ambient
 #: RNA, and cells. On the first single-cell cohort the two tallest modes were both in the
-#: integer-count noise and the "valley" was 2.5 UMI in every library (single-cell-harness
+#: integer-count noise, so the "valley" fell inside that noise (single-cell-harness
 #: ADR-0027). The boundary between empties and cells is the aligner's cell call, already made;
 #: a valley drawn over the same droplets would be a second cell caller. What is left for a floor
 #: on called cells is to set aside the plainly empty, and the PI's instruction for it was
 #: "make reasonable QC, do not be too harsh, avoid removing true signal" (2026-10-02).
 FLOOR_METHOD = {"snrna": "valley", "scrna": "declared"}
 #: The declared floors, on the aligner's CALLED cells: the lower ends of the whole-cell bounds,
-#: and the floors most whole-cell studies start from. Lenient on purpose - on the first cohort
-#: the aligner's call already stops at 500 UMI, and these set aside 0 to 10 cells per library.
+#: and the floors most whole-cell studies start from. Lenient on purpose: they
+#: set aside only the plainly empty among the called cells.
 DECLARED_FLOORS = {"scrna": {"umi": 500, "genes": 250}}
 FLOORS_DECLARED_BY = {"scrna": "the PI, 2026-10-02: \"make reasonable QC, do not be too harsh, "
                                "avoid removing true signal\" - the lower ends of the declared "

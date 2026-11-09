@@ -171,7 +171,8 @@ Stated plainly, because this is the section that is usually omitted:
   design-differential line were set against distributions from this cohort and one accepted
   outcome. A threshold that has never fired in anger is a hypothesis.
 - **Anything about single-cell (as opposed to single-nuclei) data.** The ambient step is mandatory
-  for nuclei and optional for cells; that branch has not been exercised on real cell data.
+  for nuclei and never run on cells (`DENOISE`); the single-cell route has run on one real cell
+  cohort only.
 - **Droplet-free or plate-based protocols.** Not supported and not tested.
 
 ## How to calibrate on your own data

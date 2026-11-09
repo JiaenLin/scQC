@@ -85,7 +85,8 @@ Single nuclei and single cells take different routes, decided by the declared `a
 Nuclei are denoised (mandatory), and the denoiser's call is the cell call. Single cells are
 **not denoised by this pipeline**: the raw counts are the object, the aligner's call
 (`aligner_cells`) is the cell call, and the count bounds and the cluster check are the
-whole-cell ones. Apply mode is not yet built for single cells, so they run in evidence mode.
+whole-cell ones. Apply mode runs on single cells too: step 7's cell criterion is
+`fail_not_aligner_cell`, over the aligner's called cells.
 Doublet scoring precedes quality filtering, as scDblFinder's documentation requires.
 
 📄 **[Why each step exists](docs/RATIONALE.md)** · **[How each filter is

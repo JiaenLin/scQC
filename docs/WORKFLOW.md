@@ -144,8 +144,8 @@ The two forms are not interchangeable, and the diagram marks the difference.
   counts, every droplet kept; the aligner's call is written into it as `aligner_cell`, and steps
   2, 4, 5 and 6 select cells by that column. Step 2 has nothing to compare and reports NOT RUN
   rather than a loss of zero. The count bounds and criterion C's marker classes are per assay.
-  Apply mode is refused for a library no denoiser touched, because step 7's first criterion
-  carries the denoiser's name.
+  Apply mode runs on a library no denoiser touched: step 7's first criterion is then
+  `fail_not_aligner_cell`, over the aligner's called cells, in place of the denoiser's.
 
 - **Step 0 rejects a matrix, not a sample.** A supplied matrix that fails P1 or P2 does not stop the
   run when FASTQ is available: the plan becomes *rebuild from FASTQ*, and the matrix is simply not
