@@ -1971,11 +1971,11 @@ def write_valleys_csv(records, path) -> Path:
     """Per-library valleys, in the columns `quality.Valley` is built from: sample, metric, valley,
     bimodal, note. A valley that could not be located is an empty cell, not a zero.
 
-    `bimodal` may NOT be blank, and an unknown one raises rather than being written. The two
-    readers of this column disagree about what an empty cell means - `scqc_cli` treats anything
-    that is not false/0/no as bimodal, the tier-1 acceptance runner treats a blank as not bimodal
-    - so a blank here is a claim whose meaning depends on who opens the file, and one of the two
-    readings hands `quality.derive()` a threshold from a distribution nobody assessed.
+    `bimodal` may NOT be blank, and an unknown one raises rather than being written. Readers of
+    this column disagree about what an empty cell means - `scqc_cli` treats anything that is not
+    false/0/no as bimodal, and a reader that takes a blank as false reads the opposite - so a blank
+    here is a claim whose meaning depends on who opens the file, and one of the two readings hands
+    `quality.derive()` a threshold from a distribution nobody assessed.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -1988,8 +1988,8 @@ def write_valleys_csv(records, path) -> Path:
                     f"{r.get('sample')}/{r.get('metric')}: bimodality is {r.get('bimodal')!r}, "
                     f"neither True nor False. find_valley() always returns a bool; a record that "
                     f"reaches here without one was assembled somewhere else, and writing it "
-                    f"blank would be read as 'bimodal' by scqc_cli and as 'not bimodal' by the "
-                    f"acceptance runner.")
+                    f"blank would be read as 'bimodal' by scqc_cli and as 'not bimodal' by a "
+                    f"reader that takes a blank as false.")
             w.writerow([r["sample"], r["metric"],
                         "" if _unknown(r.get("valley")) else r["valley"],
                         _is_true(r["bimodal"]), r.get("note", "")])

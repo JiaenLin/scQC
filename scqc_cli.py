@@ -756,6 +756,42 @@ def cmd_run(a) -> int:
     return finish(2 if refused else (1 if failed else 0))
 
 
+def cmd_fixture_run(a) -> int:
+    """The development suite's fixture, through the real pipeline (harness autodev W020, B1-041).
+
+    Splits the two-shape fixture object into a project (adapters/fixture_project.py) and runs
+    `scqc run --mode apply --executor local` on it with the stand-in doublet detector, then copies
+    the run's STATUS.json to `--out`, where the suite's fixture tier reads the status contract. The
+    exit code is the run's. The detector is a stand-in, so what this shows is that the pipeline
+    carries the fixture through every step to a report and a deliverable - never that the doublet
+    calls are right.
+    """
+    import shutil as _sh
+
+    sys.path.insert(0, str(ROOT))
+    from adapters import fixture_project as fp
+
+    out = Path(a.out).expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    made = fp.build_project(a.observations, out, sample_key=a.sample_key,
+                            counts_layer=a.counts_layer, mt_prefix=a.mt_prefix,
+                            ribo_pattern=a.ribo_pattern, dbr=a.dbr, design=a.design)
+    print(f"fixture project: {len(made['libraries'])} libraries, {made['cells']:,} cells -> {out}")
+    if made["design_rows_without_cells"]:
+        print(f"  design rows with no cells in the object, left out: "
+              f"{', '.join(made['design_rows_without_cells'])}")
+    rscript = a.rscript or str(ROOT / "tests" / "fixtures" / "fake_rscript.py")
+    cmd = [sys.executable, str(ROOT / "scqc_cli.py"), "run", "--project", str(out),
+           "--samplesheet", str(made["samplesheet"]), "--registry", str(made["registry"]),
+           "--mode", "apply", "--executor", "local", "--python", sys.executable,
+           "--rscript", rscript, "--jobs", str(a.jobs), "--seed", "0"]
+    rc = subprocess.run(cmd).returncode
+    status = out / "results" / "latest" / "STATUS.json"
+    if status.is_file():
+        _sh.copyfile(status, out / "STATUS.json")
+    return rc
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="scqc", formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -906,6 +942,25 @@ def build_parser() -> argparse.ArgumentParser:
                                         "cannot_show, state_version, criteria (JSON)")
     d.add_argument("--json", action="store_true", help="accepted for symmetry; the output is JSON")
     d.set_defaults(fn=cmd_describe)
+
+    fx = sub.add_parser("fixture-run",
+                        help="the development suite's fixture object, split into a project and "
+                             "run through the pipeline (apply, local, stand-in doublet detector)")
+    fx.add_argument("--observations", required=True, help="the fixture's .h5ad of cells")
+    fx.add_argument("--sample-key", dest="sample_key", required=True,
+                    help="the obs column holding each cell's library")
+    fx.add_argument("--counts-layer", dest="counts_layer", required=True,
+                    help="the layer holding the raw counts")
+    fx.add_argument("--mt-prefix", dest="mt_prefix", required=True)
+    fx.add_argument("--ribo-pattern", dest="ribo_pattern", required=True)
+    fx.add_argument("--dbr", type=float, required=True,
+                    help="the doublet rate DECLARED for the synthetic libraries")
+    fx.add_argument("--design", help="a design table joined on the sample column; its columns "
+                                     "become samplesheet columns under their own names")
+    fx.add_argument("--rscript", help="the doublet detector; default the repository's stand-in")
+    fx.add_argument("--jobs", type=int, default=4)
+    fx.add_argument("--out", required=True, help="where the project and its run are written")
+    fx.set_defaults(fn=cmd_fixture_run)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")
     s.add_argument("-v", "--verbose", action="store_true"); s.set_defaults(fn=cmd_selftest)

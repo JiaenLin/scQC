@@ -9,14 +9,16 @@ devpoints: 1
 tests:
   command: ["{python}", "scqc_cli.py", "selftest"]
 
-# scQC consumes a PROJECT - a samplesheet and per-sample matrices - not a single object, so the
-# fixture's cohort object alone cannot drive its pipeline. `describe` is what the fixture tier
-# can honestly run: it exercises the declaration, every criterion's mask name, the gates and
-# their thresholds. That is a real check of the contract and no check at all of the arithmetic,
-# which is what `cannot_prove` below says.
+# scQC consumes a PROJECT - a samplesheet and per-sample matrices - not a single object, so this
+# ran `describe` and the fixture never reached a step (harness autodev W020, B1-041). `fixture-run`
+# splits the fixture's object into the project scQC reads - one matrix per library from the counts
+# layer it is TOLD, grouped by the sample column it is TOLD, the design table's columns under their
+# own names - and runs the real pipeline on it: apply mode, local executor, the stand-in doublet
+# detector (tests/fixtures/fake_rscript.py). Both shapes are told their own names and spellings, so
+# a step that assumed one would fail the other. It copies the run's STATUS.json to {out}.
 fixture:
-  command: ["{python}", "scqc_cli.py", "describe"]
-  products: []
+  command: ["{python}", "scqc_cli.py", "fixture-run", "--observations", "{observations}", "--design", "{design}", "--sample-key", "{role_sample}", "--counts-layer", "{role_counts}", "--mt-prefix", "{mt_prefix}", "--ribo-pattern", "{ribo_pattern}", "--dbr", "0.05", "--jobs", "{jobs}", "--out", "{out}"]
+  products: [results/latest/reports/report.json]
 
 baseline_dir: tests/baselines
 
@@ -49,9 +51,11 @@ points:
       - {file: engine/declare.py, table: GATES}
     must_declare: [inputs it reads, products it writes, its entry in APPLY_REQUIRES if it removes]
     example: 05_quality
-    tests: [tests/acceptance]
-    proves: "it is ordered, its products are named, and its removals are declared"
-    cannot_prove: "that it runs on a real project - the fixture is one object, not a project"
+    tests: [tests/test_conditions.py]
+    proves: "it is ordered, its products are named, its removals are declared, and the pipeline carries the synthetic fixture - split into a project - through every step to a report"
+    cannot_prove: >
+      that any threshold is right for a real cohort, or that the doublet calls are - the detector
+      on the fixture is a stand-in; a real cohort is shown by reproducing its run
 
   adapter:
     what: a backend the engine can call for one measurement, swappable without touching a step

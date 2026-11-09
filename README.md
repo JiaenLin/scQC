@@ -219,8 +219,9 @@ orchestrator's own process:
     --registry my_project/registry.tsv --python ~/scqc-env/core/bin/python
 ```
 
-The acceptance harness regression-tests against a dataset you supply; no data ships with this
-repository.
+No data ships with this repository. The harness's development suite runs the pipeline end to end
+on its synthetic two-shape fixture through `scqc fixture-run` (`DEVPOINTS.yaml`); a real cohort is
+tested by reproducing its promoted run, not by a runner shipped here.
 
 ## Part of a family
 
