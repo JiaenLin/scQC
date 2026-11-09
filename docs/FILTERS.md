@@ -102,7 +102,11 @@ provenance, not about whether the number is usable.
 
 **If no library in the cohort is bimodal, the derivation refuses.** There is then nothing to take
 a median *of*, and the result would be a judgement wearing a derivation's clothes. Choose the cut
-explicitly and record it as one.
+explicitly and record it as one: `quality.umi_floor` (or `gene_floor`) in `decisions.yml`, with a
+value, `approved_by` and `verbatim`. A refused derivation does not stop step 5 - it is a REVIEW
+finding with its reason - so the remedy can be read: an attested floor applies as ADJUDICATED; with
+none, evidence mode completes (step 6 clusters the called cells without that floor and says so)
+and apply mode refuses at step 7. The same holds for a valley outside the bounds below.
 
 ### From per-library valleys to one cohort constant
 

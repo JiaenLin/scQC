@@ -1668,22 +1668,76 @@ def _quality_stage(task, pipeline, log):
                 out["metrics"][f"{metric}_provenance"] = "declared"
                 out["metrics"][f"{metric}_declared_by"] = qmod.FLOORS_DECLARED_BY[cohort_assay]
         out["outputs"].append(str(fpath))
+    # A REFUSED DERIVATION NO LONGER BLOCKS ITS OWN REMEDY (harness autodev W020, B1-042). When
+    # the valleys could not give a floor - no library bimodal, a valley outside the bounds, a
+    # library with no valley - this stopped the run before the decisions file was read, so the
+    # remedy every refusal names (choose the cut and record it) could not be applied: the PROJECT'S
+    # OWN RULE, docs/PRINCIPLES.md section 3, "never block the remedy". Now a derivation that
+    # refuses is recorded as a REVIEW finding with its reason, and:
+    #   * a floor ATTESTED in decisions.yml (value, approved_by, verbatim) is published as the
+    #     proposal, provenance `adjudicated`, and steps 6 and 7 apply it as ADJUDICATED;
+    #   * with none, the floor is published as None, provenance `refused`: evidence mode completes
+    #     (step 6 clusters the called cells without that floor and says so), and apply refuses at
+    #     07_apply, where a floor that is neither declared nor derived has always been refused.
+    # A derivation that succeeds is untouched, whatever the decisions file says: steps 6 and 7
+    # read an override there themselves.
+    qdec = (task.params.get("decisions") or {}).get("quality") or {}
     for metric in (() if floors_declared else VALLEY_METRICS):
-        unknown = [v["sample"] for v in valleys[metric]
-                   if v["value"] is None or v["bimodal"] is None]
-        if unknown:
-            raise Refusal(
-                f"05_quality ({metric}): no valley was established for {', '.join(unknown)}. A "
-                f"library with no measured valley cannot contribute to a cohort constant, and "
-                f"treating its absence as agreement lets the other libraries decide on its "
-                f"behalf.")
-        # The count bounds are per assay, like the mitochondrial ones, and the cohort is one
-        # assay or it is refused here rather than bounded as whichever came first.
-        sub = Task(key=task.key, step=task.step, fn=_quality,
-                   params={"valleys": valleys[metric], "metric": metric,
-                           "light_floor": task.params.get("light_floor"),
-                           "assay": _cohort_assay(task.params.get("assay"))})
-        r = _quality(sub, pipeline, log)
+        leaf = {"umi": "umi_floor", "genes": "gene_floor"}[metric]
+        try:
+            unknown = [v["sample"] for v in valleys[metric]
+                       if v["value"] is None or v["bimodal"] is None]
+            if unknown:
+                raise Refusal(
+                    f"05_quality ({metric}): no valley was established for {', '.join(unknown)}. "
+                    f"A library with no measured valley cannot contribute to a cohort constant, "
+                    f"and treating its absence as agreement lets the other libraries decide on "
+                    f"its behalf.")
+            # The count bounds are per assay, like the mitochondrial ones, and the cohort is one
+            # assay or it is refused here rather than bounded as whichever came first.
+            sub = Task(key=task.key, step=task.step, fn=_quality,
+                       params={"valleys": valleys[metric], "metric": metric,
+                               "light_floor": task.params.get("light_floor"),
+                               "assay": _cohort_assay(task.params.get("assay"))})
+            r = _quality(sub, pipeline, log)
+        except Refusal as e:
+            why = str(e).strip()
+            attested = _attested(qdec.get(leaf))
+            out["metrics"][f"{metric}_derivation_refused"] = why
+            out["metrics"][f"{metric}_spread"] = None
+            if attested is not None:
+                try:
+                    value = float(attested)
+                except (TypeError, ValueError):
+                    raise Refusal(f"05_quality ({metric}): the derivation refused ({why}), and "
+                                  f"quality.{leaf} in decisions.yml is {attested!r}, not a "
+                                  f"number.") from None
+                value = int(value) if value.is_integer() else value
+                out["metrics"][f"{metric}_proposed"] = value
+                out["metrics"][f"{metric}_provenance"] = "adjudicated"
+                print(f"    {metric}: the derivation refused; quality.{leaf} = {value} is "
+                      f"ADJUDICATED in decisions.yml and applies")
+                pipeline.record_findings("05_quality", [{
+                    "step": "05_quality", "check": f"{metric} floor: derivation refused",
+                    "severity": "REVIEW",
+                    "message": (f"the {metric} floor could not be derived ({why}). "
+                                f"quality.{leaf} = {value} is ADJUDICATED in decisions.yml, by "
+                                f"{(qdec.get(leaf) or {}).get('approved_by')}, and applies."),
+                    "detail": []}])
+            else:
+                out["metrics"][f"{metric}_proposed"] = None
+                out["metrics"][f"{metric}_provenance"] = "refused"
+                print(f"    {metric}: the derivation refused and no floor is adjudicated - "
+                      f"steps 6 and 7 have none to apply")
+                pipeline.record_findings("05_quality", [{
+                    "step": "05_quality", "check": f"{metric} floor: derivation refused",
+                    "severity": "REVIEW",
+                    "message": (f"the {metric} floor could not be derived ({why}). No floor is "
+                                f"applied: step 6 clusters the called cells without it, and apply "
+                                f"mode refuses at step 7 until quality.{leaf} is recorded in "
+                                f"decisions.yml with value, approved_by and verbatim."),
+                    "detail": []}])
+            continue
         out["outputs"] += list(r.get("outputs", []))
         for k, v in (r.get("metrics") or {}).items():
             out["metrics"][f"{metric}_{k}"] = v
@@ -1886,11 +1940,15 @@ def _population_for_cluster(pipeline, sample, cell_call_key="cellbender_cell", d
     """
     where = f"06_cluster_check ({sample})"
     values, _classes, ceilings, _basis = _resolve_thresholds(
-        pipeline, decisions, [sample], step=where)
+        pipeline, decisions, [sample], step=where, allow_refused=True)
     try:
+        # A floor whose derivation REFUSED and that nobody adjudicated is None here (B1-042):
+        # step 6 clusters the called cells without it, and the 05_quality finding says so.
         return {"cell_call_key": cell_call_key,
-                "umi_floor": float(values["quality.umi_floor"]),
-                "gene_floor": float(values["quality.gene_floor"]),
+                "umi_floor": (None if values["quality.umi_floor"] is None
+                              else float(values["quality.umi_floor"])),
+                "gene_floor": (None if values["quality.gene_floor"] is None
+                               else float(values["quality.gene_floor"])),
                 "mito_ceiling": float(ceilings[sample])}
     except (TypeError, ValueError) as e:
         raise Refusal(
@@ -2207,7 +2265,12 @@ def _apply_thresholds(task, pipeline, samples):
     return _resolve_thresholds(pipeline, task.params.get("decisions"), samples, step="07_apply")
 
 
-def _resolve_thresholds(pipeline, decisions, samples, *, step):
+#: Where step 5 records why a floor's derivation refused, by the threshold it would have set.
+_REFUSED_KEY = {"quality.umi_floor": "umi_derivation_refused",
+                "quality.gene_floor": "genes_derivation_refused"}
+
+
+def _resolve_thresholds(pipeline, decisions, samples, *, step, allow_refused=False):
     """(values, who decided each, ceiling per sample, how the ceilings were decided).
 
     A THRESHOLD IS ADJUDICATED, DECLARED OR DERIVED, AND THE RESULT SAYS WHICH. A decisions file
@@ -2240,15 +2303,24 @@ def _resolve_thresholds(pipeline, decisions, samples, *, step):
         if declared is not None:
             values[dotted], classes[dotted] = declared, "ADJUDICATED"
             continue
+        prov = {"quality.umi_floor": cohort.get("umi_provenance"),
+                "quality.gene_floor": cohort.get("genes_provenance")}.get(dotted)
         if derived[dotted] is None:
+            # Step 6 may go on without a floor whose derivation REFUSED (B1-042) - it clusters,
+            # it removes nothing; step 7 may not, and refuses here as it always has.
+            if allow_refused and prov == "refused":
+                values[dotted], classes[dotted] = None, "NONE - the derivation refused"
+                continue
             raise Refusal(
                 f"{step}: {dotted} is neither declared nor derived. Step 5 proposes it and this "
                 f"run has no record of that, so there is nothing to apply - and a threshold "
-                f"nobody chose and nothing measured is not a default, it is a guess.")
-        prov = {"quality.umi_floor": cohort.get("umi_provenance"),
-                "quality.gene_floor": cohort.get("genes_provenance")}.get(dotted)
+                f"nobody chose and nothing measured is not a default, it is a guess."
+                + (f" Its derivation refused: {cohort.get(_REFUSED_KEY[dotted])} - record "
+                   f"{dotted} in decisions.yml (value, approved_by, verbatim)."
+                   if prov == "refused" else ""))
         values[dotted] = derived[dotted]
-        classes[dotted] = "DECLARED" if prov == "declared" else "DERIVED"
+        classes[dotted] = ("DECLARED" if prov == "declared" else
+                           "ADJUDICATED" if prov == "adjudicated" else "DERIVED")
     ceilings, basis = _ceilings_for(pipeline, samples, values["quality.mito_ceiling_pct"],
                                     step=step)
     return values, classes, ceilings, basis

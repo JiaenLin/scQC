@@ -80,7 +80,7 @@ flowchart TD
         Q2{"Bimodal · inside the bounds ·<br/>above the light floor?"}
     end
     Q1 --> Q2
-    Q2 -- "no" --> Q3["REFUSE · raises<br/>without two modes the minimum is the<br/>flank of the only one. Choose the cut<br/>explicitly and record it as ADJUDICATED"]
+    Q2 -- "no" --> Q3["REVIEW · no floor derived<br/>without two modes the minimum is the<br/>flank of the only one. A cut recorded in<br/>decisions.yml applies as ADJUDICATED;<br/>without one, apply refuses at step 7"]
     Q2 -- "yes" --> S6
 
     subgraph S6["Step 6 — Cluster check"]
@@ -104,7 +104,7 @@ flowchart TD
     style X2D fill:#8B2635,color:#fff
     style X3 fill:#8B2635,color:#fff
     style X4 fill:#8B2635,color:#fff
-    style Q3 fill:#8B2635,color:#fff
+    style Q3 fill:#B8860B,color:#fff
     style X7 fill:#8B2635,color:#fff
     style R1 fill:#B8860B,color:#fff
     style R2 fill:#B8860B,color:#fff
