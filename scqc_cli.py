@@ -277,6 +277,28 @@ def _mito_bounds(text, declared_by):
     return (lo, hi)
 
 
+def _resources(text):
+    """`STEP=cpus:mem_gb:walltime_h[,...]` -> {STEP: [cpus, mem_gb, walltime_h]}, or None.
+
+    A usage error before any file is opened, like every other malformed flag. Whole numbers, each
+    at least 1: a task asking for nothing is a typo, not a request."""
+    if not text:
+        return None
+    out = {}
+    for part in (x.strip() for x in str(text).split(",") if x.strip()):
+        step, _, spec = part.partition("=")
+        bits = spec.split(":")
+        try:
+            vals = [int(b) for b in bits]
+        except ValueError:
+            vals = []
+        if not step.strip() or len(vals) != 3 or min(vals) < 1:
+            raise SystemExit(f"scqc run: --resources takes STEP=cpus:mem_gb:walltime_h[,...] in "
+                             f"whole numbers of at least 1, got {part!r}")
+        out[step.strip()] = vals
+    return out
+
+
 def cmd_verify(a) -> int:
     v = load("verify_raw")
     verdict = v.verify(
@@ -606,6 +628,9 @@ def cmd_run(a) -> int:
         # sweep a setting with no name, and `resolve_dbr_sd` would refuse it three steps later.
         "dbr_sd_sweep": ([t.strip() for t in str(a.dbr_sd_sweep).split(",") if t.strip()]
                          if a.dbr_sd_sweep else None),
+        # DECLARED per-step resources over the graph's defaults (B1-043); keyed into the run key
+        # when given, absent otherwise, so a run that declares none is keyed exactly as before.
+        "resources": _resources(getattr(a, "resources", None)),
         # Same treatment, same reason: a malformed list is a usage error before any file is
         # opened. The default resolution is dropped if it appears here, so `--resolution 2
         # --extra-resolutions 1,2,3` profiles 2 once rather than twice under two names.
@@ -889,8 +914,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run the local executor on a machine that has a scheduler, outside a job")
     r2.add_argument("--queue"); r2.add_argument("--pbs-project", dest="pbs_project")
     r2.add_argument("--gpu-queue", dest="gpu_queue",
-                    help="the queue a task that declares a GPU (the denoiser) is sent to; "
+                    help="the queue a task that declares a GPU (the denoiser) is sent to - or "
+                         "several, comma-separated, the first whose limits admit the task; "
                          "default: --queue, as every other task")
+    r2.add_argument("--resources",
+                    help="STEP=cpus:mem_gb:walltime_h[,...] over a task's declared resources; STEP "
+                         "is a step (07_apply) or a task-key prefix (07_measure, 06_cluster)")
     r2.add_argument("--python", help="interpreter that has scanpy/anndata")
     r2.add_argument("--celescope"); r2.add_argument("--cellranger")
     r2.add_argument("--cellbender"); r2.add_argument("--rscript")

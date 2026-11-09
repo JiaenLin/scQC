@@ -554,4 +554,29 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     report_needs = (last,) + (("04_doublet_sweep",) if sweep_settings else ())
     tasks.append(Task(key="report", step="report", fn=steps._report, needs=report_needs,
                       params={}))
-    return tasks
+    return with_resources(tasks, tools.get("resources"))
+
+
+def with_resources(tasks: list, resources) -> list:
+    """The tasks, with any DECLARED resources put over the defaults above (`--resources`).
+
+    THE DEFAULTS ABOVE ARE A STARTING POINT, NOT A LIMIT (harness autodev W020, B1-043). Each task
+    declares cpus, memory and walltime sized for the cohorts this ran on - 07_apply 8 CPU / 48 GB /
+    4 h, the denoiser 64 GB on a GPU - and the only way past them was a code edit: a cohort of a
+    million cells could not be run, and the queue refusal named a fix nobody could make. A key is a
+    task's step (`07_apply`) or the part of its key before `/` (`07_measure`, `06_cluster`); the
+    value is (cpus, memory_gb, walltime_h). The pre-submission check still compares every task with
+    its queue's limits, so a declaration a queue cannot run is refused before anything is submitted.
+    """
+    import dataclasses
+
+    if not resources:
+        return tasks
+    out = []
+    for t in tasks:
+        r = resources.get(t.key.split("/", 1)[0]) or resources.get(t.step)
+        if r:
+            cpus, mem, wall = (int(x) for x in r)
+            t = dataclasses.replace(t, cpus=cpus, memory_gb=mem, walltime_h=wall)
+        out.append(t)
+    return out

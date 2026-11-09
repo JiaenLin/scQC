@@ -126,8 +126,33 @@ else:
     e.gpu_queue = None
     if e.queue_for(True) != "cpuq":
         fails.append("3: with no GPU queue named, a GPU task must go where every task goes")
-if "queue = self.queue_for(gpu)" not in (ROOT / "engine" / "executor.py").read_text(encoding="utf-8"):
-    fails.append("3: the job script does not take its queue from queue_for()")
+# THE SCRIPT ITSELF, not the source's spelling (harness autodev W020, B1-043/B1-107): this read
+# executor.py for the text `queue = self.queue_for(gpu)`. A GPU task's job script is now written by
+# the real shell() against a stand-in qsub that keeps a copy, and its `#PBS -q` line is read.
+import tempfile  # noqa: E402
+with tempfile.TemporaryDirectory() as td:
+    td = Path(td)
+    qsub, qstat = td / "qsub", td / "qstat"
+    qsub.write_text('#!/bin/bash\ncp "$1" "$1.submitted"; bash "$1" >/dev/null 2>&1; '
+                    'echo "4242.fake"\n')
+    qstat.write_text("#!/bin/bash\necho ' job_state = F'\necho ' Exit_status = 0'\n")
+    for f in (qsub, qstat):
+        f.chmod(0o755)
+    e = ex.PBSExecutor.__new__(ex.PBSExecutor)
+    e.queue, e.project, e.gpu_queue, e.poll_s = "cpuq", None, "gpuq", 1
+    e.gpu_queues = ["gpuq"]
+    e.cpus, e.memory_gb, e.walltime_h, e.gpu = 1, 1, 1, False
+    e._limits_by_queue, e._limits = {}, None
+    e.qsub, e.qstat, e.pbs_env = str(qsub), str(qstat), {}
+    for gpu, want in ((True, "gpuq"), (False, "cpuq")):
+        ex.bind_resources(cpus=4, memory_gb=8, walltime_h=1, gpu=gpu)
+        try:
+            e.shell(["echo", "ok"], td / f"t_{gpu}.log")
+        finally:
+            ex.clear_resources()
+        script = (td / f"t_{gpu}.pbs.submitted").read_text()
+        if f"#PBS -q {want}" not in script:
+            fails.append(f"3: a {'GPU' if gpu else 'CPU'} task's job script names no '#PBS -q {want}'")
 print("3. --gpu-queue routes the denoiser; absent, nothing changes")
 
 print("=" * 74)

@@ -417,9 +417,11 @@ class Pipeline:
                 raise Refusal(
                     "the queue cannot run this graph as declared:\n"
                     + "\n".join(f"    - {o}" for o in over)
-                    + "\n    Lower the task's declaration, or choose a queue that allows it "
-                      "(`qstat -Qf <queue>` lists resources_max). Refused here rather than at "
-                      "submission, so nothing runs that would be thrown away.")
+                    + "\n    Declare what the task may ask for with `--resources "
+                      "STEP=cpus:mem_gb:walltime_h` (e.g. 07_apply=8:40:4), or choose a queue that "
+                      "allows it (`qstat -Qf <queue>` lists resources_max; `--gpu-queue` takes a "
+                      "comma list). Refused here rather than at submission, so nothing runs that "
+                      "would be thrown away.")
 
         stopped: str | None = None
         lock = threading.Lock()

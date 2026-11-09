@@ -35,7 +35,13 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
   samplesheet's `reference` must be a `species/build` key in it. **Required:** ingest refuses
   every library without it, and scQC ships no registry to fall back to.
 - `--gpu-queue` — under `--executor pbs`, the queue a task that declares a GPU (the denoiser)
-  is sent to; every other task goes to `--queue`. Without it, every task goes to `--queue`.
+  is sent to; every other task goes to `--queue`. Without it, every task goes to `--queue`. Several
+  may be named, comma-separated: a GPU task goes to the first whose `resources_max` admits it.
+- `--resources STEP=cpus:mem_gb:walltime_h[,...]` — what a task may ask for, over the graph's
+  defaults (07_apply 8 CPU / 48 GB / 4 h, the denoiser 64 GB, ...). `STEP` is a step (`07_apply`)
+  or a task-key prefix (`07_measure`, `06_cluster`). Keyed into the run key when given. Every task
+  is still checked against its queue's limits before anything is submitted, and that refusal
+  names this flag.
 
 - `--jobs` — independent tasks run at once. `0` (default) uses the machine, capped at 16. Use `1`
   when a failure has to be read in a single log.
