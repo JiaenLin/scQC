@@ -43,7 +43,9 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
   each one, and writes filtered objects; `evidence` computes and reports every threshold but writes
   no filtered object.
 - `--decisions` — optional; a YAML file recording overrides a person has approved, and their words.
-  See [approvals](#approvals-and-adjudicated-values).
+  See [approvals](#approvals-and-adjudicated-values). Read in apply mode; an evidence run given
+  one does not read it, prints `decisions not read in evidence mode`, records that in STATUS.json's
+  `notes`, and continues.
 
 > This guide documented the second mode as `measure` until 2026-08-11. The CLI has only ever
 > accepted `evidence`, so `--mode measure` failed at argument parsing — a reader following this

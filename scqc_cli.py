@@ -554,11 +554,16 @@ def cmd_run(a) -> int:
     # Argument contradictions are settled BEFORE any file is opened. Otherwise a misuse of the
     # flags surfaces as a missing-file error about something else entirely, and the reader fixes
     # the wrong thing.
+    # A DECISIONS FILE IN EVIDENCE MODE IS NOT READ, AND THE RUN SAYS SO (harness autodev W020,
+    # B1-051). This refused the run: evidence mode applies nothing, so the refusal protected no
+    # result, and a host passing --decisions uniformly to every run of a project was stopped for
+    # it. The file is named, not opened, and the note goes to STATUS.json.
+    run_notes: list = []
     if a.mode == "evidence" and a.decisions:
-        raise SystemExit(
-            "scqc run: --decisions is only read in apply mode.\n"
-            "       Evidence mode exists to produce the evidence those decisions are made\n"
-            "       against; supplying them here would mean they were chosen beforehand.")
+        note = (f"decisions not read in evidence mode: {a.decisions} - evidence mode applies "
+                f"nothing, so no threshold or acceptance in it is used; run apply to use it")
+        print(note)
+        run_notes.append(note)
 
     project = Path(a.project).expanduser().resolve()
     sheet = Path(a.samplesheet) if a.samplesheet else project / "samplesheet.csv"
@@ -733,7 +738,7 @@ def cmd_run(a) -> int:
             "ok": f"{len(rows)} libraries; deliverable written", "refused": "a gate refused",
             "failed": "a task failed"}[st], exit_code=code, refusal=refusal, escapes=escapes,
             expected=["reports/report.json", "reports/payload.json"],
-            cannot_show=sorted(cannot))
+            cannot_show=sorted(cannot), notes=run_notes)
         return code
 
     try:
@@ -877,7 +882,8 @@ def build_parser() -> argparse.ArgumentParser:
     # run's report and STATUS.json like any other refusal, and the API path refuses identically.
     r2.add_argument("--registry", help="the project's reference registry (TSV: species, build, "
                                        "path, ...). Ingest refuses without it; scQC ships none")
-    r2.add_argument("--decisions", help="apply mode only; evidence mode refuses it")
+    r2.add_argument("--decisions", help="read in apply mode; in evidence mode it is not read, and "
+                                        "STATUS.json says so")
     r2.add_argument("--executor", choices=["local", "pbs"], default="local")
     r2.add_argument("--allow-local", dest="allow_local", action="store_true",
                     help="run the local executor on a machine that has a scheduler, outside a job")

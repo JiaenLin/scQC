@@ -82,7 +82,8 @@ def begin(results: Path, *, tool: str, version: str, commit: str | None, state_v
 def finish(results: Path, *, status: str, headline: str, exit_code: int,
            refusal: dict | None = None, escapes: list | None = None,
            wrapped_versions: dict | None = None, absent: list | None = None,
-           expected: list | None = None, cannot_show: list | None = None) -> dict:
+           expected: list | None = None, cannot_show: list | None = None,
+           notes: list | None = None) -> dict:
     """Rewrite STATUS.json with the outcome and replace RUNNING.txt with a seal.
 
     `expected` names the products the run was supposed to write, relative to the run; a seal is
@@ -91,7 +92,8 @@ def finish(results: Path, *, status: str, headline: str, exit_code: int,
 
     `cannot_show` adds what THIS run cannot show to what the tool declares it never can - a
     cell-called input's missing empty droplets, for one (harness autodev W020, B1-046). Added,
-    never replacing the declaration's.
+    never replacing the declaration's. `notes` records what the run set aside and why - a
+    decisions file given to an evidence run, which is not read (B1-051).
     """
     if status not in STATUSES:
         raise ValueError(f"status {status!r} is not one of {STATUSES}")
@@ -119,6 +121,9 @@ def finish(results: Path, *, status: str, headline: str, exit_code: int,
         "absent": list(absent or []),
         "missing": missing,
     })
+    if notes:
+        rec["notes"] = list(rec.get("notes") or []) + [n for n in notes
+                                                       if n not in (rec.get("notes") or [])]
     if cannot_show:
         rec["cannot_show"] = list(rec.get("cannot_show") or []) + [
             c for c in cannot_show if c not in (rec.get("cannot_show") or [])]
