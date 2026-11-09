@@ -79,6 +79,23 @@ def _step_module_locked(name: str):
 
 
 
+def scratch_dir_name(project, work, *, keyed: bool) -> str:
+    """The scratch directory's name for one run: `scqc_<project folder>`, keyed when shared.
+
+    `keyed` is for a base other runs also use ($TMPDIR, SCQC_SCRATCH). The key is the first 12
+    hex characters of a SHA-256 of the run's work directory, resolved - the project's full path
+    and the run key - so two projects with one folder name, and two runs of one project with
+    different keys, never meet. The folder name stays in front so a person can tell whose it is.
+    """
+    import hashlib
+
+    name = f"scqc_{Path(project).name}"
+    if not keyed:
+        return name
+    tag = hashlib.sha256(str(Path(work).resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"{name}_{tag}"
+
+
 def _why(message: str, limit: int = 300) -> str:
     """The line of a failure worth printing beside `FAIL`: the error itself, not the preamble.
 
@@ -166,18 +183,27 @@ class Pipeline:
         #
         # So: shared storage whenever tasks run elsewhere. SCQC_SCRATCH still overrides, because a
         # site may have a genuinely shared fast scratch, but it is not consulted for the default.
+        #
+        # A SHARED BASE NEEDS A NAME THAT IS THIS RUN'S. Under $TMPDIR or SCQC_SCRATCH the
+        # directory was `scqc_<project folder name>`, so two runs whose project folders shared a
+        # name - two copies of the test suite, each building `proj_apply` in its own temporary
+        # directory - wrote the same intermediates at once and failed each other (measured by the
+        # harness's autodev W001 verifier: test_conditions failed with two suites running and
+        # passed alone). The name now carries a digest of the run's own work directory, which is
+        # the project's full path and the run key together. Under PBS the base already IS that
+        # directory, so the name there is unchanged.
         import os as _os
         import tempfile as _tf
         shared_needed = getattr(executor, "name", "local") != "local"
         override = _os.environ.get("SCQC_SCRATCH")
         if override:
-            base = override
+            base, keyed = override, True
         elif shared_needed:
-            base = str(self.work)            # beside the project: every node can see it
+            base, keyed = str(self.work), False   # beside the project, and already this run's own
         else:
-            base = _os.environ.get("TMPDIR") or _tf.gettempdir()
+            base, keyed = _os.environ.get("TMPDIR") or _tf.gettempdir(), True
         try:
-            self.scratch = Path(base) / f"scqc_{self.project.name}"
+            self.scratch = Path(base) / scratch_dir_name(self.project, self.work, keyed=keyed)
             self.scratch.mkdir(parents=True, exist_ok=True)
             probe = self.scratch / ".writable"
             probe.write_text("x", encoding="utf-8")
@@ -485,8 +511,13 @@ class Pipeline:
         refused = [k for k, v in stat.items() if v == "refused"]
         failed = [k for k, v in stat.items() if v == "failed"]
         stopped_after = (sorted(refused) + sorted(failed) or [None])[0]
+        from report.units import cohort_assay
+
         return {
             "run": {"project": str(self.project), "mode": self.mode,
+                    # The cohort's declared assay, so the report names what it observed - a
+                    # nucleus or a cell - rather than calling every observation a nucleus.
+                    "assay": cohort_assay(self.samples),
                     "invocation": " ".join(sys.argv),
                     "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     # Wall-clock, and the CPU-time the tasks actually consumed. The ratio is the
@@ -628,9 +659,14 @@ class Pipeline:
                 # Single cells: no valley is measured, and the floor is the declaration it is.
                 klass = "DECLARED"
                 value = cohort.get(derived_key)
-                basis = ("step 5: DECLARED for single cells and applied to the aligner's called "
-                         "cells - " + str(cohort.get(f"{derived_key.split('_')[0]}_declared_by")
-                                          or "declared"))
+                # Whose called cells, as step 5 recorded it for the route each library took. This
+                # named the aligner on every single-cell cohort, which is false for a library
+                # supplied already denoised. A run whose step 5 predates the record says so.
+                basis = ("step 5: DECLARED for single cells and applied to "
+                         + str(cohort.get("floors_applied_to")
+                               or "the called cells (whose call step 5 did not record)")
+                         + " - " + str(cohort.get(f"{derived_key.split('_')[0]}_declared_by")
+                                       or "declared"))
             elif derived_key:
                 value = cohort.get(derived_key)
                 basis = (f"step 5: the density valley measured per library, proposed as one "
@@ -846,8 +882,11 @@ class Pipeline:
         A step's status is the worst of its tasks, so one refused library cannot be averaged away
         by nine that passed.
         """
+        from report.units import cohort_assay
+
         from . import steps as _s
 
+        assay = cohort_assay(self.samples)
         rank = {"refused": 5, "failed": 4, "blocked": 3, "running": 2, "pending": 1,
                 "skipped": 0, "done": 0}
         grouped: dict = {}
@@ -858,7 +897,7 @@ class Pipeline:
         out = []
         for step, items in sorted(grouped.items()):
             worst = max(items, key=lambda kr: rank.get(kr[1].status.value, 0))[1]
-            what, cannot = _s.step_text(step)
+            what, cannot = _s.step_text(step, assay)
             found, sources = [], []
             for key, r in items:
                 sources.extend(str(o) for o in (r.outputs or []))

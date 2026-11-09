@@ -117,8 +117,9 @@ def declared_floor(metric: str, assay: str, light_floor=None) -> "Proposal":
             f"{metric}: declared floor {v} is not above the {light_floor}-UMI light floor, so "
             f"cells between them would reach the deliverable never scored for doublets.")
     p = Proposal(metric, {}, int(v), bounds,
-                 [f"DECLARED, not derived: {FLOORS_DECLARED_BY[a]}. Applied to the aligner's "
-                  f"called cells; no valley is measured on {a}."])
+                 [f"DECLARED, not derived: {FLOORS_DECLARED_BY[a]}. Applied to the called cells "
+                  f"- the aligner's, or the denoiser's on a library supplied already denoised; no "
+                  f"valley is measured on {a}."])
     p.shoulders = ()
     p.provenance = "declared"
     return p

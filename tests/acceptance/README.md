@@ -66,7 +66,7 @@ Two things already known to constrain it:
 - **The aligner should be exactly reproducible** given the same reference and parameters, so any
   tier-2 drift is attributable to the denoiser rather than to alignment. That is worth verifying
   separately, because it makes the tolerance interpretable.
-- **The reference must be the same index.** `references/_registry/registry.tsv` records the
+- **The reference must be the same index.** The project's registry (`--registry`) records the
   aligner and STAR version an index was built with, and whether it retains introns. A rebuilt
   environment could arrive with a different STAR; if it does, tier 2 is testing two things at once.
 

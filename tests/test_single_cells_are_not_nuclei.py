@@ -135,8 +135,128 @@ SUP = {"ambient_h5": "/cb/x.h5", "ambient_tool": "CellBender", "ambient_version"
 gs = _build([_row("A1", "scrna", **SUP), _row("B2", "scrna", **SUP)])
 if gs["06_cluster/A1"].params.get("uninformative_classes") != ["mt"]:
     fails.append("A10: a supplied single-cell library was profiled with the nuclear marker classes")
+# Step 5 is told whose call each library's cells are: the denoiser's for a library supplied
+# already denoised, the aligner's for one this pipeline did not denoise (C04).
+if (gs["05_quality"].params.get("call_by") or {}) != {"A1": "denoiser", "B2": "denoiser"} \
+        or (g["05_quality"].params.get("call_by") or {}) != {"A1": "aligner", "B2": "aligner"}:
+    fails.append(f"A10: step 5 is not told whose called cells its floors judge: supplied "
+                 f"{gs['05_quality'].params.get('call_by')}, raw {g['05_quality'].params.get('call_by')}")
+# A13. The assay as a person types it: padded, or in capitals. Ingest strips it before checking,
+# so it passes there; the graph lowered it without stripping, and ` scrna` then stopped the build
+# with a KeyError at step 6's marker classes - before anything was submitted, but after ingest
+# had passed it (C03).
+try:
+    gp = _build([_row("A1", " scrna", aligner_cells="/d/A1/filtered"),
+                 _row("B2", "SCRNA ", aligner_cells="/d/B2/filtered")])
+    got = {gp["05_quality"].params["assay"].get(s) for s in ("A1", "B2")}
+    if got != {"scrna"} or gp["06_cluster/A1"].params.get("uninformative_classes") != ["mt"] \
+            or gp["01_ambient/A1"].fn is not steps._ambient_none:
+        fails.append(f"A13: a padded or capitalised 'scrna' reached the steps as {got}, or took "
+                     f"the nuclear route")
+except Exception as e:                                                # noqa: BLE001
+    fails.append(f"A13: a padded or capitalised 'scrna' stopped the build: "
+                 f"{type(e).__name__}: {e}")
 _P.mode = "evidence"
 print("A. the graph: single cells take the aligner's call, nuclei the denoiser's")
+
+# ---- G. step 5 says whose called cells its declared floors were applied to (C04)
+import types as _types  # noqa: E402
+
+from engine.pipeline import Pipeline as _Pipeline  # noqa: E402
+
+
+class _Done:
+    ok = True
+
+    def __init__(self, metrics):
+        self.metrics = metrics
+
+
+def _floors_table(call_by):
+    """Run step 5's barrier over two measured single-cell libraries; (applied_to, metrics)."""
+    with tempfile.TemporaryDirectory() as td:
+        pp = _types.SimpleNamespace(results=Path(td) / "results", results_by_key={
+            f"05_quality/{s}": _Done({"valleys": {}, "bimodal": {},
+                                      "mito_quartiles": {"n": 160, "median": 2.0, "q1": 1.5,
+                                                         "q3": 2.6, "mad": 0.4},
+                                      "mito_population": {"floor_umi": 500}})
+            for s in ("A1", "B2")})
+        (pp.results / "tables").mkdir(parents=True)
+        t = _types.SimpleNamespace(key="05_quality", params={
+            "samples": ["A1", "B2"], "assay": {"A1": "scrna", "B2": "scrna"},
+            "light_floor": 200, "call_by": call_by})
+        out = steps._quality_stage(t, pp, None)
+        with open(pp.results / "tables" / "count_floors.csv", encoding="utf-8") as fh:
+            applied = {r["applied_to"] for r in csv.DictReader(fh)}
+        return applied, out["metrics"]
+
+
+try:
+    sup, sup_m = _floors_table({"A1": "denoiser", "B2": "denoiser"})
+    raw_, raw_m = _floors_table({"A1": "aligner", "B2": "aligner"})
+    mix, _ = _floors_table({"A1": "aligner", "B2": "denoiser"})
+    if sup != {"the denoiser's called cells"}:
+        fails.append(f"G1: floors on libraries supplied already denoised say they judged {sup}")
+    if raw_ != {"the aligner's called cells"}:
+        fails.append(f"G2: floors on libraries no denoiser touched say they judged {raw_}")
+    if not any("aligner" in a and "denoiser" in a and "A1" in a and "B2" in a for a in mix):
+        fails.append(f"G3: a cohort of both routes is described as {mix}")
+    basis = {r["name"]: r.get("basis", "") for r in _Pipeline._parameters_block(
+        _types.SimpleNamespace(FIXED_PARAMETERS=_Pipeline.FIXED_PARAMETERS,
+                               DECLARED_PARAMETERS=_Pipeline.DECLARED_PARAMETERS, decisions={},
+                               tools={}, results_by_key={"05_quality": _Done(sup_m),
+                                                         "07_apply": _Done({})}))}
+    if "the denoiser's called cells" not in basis.get("UMI floor", "") \
+            or "aligner" in basis.get("UMI floor", ""):
+        fails.append(f"G4: the parameter table's basis for the floor: {basis.get('UMI floor')!r}")
+except Exception as e:                                                # noqa: BLE001
+    fails.append(f"G: step 5's floors could not be measured here: {type(e).__name__}: {e}")
+print("G. step 5 names the caller whose cells its declared floors judged, by each library's route")
+
+# ---- H. the report names cells as cells (GAP-024)
+#
+# Written so that it also runs against the code before the words were per assay - every caption
+# fixed text, every question one string, the step texts one table - and fails THERE on what it
+# asserts rather than on a name that did not exist yet.
+from report import build as _rb  # noqa: E402
+from report import collect as _rc  # noqa: E402
+
+try:
+    from report.units import fill as _fill  # noqa: E402
+except ImportError:
+    def _fill(text, assay):
+        return text
+_question = getattr(_rb, "_question", None) or (
+    lambda fid, payload: _rb.FIGURE_QUESTIONS.get(fid, ""))
+
+
+def _step_text(step, assay):
+    try:
+        return steps.step_text(step, assay)
+    except TypeError:
+        return steps.step_text(step)
+
+
+_NUC = ("nucleus", "nuclei")
+for fid, cap in sorted(_rc.CAPTIONS.items()):
+    if any(w in _fill(cap, "scrna").lower() for w in _NUC):
+        fails.append(f"H1: {fid}'s caption on a single-cell cohort still says nucleus: "
+                     f"{_fill(cap, 'scrna')[:120]}")
+if "per nucleus" not in _fill(_rc.CAPTIONS["F7"], "snrna"):
+    fails.append("H1: F7's caption no longer names nuclei on a nucleus cohort")
+q11 = _question("F11", {"run": {"assay": "scrna"}})
+if "cells" not in q11 or "nucle" in q11:
+    fails.append(f"H2: F11 asks of a single-cell cohort: {q11!r}")
+if "nuclei" not in _question("F11", {"run": {"assay": "snrna"}}):
+    fails.append("H2: F11 no longer asks about nuclei on a nucleus cohort")
+for step in steps.STEP_TEXT:
+    what, cannot = _step_text(step, "scrna")
+    if any(w in (what + cannot).lower() for w in _NUC):
+        fails.append(f"H3: step {step}'s text on a single-cell cohort says nucleus: {what[:100]}")
+if "denoise" not in _step_text("01_ambient", "scrna")[0] \
+        or _step_text("01_ambient", "scrna") == _step_text("01_ambient", "snrna"):
+    fails.append("H3: step 1's text is the nuclear one on single cells")
+print("H. captions, F11's question and the step texts name cells on a single-cell cohort")
 
 # ---- E. step 5's floors and step 6's thresholds, as cells and as nuclei
 from engine.pipeline import step_module  # noqa: E402
@@ -352,7 +472,10 @@ if HAVE:
             X, bcs, called = _cohort_counts(10 + i)
             _write_10x(td / s / "raw", X, bcs)
             _write_10x(td / s / "filtered", X[[bcs.index(b) for b in called]], called)
-            rows.append([s, "10x", "homo_sapiens", "homo_sapiens/GRCh38", "scrna",
+            # The assay as typed, padded on one row and in capitals on the other (C03): ingest
+            # strips it, and the graph must read it the same way or the build stops at step 6.
+            rows.append([s, "10x", "homo_sapiens", "homo_sapiens/GRCh38",
+                         " scrna" if i == 0 else "SCRNA",
                          str(td / s / "raw"), str(td / s / "filtered"),
                          "WT" if s.startswith("WT") else "Mut", "MT-", "^RP[SL]", "0.05", "0.05"])
         sheet.write_text("\t".join(cols) + "\n" + "".join("\t".join(r) + "\n" for r in rows))
@@ -402,6 +525,22 @@ if HAVE:
                     if r.get("aligner") != "160" or r.get("denoiser") != "" or r.get("lost") != "":
                         fails.append(f"D3: {s} cell_calls row {r}; the aligner's 160 with the "
                                      f"denoiser and the loss BLANK, since neither exists")
+            # D4. The report names what it observed: the cohort's assay, and step texts written
+            # for cells (GAP-024). Read from the payload the report was built from.
+            import json as _json
+            pl = R / "reports" / "payload.json"
+            if not pl.exists():
+                fails.append(f"D4: no payload.json beside the report:\n{log[-800:]}")
+            else:
+                payload = _json.loads(pl.read_text(encoding="utf-8"))
+                if (payload.get("run") or {}).get("assay") != "scrna":
+                    fails.append(f"D4: the report's run block names the assay "
+                                 f"{(payload.get('run') or {}).get('assay')!r}")
+                for st in payload.get("steps") or []:
+                    text = f"{st.get('what_it_does', '')} {st.get('cannot_establish', '')}"
+                    if any(w in text.lower() for w in ("nucleus", "nuclei")):
+                        fails.append(f"D4: the report's {st.get('key')} text says nucleus on "
+                                     f"single cells: {text[:100]}")
         print("D. the CLI: no denoiser invoked, every droplet kept, step 2 compares nothing")
 
 print("\n" + "=" * 74)

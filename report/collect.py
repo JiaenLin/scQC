@@ -44,6 +44,8 @@ import math
 import sys
 from pathlib import Path
 
+from .units import cohort_assay as _cohort_assay_of, fill, unit_words
+
 # What each absent figure would need. The text reaches the reader, so it names what to do about
 # it. Every entry here is REMOVED as soon as its builder succeeds - see `_try`.
 UNAVAILABLE = {
@@ -93,20 +95,20 @@ CAPTIONS = {
     "F10": "Where the doublet calls sit in each library's manifold. Doublets on the boundaries "
            "between clusters are behaving as doublets should; a coherent region called doublet "
            "is a population, and that is a different finding.",
-    "F11": "The SAME coordinates as F10, coloured by whether any criterion removed the nucleus. "
-           "The embedding is built over every barcode the denoiser called, so the nuclei the "
-           "count floors and the ceiling removed are still in the picture - which is the only "
-           "way to see whether a removal took a coherent region or scattered points.",
+    "F11": "The SAME coordinates as F10, coloured by whether any criterion removed the {one}. "
+           "The embedding is built over every called barcode, so the {many} the count floors "
+           "and the ceiling removed are still in the picture - which is the only way to see "
+           "whether a removal took a coherent region or scattered points.",
     "F2": "Ambient counts removed per library, the distribution across genes, and the removal "
           "rate split by each design factor. A rate that differs across an arm of the design is "
           "a technical removal that will read as biology downstream.",
     "F3": "Cells called by the aligner against cells called by the denoiser, per library. Points "
           "below the equality line are libraries where the denoiser called fewer cells than the "
           "aligner - a cell-selection decision made by a tool chosen for denoising.",
-    "F4": "Per library, how many nuclei the doublet detector examined, how many sat below the "
+    "F4": "Per library, how many {many} the doublet detector examined, how many sat below the "
           "light floor and were skipped for that stated reason, and how many were not examined "
           "for any recorded reason.",
-    "F7": "Counts per nucleus before and after the filter, one pair of violins per library, on a "
+    "F7": "Counts per {one} before and after the filter, one pair of violins per library, on a "
           "log axis. The log axis is what shows two populations and a cut falling between them.",
     "F8": "Every cluster from step 6, positioned by its share of its library's UMI against its "
           "median mitochondrial percentage, marked by whether the cluster check flagged it. "
@@ -115,7 +117,7 @@ CAPTIONS = {
           "another. A criterion whose removals are all shared changed nothing by itself.",
     "F12": "The same count distributions as F7 on a linear axis - the scale a reader works in - "
            "capped so the bulk is legible.",
-    "F14": "F7's form on the GENE axis: genes per nucleus before and after the filter, with the "
+    "F14": "F7's form on the GENE axis: genes per {one} before and after the filter, with the "
            "cohort gene floor across every library. Step 7 applies this floor as well as the "
            "count floor, and a report showing only one of them shows part of the filter.",
     "F16": "Every library against every design factor the samplesheet carries, and then every "
@@ -123,7 +125,7 @@ CAPTIONS = {
            "identically are ALIASED: no analysis of these data can say which of the two a "
            "difference belongs to. This is a property of the experiment and no step of this "
            "pipeline can change it.",
-    "F17": "Each QC metric across the arms the aliasing leaves, over the nuclei the filter "
+    "F17": "Each QC metric across the arms the aliasing leaves, over the {many} the filter "
            "kept. The violin is the arm; the dots are the individual libraries' own medians "
            "and the amber band is the span they cover. An arm difference no larger than the "
            "spread between libraries of the same arm is a library effect, whatever it is "
@@ -133,7 +135,7 @@ CAPTIONS = {
            "This is the part of the confounding the pipeline itself creates: a criterion that "
            "takes a larger share out of one arm has made the arms differ for a reason that has "
            "nothing to do with the factor they are named after.",
-    "F15": "Mitochondrial % per nucleus before and after the filter, over the barcodes above the "
+    "F15": "Mitochondrial % per {one} before and after the filter, over the barcodes above the "
            "light floor - the population the ceiling was derived over, because a percentage of a "
            "30-UMI droplet is not a measurement. The ceiling is PER LIBRARY, so each library "
            "carries its own segment and there is no cohort line to read across.",
@@ -216,7 +218,7 @@ def _f1(tables: Path) -> dict:
     return data
 
 
-def _f5(tables: Path) -> dict:
+def _f5(tables: Path, assay=None) -> dict:
     """The doublet-prior sweep: called rate against the swept dbr.sd, one line per library."""
     rows = _rows(tables / "doublet_sweep.csv")
     if not rows:
@@ -240,8 +242,8 @@ def _f5(tables: Path) -> dict:
     applied = {_num(r.get("dbr_sd_applied")) for r in rows}
     applied.discard(None)
     data = {"sweep": sweep, "param_label": "dbr.sd (the detector's prior on the expected rate)",
-            "rate_denominator": "of the nuclei actually scored; those below the light floor are "
-                                "in no denominator"}
+            "rate_denominator": fill("of the {many} actually scored; those below the light "
+                                     "floor are in no denominator", assay)}
     if len(applied) == 1:
         data["chosen"] = applied.pop()
     return data
@@ -249,8 +251,8 @@ def _f5(tables: Path) -> dict:
 
 #: Which metric each density figure draws, and what the axis is called. The two ids exist because
 #: `cut` is one cohort constant per figure and the two floors are in different units.
-DENSITY_FIGURES = {"F6": ("umi", "UMI per nucleus", "umi_floor_proposed"),
-                   "F13": ("genes", "genes per nucleus", "gene_floor_proposed")}
+DENSITY_FIGURES = {"F6": ("umi", "UMI per {one}", "umi_floor_proposed"),
+                   "F13": ("genes", "genes per {one}", "gene_floor_proposed")}
 
 
 def _f6(tables: Path, thresholds: list, fig_id: str, metric: str, metric_label: str,
@@ -288,7 +290,8 @@ def _f6(tables: Path, thresholds: list, fig_id: str, metric: str, metric_label: 
     if vfile.exists():
         valleys = {r["sample"]: _num(r.get("valley")) for r in _rows(vfile)}
 
-    data = {"densities": densities, "metric_label": metric_label, "fig_id": fig_id}
+    data = {"densities": densities, "metric_label": fill(metric_label, assay), "fig_id": fig_id,
+            "units": list(unit_words(assay))}
     if valleys:
         data["valleys"] = valleys
     cuts = {_num(r.get(cut_key)) for r in thresholds}
@@ -311,10 +314,10 @@ def _f6(tables: Path, thresholds: list, fig_id: str, metric: str, metric_label: 
     return data
 
 
-def _f10(tables: Path, percell: dict, *, colour_by: str, fig_id: str) -> dict:
+def _f10(tables: Path, percell: dict, *, colour_by: str, fig_id: str, assay=None) -> dict:
     """The per-library embedding, with each barcode's doublet call and removal joined onto it.
 
-    JOINED BY BARCODE, NEVER BY POSITION. The embedding covers the barcodes the denoiser called;
+    JOINED BY BARCODE, NEVER BY POSITION. The embedding covers the called barcodes;
     the per-cell table covers every barcode the library held. The two files are written by
     different steps in different orders, and zipping them would colour the wrong points with no
     symptom on the page.
@@ -354,7 +357,8 @@ def _f10(tables: Path, percell: dict, *, colour_by: str, fig_id: str) -> dict:
             out[s] = {"x": xs, "y": ys, colour_by: marks}
     if not out:
         raise ValueError("every embedding table was present and held no usable coordinate")
-    return {"embeddings": out, "colour_by": colour_by, "fig_id": fig_id}
+    return {"embeddings": out, "colour_by": colour_by, "fig_id": fig_id,
+            "units": list(unit_words(assay))}
 
 
 def _f2(tables: Path, sheet: list) -> dict:
@@ -413,7 +417,7 @@ def _percell(tables: Path, samples) -> dict:
     return {s: _rows(tables / f"{s}.percell.csv") for s in samples}
 
 
-def _f4(percell: dict, floors: dict) -> dict:
+def _f4(percell: dict, floors: dict, assay=None) -> dict:
     """What was never examined - and the three categories are never merged.
 
     `scored` is a nucleus the detector examined. `below_floor` is one it did not examine for a
@@ -434,12 +438,12 @@ def _f4(percell: dict, floors: dict) -> dict:
             else:
                 never += 1
         coverage[s] = {"scored": scored, "below_floor": below, "never_scored": never}
-    return {"coverage": coverage}
+    return {"coverage": coverage, "units": list(unit_words(assay))}
 
 
 def _f7(percell: dict, cut, *, scale: str, fig_id: str, column: str = "total_counts",
-        metric_label: str = "UMI per nucleus", cut_word: str = "floor",
-        only_at_or_above=None) -> dict:
+        metric_label: str = "UMI per {one}", cut_word: str = "floor",
+        only_at_or_above=None, assay=None) -> dict:
     """What one applied criterion changed: each library's values before it, and what survived.
 
     ONE BUILDER FOR EVERY APPLIED AXIS, and the reason is the report's own spine: step 7 applies a
@@ -472,8 +476,9 @@ def _f7(percell: dict, cut, *, scale: str, fig_id: str, column: str = "total_cou
             if _flag(r.get("keep")):
                 after.append(v)
         distributions[s] = {"before": before, "after": after}
-    data = {"distributions": distributions, "metric_label": metric_label,
-            "scale": scale, "fig_id": fig_id, "cut_word": cut_word}
+    data = {"distributions": distributions, "metric_label": fill(metric_label, assay),
+            "scale": scale, "fig_id": fig_id, "cut_word": cut_word,
+            "units": list(unit_words(assay))}
     if cut is not None:
         data["cut"] = cut
     if scale == "linear" and only_at_or_above is None:
@@ -561,11 +566,11 @@ CONFOUNDING_MAX_POINTS = 20_000
 #: EVERY METRIC THE PER-CELL TABLE CARRIES IS HERE. A metric left out of this list is one whose
 #: arm difference nobody will look at, and the arm difference is the entire question.
 CONFOUNDING_METRICS = (
-    ("total_counts", "UMI per nucleus", True),
-    ("n_genes", "genes detected per nucleus", True),
+    ("total_counts", "UMI per {one}", True),
+    ("n_genes", "genes detected per {one}", True),
     ("complexity", "complexity (log10 genes / log10 UMI)", False),
-    ("pct_counts_mt", "mitochondrial % per nucleus", False),
-    ("pct_counts_ribo", "ribosomal % per nucleus", False),
+    ("pct_counts_mt", "mitochondrial % per {one}", False),
+    ("pct_counts_ribo", "ribosomal % per {one}", False),
     ("nuclear_fraction", "nuclear fraction (intronic / intronic+exonic)", False),
     ("doublet_score", "doublet score", False),
 )
@@ -727,8 +732,8 @@ def _gene_pattern_note(sheet: list, column: str, what: str) -> str:
     return f" ({what} DIFFERS across libraries: {', '.join(seen)})"
 
 
-def _f17(percell: dict, relations: dict, sheet: list) -> dict:
-    """Every QC metric the per-cell tables carry, per confounded arm, over the KEPT nuclei.
+def _f17(percell: dict, relations: dict, sheet: list, assay=None) -> dict:
+    """Every QC metric the per-cell tables carry, per confounded arm, over the KEPT observations.
 
     THE KEPT POPULATION, deliberately. This figure is about what a confound will contaminate
     downstream, and downstream sees what the filter kept. What the filter itself did differently
@@ -767,6 +772,7 @@ def _f17(percell: dict, relations: dict, sheet: list) -> dict:
 
     metrics, absent = [], {}
     for key, label, log in CONFOUNDING_METRICS:
+        label = fill(label, assay)
         if key == "pct_counts_mt":
             label += _gene_pattern_note(sheet, "mt_prefix", "prefix")
         elif key == "pct_counts_ribo":
@@ -791,7 +797,8 @@ def _f17(percell: dict, relations: dict, sheet: list) -> dict:
         raise ValueError("no QC metric in the per-cell tables carried a value for any arm")
     return {"metrics": metrics, "arms": order, "absent": absent or None,
             "cap": CONFOUNDING_MAX_POINTS,
-            "population": "the nuclei the filter KEPT (`keep` is true)"}
+            "population": fill("the {many} the filter KEPT (`keep` is true)", assay),
+            "units": list(unit_words(assay))}
 
 
 def _f18(percell: dict, relations: dict) -> dict:
@@ -863,6 +870,9 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
         delim = "\t" if "\t" in text.splitlines()[0] else ","
         sheet = [r for r in csv.DictReader(
             [ln for ln in text.splitlines() if not ln.startswith("#")], delimiter=delim)]
+    # THE COHORT'S ASSAY, read once, so every caption and label names what was measured: a
+    # nucleus or a cell. None - no single declared assay - names it as a barcode (report/units).
+    cohort_assay = _cohort_assay_of(sheet)
 
     thresholds, floors = [], {}
     umi_cut = gene_cut = light_floor = None
@@ -918,13 +928,14 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
             # a wrong explanation of a real fault.
             notes[fid] = f"could not be assembled - {type(exc).__name__}: {exc}"
             return
-        figures[fid] = {"data": data, "source": source, "caption": CAPTIONS.get(fid, "")}
+        figures[fid] = {"data": data, "source": source,
+                        "caption": fill(CAPTIONS.get(fid, ""), cohort_assay)}
         notes.pop(fid, None)
 
     _try("F1", "tables/<sample>.barcode_rank.csv + tables/cell_calls.csv", lambda: _f1(tables))
     _try("F2", "tables/ambient_summary.csv", lambda: _f2(tables, sheet))
     _try("F3", "tables/cell_calls.csv", lambda: _f3(tables))
-    _try("F5", "tables/doublet_sweep.csv", lambda: _f5(tables))
+    _try("F5", "tables/doublet_sweep.csv", lambda: _f5(tables, cohort_assay))
     _try("F8", "tables/cluster_profile.csv", lambda: _f8(tables))
 
     # THE DESIGN, computed once and shared by all three confounding figures so they cannot
@@ -953,31 +964,35 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     if percell:
         src = "tables/<sample>.percell.csv"
         _try("F4", src + " + tables/thresholds_per_sample.csv",
-             lambda: _f4(percell, floors))
-        _try("F7", src, lambda: _f7(percell, umi_cut, scale="log", fig_id="F7"))
-        _try("F12", src, lambda: _f7(percell, umi_cut, scale="linear", fig_id="F12"))
+             lambda: _f4(percell, floors, cohort_assay))
+        _try("F7", src, lambda: _f7(percell, umi_cut, scale="log", fig_id="F7",
+                                    assay=cohort_assay))
+        _try("F12", src, lambda: _f7(percell, umi_cut, scale="linear", fig_id="F12",
+                                     assay=cohort_assay))
         # THE OTHER TWO APPLIED AXES. Same builder, same form, different column - so a reader
         # comparing the three is comparing the filter and not three chart styles.
         _try("F14", src + " + tables/thresholds_per_sample.csv",
              lambda: _f7(percell, gene_cut, scale="log", fig_id="F14", column="n_genes",
-                         metric_label="genes detected per nucleus"))
+                         metric_label="genes detected per {one}", assay=cohort_assay))
         # PER LIBRARY, and passed as a mapping so the figure draws ten segments rather than
         # asserting a cohort constant that was never applied. Restricted to the barcodes above
         # the light floor, which is the population the ceiling was DERIVED over.
         _try("F15", src + " + tables/thresholds_per_sample.csv",
              lambda: _f7(percell, mito_cuts or None, scale="linear", fig_id="F15",
-                         column="pct_counts_mt", metric_label="mitochondrial % per nucleus",
-                         cut_word="ceiling", only_at_or_above=light_floor))
+                         column="pct_counts_mt", metric_label="mitochondrial % per {one}",
+                         cut_word="ceiling", only_at_or_above=light_floor, assay=cohort_assay))
         # F10 and F11 are the SAME coordinates under two colourings, and that is the point of
         # storing an embedding rather than recomputing one: a reader comparing them is looking at
         # the flags, never at the projection.
         emb_src = "tables/<sample>.embedding.csv + " + src
-        _try("F10", emb_src, lambda: _f10(tables, percell, colour_by="doublet", fig_id="F10"))
-        _try("F11", emb_src, lambda: _f10(tables, percell, colour_by="removed", fig_id="F11"))
+        _try("F10", emb_src, lambda: _f10(tables, percell, colour_by="doublet", fig_id="F10",
+                                          assay=cohort_assay))
+        _try("F11", emb_src, lambda: _f10(tables, percell, colour_by="removed", fig_id="F11",
+                                          assay=cohort_assay))
         # THE CONFOUNDING ESTIMATE. Both read the same per-cell tables every other applied-axis
         # figure reads, so a number on them is the number the criteria were evaluated on.
         _try("F17", src + " + the run's samplesheet",
-             lambda: _f17(percell, relations, sheet))
+             lambda: _f17(percell, relations, sheet, cohort_assay))
         _try("F18", src + " + the run's samplesheet", lambda: _f18(percell, relations))
 
     # After the per-cell tables, because that is where the denominator comes from: F9 draws each
@@ -991,8 +1006,6 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
     # it. The figures are still drawn without it - the n reads NOT SUPPLIED and the curve is
     # unaffected - so this is an ordering preference, not a dependency.
     n_by_sample = {s: len(rows) for s, rows in percell.items()} if percell else {}
-    assays = {str(r.get("assay") or "").strip().lower() for r in sheet} - {""}
-    cohort_assay = assays.pop() if len(assays) == 1 else None
     for fid, (metric, label, cut_key) in DENSITY_FIGURES.items():
         _try(fid, f"tables/<sample>.valley_density.csv + tables/valleys_{metric}.csv",
              lambda f=fid, m=metric, lb=label, ck=cut_key:

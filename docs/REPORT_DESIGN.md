@@ -29,7 +29,7 @@ choices are what a reviewer, a collaborator, or you-in-a-year actually need.
 | a warning | a coloured cell | a **verdict** that can block the run |
 | provenance | versions | versions + reference + the decision file + input verification |
 | what it can't do | not addressed | **a required section in every step** |
-| staleness | not addressed | **refused** — an artifact older than its inputs is wrong, not old |
+| staleness | not addressed | **flagged** on the document's face and in `report.json` — an artifact older than its inputs is wrong, not old. Refusing to publish one is not built (section 4) |
 
 Three things this report does that a metrics report structurally cannot:
 
@@ -164,8 +164,8 @@ a reader comparing the two panels would be looking at a difference that may be t
 rather than the data. `fig_f10_umap_per_library` therefore takes coordinates and never computes
 them.
 
-**The embedding is built over every barcode the denoiser called, and not over the population step
-6 clusters.** The clustering must run on the cells that reach the deliverable, or its flags
+**The embedding is built over every called barcode - the denoiser's call on nuclei, the aligner's
+on single cells - and not over the population step 6 clusters.** The clustering must run on the cells that reach the deliverable, or its flags
 describe empty droplets. The embedding must contain the cells a criterion REMOVED, or F11 is drawn
 over a population every one of them has already left, and it can only ever answer "there were
 none". Those are different populations, so they are two passes, and step 6 does both.
@@ -179,6 +179,11 @@ unexamined with nothing on the page saying so.
 the share of nuclei that fall outside. A truncated axis that does not say it is truncated reports
 a distribution nobody drew.
 
+**The report names what was observed by the declared assay.** Every caption, axis label, step text
+and figure question below that says "nucleus" says "cell" on a single-cell cohort: `{one}` and
+`{many}` in the table are filled from the samplesheet's `assay` (`report/units.py`), and a cohort
+with no single assay is named in barcodes, never in nuclei by default.
+
 | # | step | question it answers | form |
 |---|---|---|---|
 | F1 | 0 ingest | is this really raw, unfiltered input? | barcode-rank per library, log–log, the aligner's cut marked |
@@ -191,7 +196,7 @@ a distribution nobody drew.
 | F8 | 6 clusters | are any clusters technical? | depth × mito scatter, flags coloured, thresholds drawn |
 | F9 | 7 apply | what did each criterion remove *uniquely*? | unique vs shared contribution per criterion |
 | F10 | 4 doublets | where in the manifold did the doublets sit? | one embedding per library, doublet calls coloured |
-| F11 | 7 apply | did the removed nuclei leave as a population, or scattered? | **the same embeddings**, removed nuclei coloured |
+| F11 | 7 apply | did the removed {many} leave as a population, or scattered? | **the same embeddings**, removed {many} coloured |
 | F12 | 5 quality | the same count distributions, on the scale people work in | F7's data on a linear axis, with the share above the cap stated |
 | F13 | 5 quality | where is the GENE cut and why there? - step 5 derives two floors and applies both | F6's form on the gene axis, with the gene floor drawn |
 | F14 | 5 quality | what did the GENE floor change? | F7's form on the gene axis |

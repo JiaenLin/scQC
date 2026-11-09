@@ -65,7 +65,11 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     tasks: list[Task] = []
     design = steps._design(pipeline.samples)
     by_sample = {r["sample"]: r for r in pipeline.samples}
-    assay = {s: str(r.get("assay") or "").lower() for s, r in by_sample.items()}
+    # STRIPPED AS WELL AS LOWERED, as ingest's own check strips it. Lowered only, a padded
+    # ` scrna` passed ingest - `validate_row` strips before comparing - and then reached the
+    # per-assay tables below as ` scrna`, stopping the build with a KeyError at step 6's marker
+    # classes. Every step after this one reads the assay from this mapping.
+    assay = {s: str(r.get("assay") or "").strip().lower() for s, r in by_sample.items()}
 
     raw_of: dict = {}
     for s, row in by_sample.items():
@@ -83,7 +87,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         else:
             raw_of[s] = Path(str(row.get("matrix")))
 
-    # --- step 1: ambient. Mandatory for nuclei, optional for cells; the module decides, not us.
+    # --- step 1: ambient. A policy per assay (modules/01_ambient, DENOISE): nuclei are always
+    # denoised, single cells never by this pipeline. The module decides, not this file.
     #
     # A sample may also arrive ALREADY CORRECTED - a samplesheet `ambient_h5` column, with the
     # provenance columns beside it. That is a third state, not a skip (modules/01_ambient), and
@@ -421,6 +426,10 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 # Per library, so the step can refuse a cohort that mixes assays rather than
                 # pick one.
                 "assay": {s: assay.get(s) for s in by_sample},
+                # WHOSE CALLED CELLS each library's declared floors are applied to. Step 5 wrote
+                # "the aligner's called cells" for every single-cell cohort, and on a library
+                # supplied already denoised the cells are the denoiser's call, not the aligner's.
+                "call_by": {s: call_by[s] for s in by_sample},
                 "mito_bounds": tools.get("mito_bounds"),
                 "mito_bound_declared_by": tools.get("mito_bound_declared_by")},
     ))
@@ -448,6 +457,13 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     # transcript is cytoplasm, not carry-over (cluster_flags.UNINFORMATIVE_CLASSES).
                     "uninformative_classes": list(
                         step_module("cluster_flags").UNINFORMATIVE_CLASSES[assay.get(s)]),
+                    # THE DECISIONS THAT SET THE APPLIED THRESHOLDS, so step 6 clusters the
+                    # population step 7 will deliver. Step 6 read the derived floors while step 7
+                    # applied an adjudicated one, so with a decisions file the flags described
+                    # cells the deliverable did not hold. Carried in the params, not read off the
+                    # pipeline, because the params are the task's signature: a changed decision
+                    # must re-run this task, not let it be skipped as unchanged.
+                    "decisions": {"quality": (pipeline.decisions or {}).get("quality") or {}},
                     **({"cell_call_key": call_key[s]} if call_key[s] else {})},
             # 48 rather than 64: a common workq ceiling is 50 gb, and one library's
             # clustering does not need more. check_resources() would refuse the

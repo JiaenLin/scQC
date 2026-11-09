@@ -35,7 +35,8 @@ Every key is optional; every absence is stated on the page. Nothing below has a 
 
     {
       "run":        {"project": str, "mode": "evidence"|"apply", "invocation": str,
-                     "started": iso},
+                     "started": iso,
+                     "assay": "snrna"|"scrna"|None},   # names the observation: nucleus or cell
       "deliverable":{"text": str,                # preferred: the one line, already composed
                      "n_kept": int, "n_in": int, # or these two, from which it is composed
                      "unit": str,                # what is being counted, e.g. "called cells"
@@ -72,14 +73,15 @@ Every key is optional; every absence is stated on the page. Nothing below has a 
                      "rows":    [{"sample": str, <key>: any, ...}, ...]},
     }
 
-FRESHNESS IS COMPUTED HERE AND ENFORCED ELSEWHERE
+FRESHNESS IS COMPUTED HERE AND REPORTED, NOT ENFORCED
 
 `generated` earlier than `newest input` means the document describes data that has since changed,
 and staleness has no symptom - a stale report opens, renders and reads exactly like a current one.
-So it is computed, printed on the face of the document and recorded in the JSON as `stale`. It
-does not stop the write: refusing to write the artifact would be refusing the remedy, and the
-rebuilt document is the thing that fixes the staleness. `refuse_if_stale()` is the enforcing
-form, for a caller that is about to PUBLISH one.
+So it is computed, printed on the face of the document, counted as a defect, and recorded in the
+JSON as `stale`. It does not stop the write: refusing to write the artifact would be refusing the
+remedy, and the rebuilt document is the thing that fixes the staleness. Nothing in scQC publishes
+a report, so nothing refuses a stale one; a `refuse_if_stale()` written for a publisher that never
+existed was removed with no caller (harness autodev W007).
 
 A timestamp that cannot be read, or a pair that cannot be compared because only one of them
 carries a UTC offset, is recorded as NOT CHECKED with the reason - never as fresh.
@@ -101,7 +103,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from engine.task import Refusal, TaskFailure  # noqa: E402
+from engine.task import TaskFailure  # noqa: E402
+from report.units import fill as _fill_units  # noqa: E402
 
 REPORT_VERSION = 1
 
@@ -168,7 +171,8 @@ FIGURE_QUESTIONS = {
     "F8": "are any clusters technical?",
     "F9": "what did each criterion remove uniquely?",
     "F10": "where in the manifold did the doublets sit?",
-    "F11": "did the removed nuclei leave as a population, or scattered?",
+    # `{many}` is the cohort's word for what was removed - nuclei or cells - by its declared assay.
+    "F11": "did the removed {many} leave as a population, or scattered?",
     "F12": "the same count distributions, on the scale people work in",
     "F13": "where is the GENE cut and why there? - step 5 derives two floors and applies both",
     "F14": "what did the GENE floor change?",
@@ -805,6 +809,20 @@ def _step_findings(step_key: str, verdict_block: dict) -> list:
     return [f for f in verdict_block["findings"] if f["step"] == step_key]
 
 
+def _assay_of(payload):
+    """The cohort's declared assay as the payload carries it, or None."""
+    run = _get(payload, "run")
+    if run is MISSING or _unknown(run):
+        return None
+    a = _get(run, "assay")
+    return None if a is MISSING or _unknown(a) else str(a)
+
+
+def _question(fid: str, payload) -> str:
+    """A figure's question, in the cohort's words for what it observed (report/units.py)."""
+    return _fill_units(FIGURE_QUESTIONS.get(fid, ""), _assay_of(payload))
+
+
 def build_step_sections(payload, verdict_block: dict, defects: list) -> list:
     """One section per step, in pipeline order, whether or not the run reached it.
 
@@ -943,7 +961,7 @@ def _one_step(key, title, purpose, removes, figures, entry, payload, verdict_blo
     payload_figs = _get(payload, "figures")
     for fid in fig_ids:
         spec = MISSING if payload_figs is MISSING else _get(payload_figs, fid)
-        block = {"id": fid, "question": FIGURE_QUESTIONS.get(fid, ""),
+        block = {"id": fid, "question": _question(fid, payload),
                  "caption": "", "source": "", "status": ""}
         if spec is MISSING:
             # A reason, when the assembler gave one. "NOT PRODUCED" alone reads as an oversight;
@@ -1312,7 +1330,7 @@ def build_confounding(payload, defects: list) -> dict:
     blocks = []
     for fid in CONFOUNDING_FIGURES:
         spec = MISSING if payload_figs is MISSING else _get(payload_figs, fid)
-        block = {"id": fid, "question": FIGURE_QUESTIONS.get(fid, ""), "caption": "",
+        block = {"id": fid, "question": _question(fid, payload), "caption": "",
                  "source": "", "status": ""}
         if spec is MISSING or not isinstance(spec, dict):
             reason = "" if fig_notes is MISSING else _text(_get(fig_notes, fid), "")
@@ -1479,7 +1497,8 @@ def assemble(payload, *, now=None) -> dict:
         "report_version": REPORT_VERSION,
         "run": {"project": _text(_get(run, "project") if run is not MISSING else MISSING),
                 "mode": _text(_get(run, "mode") if run is not MISSING else MISSING),
-                "started": _text(_get(run, "started") if run is not MISSING else MISSING, "")},
+                "started": _text(_get(run, "started") if run is not MISSING else MISSING, ""),
+                "assay": _assay_of(payload)},
         "verdict": verdict,
         "parameters": parameters,
         "steps": steps,
@@ -2279,13 +2298,22 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     # run, rather than written here as fixed text. It was fixed text - "DERIVED · per library" -
     # and a bound-dominated or declared-k ceiling would have been labelled derived on the one
     # line of the report a reader looks at to see how the threshold was arrived at.
-    mito_class = next((str(r.get("class")) for r in ((doc.get("parameters") or {}).get("rows") or [])
-                       if str(r.get("name", "")).startswith("mitochondrial")), None)
+    #
+    # The two count floors' class is read the same way, and for the same reason: it was fixed
+    # text, "DERIVED · cohort constant", and on single cells the floors are DECLARED (quality
+    # FLOOR_METHOD) - the one line a reader looks at said a declaration was a measurement.
+    def _class_of(prefix):
+        return next((str(r.get("class")) for r in ((doc.get("parameters") or {}).get("rows") or [])
+                     if str(r.get("name", "")).startswith(prefix)), None)
+
+    mito_class = _class_of("mitochondrial")
+    umi_class, gene_class = _class_of("UMI floor"), _class_of("gene floor")
     rows = [
-        ("Counts per nucleus", "F7", f"≥ {_fmt(umi_cut)}", "UMI floor",
-         "DERIVED · cohort constant"),
+        (_fill_units("Counts per {one}", (doc.get("run") or {}).get("assay")), "F7",
+         f"≥ {_fmt(umi_cut)}", "UMI floor",
+         f"{umi_class} · cohort constant" if umi_class else "class not recorded"),
         ("Genes detected", "F14", f"≥ {_fmt(gene_cut)}", "gene floor",
-         "DERIVED · cohort constant"),
+         f"{gene_class} · cohort constant" if gene_class else "class not recorded"),
         ("Mitochondrial %", "F15", f"≤ {mito_txt}", "mito ceiling",
          f"{mito_class} · per library" if mito_class else "class not recorded"),
         ("Where the doublets sat", "F10", "scDblFinder", "doublet call", "DECLARED · per library"),
@@ -2505,8 +2533,8 @@ def build_report(payload: dict, out_html, out_json, *, now=None, render_figures_
     platforms would produce two different documents from one payload.
 
     `now` pins the generation timestamp, so a test can produce byte-identical output twice.
-    Staleness is computed and printed; it does not raise here - see `refuse_if_stale()`, which is
-    the enforcing form for a caller about to publish.
+    Staleness is computed, printed and counted as a defect; it does not raise - see the module
+    docstring.
     """
     out_html, out_json = Path(out_html), Path(out_json)
     if out_html.resolve() == out_json.resolve():
@@ -2626,25 +2654,3 @@ def build_report(payload: dict, out_html, out_json, *, now=None, render_figures_
         "versions": {"matplotlib": figures["matplotlib"], "python": sys.version.split()[0]},
         "document": doc,
     }
-
-
-def refuse_if_stale(result_or_doc: dict) -> None:
-    """Raise Refusal when the report is older than its inputs. The enforcing form.
-
-    Kept out of `build_report` deliberately. Building is the REMEDY for staleness, and a check
-    that blocks the command which would fix the problem is worse than no check - it is the one
-    that gets switched off. This is called before PUBLISHING an artifact, not before writing one.
-    """
-    doc = result_or_doc.get("document", result_or_doc)
-    fresh = doc.get("provenance", {}).get("freshness", {})
-    if fresh.get("stale") is True:
-        raise Refusal(
-            f"the report is older than its newest input "
-            f"(generated {fresh.get('generated')}, newest input {fresh.get('newest_input')}). "
-            f"Staleness has no symptom: it opens, renders and reads exactly like a correct "
-            f"report. Rebuild it rather than publishing this one.")
-    if fresh.get("stale") is None:
-        raise Refusal(
-            f"freshness could not be checked: {fresh.get('reason', 'no reason recorded')}. "
-            f"NOT CHECKED is its own outcome and must not be published as though it were a "
-            f"pass; supply the generation time and the newest input time and build again.")

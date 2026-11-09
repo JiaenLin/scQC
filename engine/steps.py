@@ -136,16 +136,19 @@ def _ingest(task, pipeline, log):
     row = task.params["row"]
     sample = row["sample"]
     ing = step_module("ingest")
-    # THE PROJECT'S REGISTRY FIRST, when the run was given one (`--registry`). Only then the old
-    # lookups - which a second species could not satisfy without editing this repository.
+    # THE PROJECT'S REGISTRY, AND NO OTHER. Without `--registry` this read the registry beside
+    # the project's parent directory, else the one this repository shipped - whose only row was
+    # the first cohort's mouse reference. A project that brought none was resolved against that
+    # cohort's reference without a word, which is a first-cohort value surviving as a default.
+    # The registry is project content; the tool ships none and falls back to none.
     given = (getattr(pipeline, "tools", None) or {}).get("registry")
-    registry = ing.read_registry(Path(given)) if given else {}
-    if not registry:
-        registry = ing.read_registry(pipeline.project.parent / "references" / "_registry"
-                                     / "registry.tsv")
-    if not registry:
-        registry = ing.read_registry(Path(__file__).resolve().parents[1]
-                                     / "references" / "_registry" / "registry.tsv")
+    if not given:
+        raise Refusal(
+            f"00_ingest ({sample}): no reference registry was given (`scqc run --registry "
+            f"FILE`). The samplesheet's `reference` is resolved against the PROJECT's registry - "
+            f"a TSV of species, build and path, kept with the project - and scQC ships none and "
+            f"falls back to none.")
+    registry = ing.read_registry(Path(given))
 
     errs = ing.validate_row(row, registry)
     if errs:
@@ -1484,6 +1487,30 @@ def _cohort_assay(declared) -> str:
     return kinds[0]
 
 
+#: Whose call the cells were, by the route a library took through step 1 (graph.py `call_by`).
+CALLED_CELLS_OF = {"aligner": "the aligner's called cells",
+                   "denoiser": "the denoiser's called cells"}
+
+
+def _floors_applied_to(call_by, samples) -> str:
+    """Whose called cells the declared count floors were applied to, by each library's route.
+
+    This was the literal "the aligner's called cells" for every single-cell cohort. A single-cell
+    library can also arrive denoised elsewhere (SUPPLIED, modules/01_ambient), and then the cells
+    the floors judge are the denoiser's call, carried in the object - so the table and the report
+    named a caller that never called those cells. One route, one phrase; several, each phrase with
+    the libraries that took it. A route nobody recorded is said to be unrecorded, not guessed.
+    """
+    call_by = call_by or {}
+    by_text: dict = {}
+    for s in samples:
+        text = CALLED_CELLS_OF.get(call_by.get(s), "the called cells (the caller was not recorded)")
+        by_text.setdefault(text, []).append(s)
+    if len(by_text) == 1:
+        return next(iter(by_text))
+    return "; ".join(f"{text} ({', '.join(names)})" for text, names in by_text.items())
+
+
 def _quality_stage(task, pipeline, log):
     """The barrier: one cohort constant per count axis, plus the per-library mito ceilings.
 
@@ -1526,6 +1553,8 @@ def _quality_stage(task, pipeline, log):
     out = {"outputs": [], "metrics": {}, "versions": {}}
     if floors_declared:
         import csv as _csvf
+        applied_to = _floors_applied_to(task.params.get("call_by"), task.params["samples"])
+        out["metrics"]["floors_applied_to"] = applied_to
         fpath = _tables(pipeline) / "count_floors.csv"
         with open(fpath, "w", newline="", encoding="utf-8") as fh:
             w = _csvf.writer(fh)
@@ -1539,7 +1568,7 @@ def _quality_stage(task, pipeline, log):
                 print(f"    {metric}: floor {prop.constant} DECLARED for {cohort_assay} - "
                       f"{qmod.FLOORS_DECLARED_BY[cohort_assay]}")
                 w.writerow([metric, prop.constant, "declared", qmod.FLOORS_DECLARED_BY[cohort_assay],
-                            f"{prop.bounds[0]}-{prop.bounds[1]}", "the aligner's called cells"])
+                            f"{prop.bounds[0]}-{prop.bounds[1]}", applied_to])
                 out["metrics"][f"{metric}_proposed"] = prop.constant
                 out["metrics"][f"{metric}_spread"] = None
                 out["metrics"][f"{metric}_provenance"] = "declared"
@@ -1737,7 +1766,7 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
 # step 6 - cluster, profile, flag
 
 
-def _population_for_cluster(pipeline, sample, cell_call_key="cellbender_cell"):
+def _population_for_cluster(pipeline, sample, cell_call_key="cellbender_cell", decisions=None):
     """The cells step 6 is specified to cluster: quality-filtered, doublets NOT applied.
 
     # rule-one: no-removal - this reads a table and a task's metrics and returns four numbers.
@@ -1745,15 +1774,14 @@ def _population_for_cluster(pipeline, sample, cell_call_key="cellbender_cell"):
     `cluster_flags.py` requires "the step-5 object: quality-filtered". The object step 6 opens is
     the denoised FULL DROPLET matrix, so without this the flags describe empty droplets.
 
-    WHERE EACH NUMBER COMES FROM, and why it is not one place:
-
-      * the per-library mitochondrial ceiling from `mito_ceiling_per_sample.csv`, which the
-        05_quality task writes before step 6 runs;
-      * the two cohort count floors from that task's METRICS, not from
-        `thresholds_per_sample.csv`. That table is written by a LATER task - measured on
-        2026-08-11 at 17:29 against step 6 at 17:19 - so reading it here found nothing. The
-        floors are already in `results_by_key["05_quality"].metrics` as `umi_proposed` and
-        `genes_proposed`; the same lookup is used for the decisions layer.
+    THE THRESHOLDS ARE STEP 7'S, RESOLVED BY STEP 7'S OWN FUNCTION. This read the derived floors
+    and the derived ceiling directly, while step 7 resolved them through `_apply_thresholds` - so
+    the moment a decisions file adjudicated a floor or the ceiling, step 6 clustered and flagged a
+    population the deliverable did not hold, and the flags step 7 carries onto every delivered
+    cell described different cells. Both now come through `_resolve_thresholds`, with the same
+    decisions, and cannot disagree. With no decisions file it returns what this read before: the
+    derived floors from the 05_quality task's METRICS (never `thresholds_per_sample.csv`, which a
+    later task writes) and this library's ceiling from `mito_ceiling_per_sample.csv`.
 
     The doublet criterion is deliberately absent: criterion D is only computable before a
     removal, since afterwards every cluster is 0% doublet by construction.
@@ -1762,39 +1790,19 @@ def _population_for_cluster(pipeline, sample, cell_call_key="cellbender_cell"):
     on 2026-08-11 while the run reported success, which is the failure this whole lookup exists
     to prevent.
     """
-    import csv as _csv
-
-    tdir = _tables(pipeline)
-    ceiling_path = tdir / "mito_ceiling_per_sample.csv"
-    ceiling = None
+    where = f"06_cluster_check ({sample})"
+    values, _classes, ceilings, _basis = _resolve_thresholds(
+        pipeline, decisions, [sample], step=where)
     try:
-        with open(ceiling_path, newline="", encoding="utf-8") as fh:
-            for row in _csv.DictReader(fh):
-                if row.get("sample") == sample:
-                    ceiling = float(row["ceiling"])
-                    break
-    except (OSError, KeyError, ValueError) as e:
+        return {"cell_call_key": cell_call_key,
+                "umi_floor": float(values["quality.umi_floor"]),
+                "gene_floor": float(values["quality.gene_floor"]),
+                "mito_ceiling": float(ceilings[sample])}
+    except (TypeError, ValueError) as e:
         raise Refusal(
-            f"06_cluster_check ({sample}): could not read the mitochondrial ceiling from "
-            f"{ceiling_path} ({type(e).__name__}: {e}). Step 6 must cluster the cells that reach "
-            f"the deliverable; clustering the droplet matrix instead is the defect this lookup "
-            f"exists to fix, so it stops rather than falling back to it.") from None
-    if ceiling is None:
-        raise Refusal(
-            f"06_cluster_check ({sample}): {ceiling_path} carries no row for this library, so "
-            f"the population it should be clustered on is unknown.")
-
-    cohort = (getattr(pipeline.results_by_key.get("05_quality"), "metrics", None) or {})
-    umi, gene = cohort.get("umi_proposed"), cohort.get("genes_proposed")
-    if umi is None or gene is None:
-        raise Refusal(
-            f"06_cluster_check ({sample}): the 05_quality task recorded no "
-            f"{'umi_proposed' if umi is None else 'genes_proposed'} in its metrics, so the count "
-            f"floors the deliverable will use are not knowable here. Do NOT read them from "
-            f"thresholds_per_sample.csv - that table is written after this step runs.")
-
-    return {"cell_call_key": cell_call_key, "umi_floor": float(umi),
-            "gene_floor": float(gene), "mito_ceiling": float(ceiling)}
+            f"{where}: a threshold step 7 would apply is not a number ({type(e).__name__}: "
+            f"{e}), so the population to cluster is unknown. Step 6 must cluster the cells that "
+            f"reach the deliverable; it stops rather than clustering the droplet matrix.") from None
 
 
 def _cluster(task, pipeline, log):
@@ -1826,7 +1834,8 @@ def _cluster(task, pipeline, log):
                    # the droplet matrix they were selected from. The doublet criterion is
                    # deliberately absent - see the op.
                    "population": _population_for_cluster(
-                       pipeline, p["sample"], p.get("cell_call_key") or "cellbender_cell"),
+                       pipeline, p["sample"], p.get("cell_call_key") or "cellbender_cell",
+                       p.get("decisions")),
                    # Which marker classes count against a cluster: on whole cells the ribosomal
                    # half is ordinary cytoplasm (adapters/scanpy_ops, _op_cluster). Absent, both.
                    **({"uninformative_classes": p["uninformative_classes"]}
@@ -2016,18 +2025,18 @@ def _cluster_flags(task, pipeline, log):
 PER_LIBRARY = "per_library"
 
 
-def _ceilings_for(pipeline, samples, declared):
+def _ceilings_for(pipeline, samples, declared, step="07_apply"):
     """(ceiling per sample, how it was decided). Refuses rather than defaulting.
 
     A single declared number is applied to every library. `per_library` reads step 5's own table,
-    which is the only place the derived fences exist.
+    which is the only place the derived fences exist. `step` names who asked, in a refusal.
     """
     if str(declared).strip().lower() != PER_LIBRARY:
         try:
             v = float(declared)
         except (TypeError, ValueError):
             raise Refusal(
-                f"07_apply: quality.mito_ceiling_pct is {declared!r}, which is neither a number "
+                f"{step}: quality.mito_ceiling_pct is {declared!r}, which is neither a number "
                 f"nor {PER_LIBRARY!r}. There is no default: one cohort ceiling and a per-library "
                 f"fence remove different populations.") from None
         return {s: v for s in samples}, f"one declared ceiling of {v:g}% for every library"
@@ -2036,14 +2045,21 @@ def _ceilings_for(pipeline, samples, declared):
     p = _tables(pipeline) / "mito_ceiling_per_sample.csv"
     if not p.exists():
         raise Refusal(
-            f"07_apply: {PER_LIBRARY} was approved but {p} does not exist, so there is nothing "
-            f"to apply. Run step 5 in evidence mode first - the ceilings are derived there.")
-    with p.open(encoding="utf-8", newline="") as fh:
-        got = {r["sample"]: float(r["ceiling"]) for r in _csv.DictReader(fh) if r.get("ceiling")}
+            f"{step}: the ceilings are {PER_LIBRARY} but {p} does not exist, so there is nothing "
+            f"to apply. Step 5 derives them and writes that table before steps 6 and 7 run.")
+    try:
+        with p.open(encoding="utf-8", newline="") as fh:
+            got = {r["sample"]: float(r["ceiling"]) for r in _csv.DictReader(fh)
+                   if r.get("ceiling")}
+    except (OSError, KeyError, ValueError) as e:
+        raise Refusal(
+            f"{step}: could not read the mitochondrial ceilings from {p} ({type(e).__name__}: "
+            f"{e}). It stops rather than filtering, or clustering, on a ceiling it cannot "
+            f"read.") from None
     missing = [s for s in samples if s not in got]
     if missing:
         raise Refusal(
-            f"07_apply: {p} has no ceiling for {', '.join(missing)}. A library filtered on "
+            f"{step}: {p} has no ceiling for {', '.join(missing)}. A library filtered on "
             f"another library's ceiling is filtered on a threshold nobody derived for it.")
     lo, hi = min(got[s] for s in samples), max(got[s] for s in samples)
     return {s: got[s] for s in samples}, (f"the per-library fence step 5 derived, "
@@ -2093,19 +2109,30 @@ def _nf_csv_for(pipeline, sample):
 
 
 def _apply_thresholds(task, pipeline, samples):
+    """Step 7's thresholds, through the one resolver steps 6 and 7 share. See below."""
+    return _resolve_thresholds(pipeline, task.params.get("decisions"), samples, step="07_apply")
+
+
+def _resolve_thresholds(pipeline, decisions, samples, *, step):
     """(values, who decided each, ceiling per sample, how the ceilings were decided).
 
-    A THRESHOLD IS EITHER ADJUDICATED OR DERIVED, AND THE RESULT SAYS WHICH. A decisions file is
-    optional: without one the pipeline applies what it derived in evidence mode, which is the
-    honest default because those values are a function of the data rather than of anybody's
-    preference. What must never happen is a derived value being reported as a chosen one, so the
-    class travels with the value into the ledger, the object and the report.
+    A THRESHOLD IS ADJUDICATED, DECLARED OR DERIVED, AND THE RESULT SAYS WHICH. A decisions file
+    is optional: without one the pipeline applies what step 5 derived (or, on single cells,
+    declared), which is the honest default because those values are a function of the data or of
+    a stated rule rather than of anybody's preference. What must never happen is a derived value
+    being reported as a chosen one, so the class travels with the value into step 7's metrics, the
+    run's STATUS.json and the report's parameter table.
+
+    ONE RESOLVER, AND STEP 6 COMES THROUGH IT TOO. Step 6 clusters the population step 7 will
+    deliver, and it used to read the derived floors and ceiling itself - so with a decisions file
+    the two steps applied different thresholds and the cluster flags carried onto the deliverable
+    described other cells. `step` names who asked, in a refusal.
 
     Resolved when the task RUNS, not when the graph is built: with `per_library` the ceilings come
     from step 5's table, and on a clean run that file does not exist yet while the graph is being
-    assembled. Both step-7 tasks come through here, so they cannot resolve differently.
+    assembled. Every task of steps 6 and 7 comes through here, so they cannot resolve differently.
     """
-    q = (task.params.get("decisions") or {}).get("quality") or {}
+    q = (decisions or {}).get("quality") or {}
     cohort = (getattr(pipeline.results_by_key.get("05_quality"), "metrics", None) or {})
     derived = {
         "quality.umi_floor": cohort.get("umi_proposed"),
@@ -2121,15 +2148,15 @@ def _apply_thresholds(task, pipeline, samples):
             continue
         if derived[dotted] is None:
             raise Refusal(
-                f"07_apply: {dotted} is neither declared nor derived. Step 5 proposes it in "
-                f"evidence mode and this run has no record of that, so there is nothing to "
-                f"apply - and a threshold nobody chose and nothing measured is not a default, it "
-                f"is a guess.")
+                f"{step}: {dotted} is neither declared nor derived. Step 5 proposes it and this "
+                f"run has no record of that, so there is nothing to apply - and a threshold "
+                f"nobody chose and nothing measured is not a default, it is a guess.")
         prov = {"quality.umi_floor": cohort.get("umi_provenance"),
                 "quality.gene_floor": cohort.get("genes_provenance")}.get(dotted)
         values[dotted] = derived[dotted]
         classes[dotted] = "DECLARED" if prov == "declared" else "DERIVED"
-    ceilings, basis = _ceilings_for(pipeline, samples, values["quality.mito_ceiling_pct"])
+    ceilings, basis = _ceilings_for(pipeline, samples, values["quality.mito_ceiling_pct"],
+                                    step=step)
     return values, classes, ceilings, basis
 
 
@@ -2259,9 +2286,11 @@ def _apply(task, pipeline, log):
     # guarding a hazard the layout has removed.
     #
     # What the approval ALSO did was attribute the thresholds, and that is not replaced by a
-    # directory name - so it is recorded instead. Every threshold carries ADJUDICATED or DERIVED
-    # into the ledger, the object and the report. A run with no decisions file applies what the
-    # data proposed and says so; it never reports a proposal as a decision.
+    # directory name - so it is recorded instead: `authorised_by` in this step's metrics, every
+    # threshold's class (ADJUDICATED, DECLARED or DERIVED) in the report's parameter table, and each
+    # adjudicated one in STATUS.json. The removal ledger and the delivered objects do NOT carry it.
+    # A run with no decisions file applies what the data proposed and says so; it never reports a
+    # proposal as a decision.
     #
     # When a decisions file IS present and complete, the gate still runs, and it still refuses on
     # words that do not match the action they were given for.
@@ -2606,10 +2635,10 @@ STEP_TEXT = {
         "object and deliberately not the same population. The floors are the density valley "
         "measured per library and proposed as ONE cohort constant, over every barcode; the "
         "ceiling is each library's own median + k*1.4826*MAD taken over the barcodes above the "
-        "light floor, with k DERIVED as the cohort median of the multiple at which each "
-        "library's Tukey fence sits, and the whole bounded by a declared statement about what a "
-        "nucleus can be. Tukey is carried as an independent second derivation and is never "
-        "applied.",
+        "light floor, with k DECLARED for nuclei (quality.MITO_MAD_K) and the k each library's "
+        "Tukey fence implies reported beside it, and the whole bounded by a declared statement "
+        "about what a nucleus can be. Tukey is carried as an independent second derivation and "
+        "is never applied.",
         "Whether either threshold is RIGHT. For the floors it establishes that the distribution "
         "has two modes and that the cut sits between them and inside plausible bounds - a tight "
         "real population can be refused by the dispersion test and a large enough artifact can "
@@ -2635,15 +2664,61 @@ STEP_TEXT = {
 }
 
 
-def step_text(step: str) -> tuple:
-    """(what it does, what it cannot establish) for a step key, or two empty strings."""
+#: Where single cells take a different route, the text says so (single cells are not single
+#: nuclei). `STEP_TEXT` above is the nucleus route, and every step not listed here reads the same
+#: on both. Written for the route each step actually takes on `scrna` - modules/01_ambient
+#: DENOISE, quality.FLOOR_METHOD, MITO_MAD_K and MAD_K_BOUNDS_BY_ASSAY - and naming no number,
+#: so a constant changed there cannot leave a stale one here.
+STEP_TEXT_SCRNA = {
+    "01_ambient": (
+        "Takes each library's raw counts as the object every later step reads, with the "
+        "aligner's cell call written in as a column: this pipeline does not denoise single "
+        "cells (modules/01_ambient, DENOISE). A library supplied already denoised is used as "
+        "supplied, with its provenance.",
+        "How much ambient RNA these libraries carry. Nothing here estimates it on a library it "
+        "did not denoise, and an unmeasured fraction is not a low one."),
+    "02_cells": (
+        "Compares the aligner's cell call with the denoiser's where a denoiser ran - a library "
+        "supplied already denoised - and gates the loss. Where none ran, the aligner's call is "
+        "the only one, and the step reports NOT RUN rather than a loss of zero.",
+        "Whether the aligner's call is RIGHT, where it is the only call: there is nothing here to "
+        "compare it with. Where a loss was measured, whether the cells lost were real - only "
+        "annotation could say that."),
+    "05_quality": (
+        "Declares the count floors and derives the mitochondrial ceiling. On single cells the "
+        "floors are DECLARED, not measured (quality.FLOOR_METHOD) - the lower ends of the "
+        "declared whole-cell bounds, applied to the called cells - because a valley drawn over a "
+        "raw whole-cell matrix falls in its integer-count noise. The ceiling is each library's "
+        "own median + k*1.4826*MAD over the called cells at or above the declared UMI floor, "
+        "with k DERIVED as the cohort median of the multiple at which each library's Tukey fence "
+        "sits (with a lower limit for cells), and the whole bounded by a declared statement about "
+        "what a cell can be. Tukey is carried as an independent second derivation and is never "
+        "applied.",
+        "Whether either threshold is RIGHT for these cells. The floors are a declaration from "
+        "published whole-cell practice, not a measurement of this cohort. For the ceiling it "
+        "establishes only that each library was cut at its own outlier fence and that the "
+        "result is even across the design; whether a mitochondria-high POPULATION is damage or a "
+        "mitochondria-rich cell type needs an identity this pipeline does not establish."),
+}
+
+
+def step_text(step: str, assay=None) -> tuple:
+    """(what it does, what it cannot establish) for a step key, or two empty strings.
+
+    By the cohort's declared assay: single cells read the route they took. An assay that is not
+    `scrna` reads the nucleus text, and no run with an unresolved assay reaches the steps whose
+    text differs - ingest refuses a missing assay and the graph a mixed one.
+    """
+    if str(assay or "").strip().lower() == "scrna" and step in STEP_TEXT_SCRNA:
+        return STEP_TEXT_SCRNA[step]
     return STEP_TEXT.get(step, ("", ""))
 
 
 __all__ = [
-    "STEP_TEXT", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
+    "STEP_TEXT", "STEP_TEXT_SCRNA", "step_text", "_design", "_ingest", "_align", "_ambient", "_ambient_supplied",
     "_ambient_audit", "_cellcall",
     "_doublets", "_doublet_health", "_doublet_sweep", "_doublet_sweep_stage", "_light_floor",
     "_quality", "_quality_measure", "_quality_stage", "_cluster",
-    "_cluster_flags", "_apply", "_apply_measure", "_ceilings_for", "_report",
+    "_cluster_flags", "_apply", "_apply_measure", "_ceilings_for", "_resolve_thresholds",
+    "_report",
 ]

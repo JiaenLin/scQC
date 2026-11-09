@@ -19,12 +19,20 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "modules" / "00_ingest"))
 from ingest import plan_one, read_registry # noqa: E402
 
-REG = read_registry(HERE.parent / "references" / "_registry" / "registry.tsv")
 # An EXAMPLE species and reference, in the registry's `<species>/<build>` key form. Species is
 # a DECLARED parameter with no default, so a value has to appear somewhere in this test; this
 # one is illustrative and nothing in the planner is specific to it.
 SPECIES = "mus_musculus"
 REF = f"{SPECIES}/ensembl_112_filtered"
+# The test's OWN registry, written as a project writes one. scQC ships none: the registry it
+# used to ship held one cohort's reference, read for any project that brought none.
+import tempfile  # noqa: E402
+
+with tempfile.TemporaryDirectory() as _td:
+    _reg_file = Path(_td) / "registry.tsv"
+    _reg_file.write_text(f"species\tbuild\tpath\n{SPECIES}\tensembl_112_filtered\t-\n",
+                         encoding="utf-8")
+    REG = read_registry(_reg_file)
 
 # Summary statistics for three real artifacts of one library, as recorded by the prior-filtering
 # audit: the vendor's delivered matrix, the vendor's delivered analysis object, and the

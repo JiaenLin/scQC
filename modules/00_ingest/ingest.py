@@ -96,8 +96,7 @@ def validate_row(row: dict, registry: dict) -> list:
                     f"assay outside these has neither")
     ref = str(row.get("reference", "")).strip()
     if ref and ref not in registry:
-        errs.append(f"reference '{ref}' is not in the registry (the project's `--registry`, or "
-                    f"references/_registry/registry.tsv shipped with scQC) - "
+        errs.append(f"reference '{ref}' is not in the registry (the project's `--registry`) - "
                     f"known: {', '.join(sorted(registry)) or '(registry empty)'}")
     if not str(row.get("matrix", "")).strip() and not str(row.get("fastq_r1", "")).strip():
         errs.append("neither 'matrix' nor 'fastq_r1' given - nothing to ingest")

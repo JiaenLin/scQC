@@ -80,6 +80,17 @@ UNKNOWN_HATCH = "///"
 NOT_SUPPLIED = "NOT SUPPLIED"
 
 
+def _unit(units) -> tuple:
+    """(one, many) for the observation, as the figure data names it (report/units.py).
+
+    Supplied by `report/collect.py` from the cohort's declared assay. Absent - a caller that
+    did not pass it - every observation is a barcode: neither a nucleus nor a cell is assumed.
+    """
+    if isinstance(units, (list, tuple)) and len(units) == 2 and all(units):
+        return str(units[0]), str(units[1])
+    return "barcode", "barcodes"
+
+
 # ------------------------------------------------------------------------------------ helpers
 # Everything above the first figure is pure and importable without matplotlib, so the argument
 # construction and the parsing of a caller's data structures are testable on their own.
@@ -789,7 +800,8 @@ def fig_f3_cell_calls(calls, *, review_lost=None, refuse_lost=None, dpi: int = D
 # --------------------------------------------------------------------------- F4 · light floor
 
 
-def fig_f4_scoring_coverage(coverage, *, floor=None, umi_hist=None, dpi: int = DEFAULT_DPI):
+def fig_f4_scoring_coverage(coverage, *, floor=None, umi_hist=None, units=None,
+                            dpi: int = DEFAULT_DPI):
     """F4 - what was never examined?
 
     `coverage` maps a sample to `{"scored": n, "below_floor": n, "never_scored": n}`. The third
@@ -803,6 +815,7 @@ def fig_f4_scoring_coverage(coverage, *, floor=None, umi_hist=None, dpi: int = D
     """
     if not coverage:
         raise TaskFailure("F4 needs at least one library's scoring coverage")
+    one, many = _unit(units)
     has_hist = not _unknown(umi_hist) and bool(umi_hist)
     panels = 2 if has_hist else 1
     fig = _new_fig((6.0 * panels, max(2.6, 0.34 * len(coverage) + 1.6)), dpi)
@@ -840,7 +853,7 @@ def fig_f4_scoring_coverage(coverage, *, floor=None, umi_hist=None, dpi: int = D
     ax.set_xlim(0, (widest if widest > 0 else 1.0) * 1.45)
     ax.set_yticks(range(len(names)))
     ax.set_yticklabels(names, fontsize=7)
-    ax.set_xlabel("nuclei (denominator: every nucleus the denoiser called, per library)",
+    ax.set_xlabel(f"{many} (denominator: every {one} in the library's per-cell table)",
                   fontsize=8)
     ax.legend(fontsize=7, loc="lower right", frameon=False)
     ax.set_title("who was handed to the doublet detector"
@@ -866,10 +879,10 @@ def fig_f4_scoring_coverage(coverage, *, floor=None, umi_hist=None, dpi: int = D
                 _label(ax, float(floor), max(counts), f"  floor {int(floor):,} UMI", fontsize=7,
                        rotation=90, va="top", color=PALETTE["threshold"])
             _log_axis(ax, "x")
-            ax.set_xlabel("UMI per nucleus", fontsize=8)
-            ax.set_ylabel("nuclei", fontsize=8)
+            ax.set_xlabel(f"UMI per {one}", fontsize=8)
+            ax.set_ylabel(many, fontsize=8)
             ax.set_title("where the floor sits", fontsize=9)
-            _panel_note(ax, n_label(sum(counts), "nuclei in the histogram"), loc="upper right")
+            _panel_note(ax, n_label(sum(counts), f"{many} in the histogram"), loc="upper right")
         _tidy(ax)
 
     _finish(fig, "F4 · scored, below the floor, and never scored",
@@ -937,7 +950,7 @@ def fig_f5_doublet_sweep(sweep, *, published_band=None, chosen=None, rate_denomi
 
 
 def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, metric_label=None,
-                           fig_id: str = "F6", dpi: int = DEFAULT_DPI):
+                           fig_id: str = "F6", units=None, dpi: int = DEFAULT_DPI):
     """F6 - where is the cut, and why there?
 
     `densities` maps a sample to `{"x": [...], "y": [...], "n": int|None}` - the density the
@@ -963,6 +976,7 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
     """
     if not densities:
         raise TaskFailure("F6 needs at least one library's density")
+    _one, many = _unit(units)
     valleys = _mapping(valleys)
     rows, cols = grid_shape(len(densities))
     fig = _new_fig((3.2 * cols, 2.5 * rows), dpi)
@@ -1007,7 +1021,7 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
         # when the estimate failed - and it must not produce a singular axis warning on top of it.
         ax.set_ylim(0, (max(ys) if max(ys) > 0 else 1.0) * 1.08)
         ax.set_title(str(s), fontsize=8)
-        note = n_label(n, "nuclei")
+        note = n_label(n, many)
         if _unknown(v):
             note += "\nvalley NOT SUPPLIED"
         if not log_x:
@@ -1139,18 +1153,18 @@ def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name, cut_wor
         if hi - lo >= 1.2:
             ax.yaxis.set_major_locator(MultipleLocator(1))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{10 ** v:,.0f}"))
-        ax.set_ylabel(f"{metric_name} per nucleus", fontsize=8)
+        ax.set_ylabel(metric_name, fontsize=8)
         if dropped:
             _panel_note(ax, f"{dropped:,} value(s) at or below zero cannot be shown on a log "
                             f"axis", loc="upper right")
     else:
-        ax.set_ylabel(f"{metric_name} per nucleus", fontsize=8)
+        ax.set_ylabel(metric_name, fontsize=8)
     _tidy(ax)
     return positions, above
 
 
 def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: str = "both",
-                        cap=None, fig_id: str = "F7", cut_word: str = "floor",
+                        cap=None, fig_id: str = "F7", cut_word: str = "floor", units=None,
                         dpi: int = DEFAULT_DPI):
     """F7 - what did the cut change?
 
@@ -1183,6 +1197,7 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: st
         raise TaskFailure(f"F7: scale must be 'both', 'log' or 'linear', got {scale!r}")
 
     names = sorted(distributions)
+    one, many = _unit(units)
     # Read once, so two panels cannot disagree about what the metric is called, and through
     # `label_text` so an unsupplied name is stated rather than printed as `nan`.
     metric_name = label_text(metric_label, f"metric ({NOT_SUPPLIED} - name it)")
@@ -1205,7 +1220,7 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: st
                                         cut_word=cut_word)
         if use_cap is not None:
             share = (100.0 * above / total) if total else 0.0
-            _panel_note(ax, f"y capped at {float(use_cap):,.0f} - {share:.2f}% of plotted nuclei "
+            _panel_note(ax, f"y capped at {float(use_cap):,.0f} - {share:.2f}% of plotted {many} "
                             f"lie above and are not drawn", loc="upper left")
 
     axis_words = {"log": "a log axis", "linear": "a linear axis",
@@ -1214,7 +1229,7 @@ def fig_f7_before_after(distributions, *, cut=None, metric_label=None, scale: st
              "value" if isinstance(cut, dict) else
              f"the applied {cut_word} crosses every library")
     _finish(fig, f"{fig_id} - {metric_name} per library, before and after the cut, on {axis_words}",
-            f"grey is every called cell, black is what was retained; the median is drawn and "
+            f"grey is every called {one}, black is what was retained; the median is drawn and "
             f"printed, and {where}")
     return fig
 
@@ -1419,7 +1434,7 @@ def fig_f9_criterion_contributions(per_criterion, *, n_removed=None, n_in=None,
 
 
 def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle=None,
-                             fig_id: str = "F10", dpi: int = DEFAULT_DPI):
+                             fig_id: str = "F10", units=None, dpi: int = DEFAULT_DPI):
     """F10 - where in the manifold did the removed nuclei sit?
 
     `embeddings` maps a sample to `{"x": [...], "y": [...], "doublet": [...], "removed": [...]}`,
@@ -1448,6 +1463,7 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
         raise TaskFailure(f"F10: colour_by must be 'doublet' or 'removed', got {colour_by!r}")
 
     names = sorted(embeddings)
+    one, many = _unit(units)
     rows, cols = grid_shape(len(names))
     fig = _new_fig((min(12.0, 2.15 * cols + 0.6), 2.05 * rows + 0.9), dpi)
     highlight = PALETTE["refuse"] if colour_by == "doublet" else PALETTE["muted"]
@@ -1505,11 +1521,11 @@ def fig_f10_umap_per_library(embeddings, *, colour_by: str = "doublet", subtitle
 
     what = ("called a doublet" if colour_by == "doublet"
             else "removed by any criterion")
-    _finish(fig, f"{fig_id} - per-library embedding, coloured by whether a nucleus was {what}",
-            label_text(subtitle, "one embedding per library; the percentage on each panel is the "
-                                 "share highlighted, over the nuclei for which the flag was "
-                                 "DETERMINED. Points in the third colour were never determined "
-                                 "and are in no percentage"))
+    _finish(fig, f"{fig_id} - per-library embedding, coloured by whether a {one} was {what}",
+            label_text(subtitle, f"one embedding per library; the percentage on each panel is the "
+                                 f"share highlighted, over the {many} for which the flag was "
+                                 f"DETERMINED. Points in the third colour were never determined "
+                                 f"and are in no percentage"))
     return fig
 
 
@@ -1766,7 +1782,7 @@ def _median_style(i: int) -> tuple:
 
 
 def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, absent=None,
-                           dpi: int = DEFAULT_DPI):
+                           units=None, dpi: int = DEFAULT_DPI):
     """F17 - how far apart do the confounded arms sit, and is that further than their libraries?
 
     `metrics` is a list of `{"key", "label", "log", "by_arm": {arm: [values]},
@@ -1898,7 +1914,7 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
         else:
             head = "no library median in any arm"
         n_drawn = sum(len(v) for v in data)
-        ax.set_title(f"{head}   ·   {n_label(n_drawn, 'nuclei drawn')}", fontsize=6.6,
+        ax.set_title(f"{head}   ·   {n_label(n_drawn, f'{_unit(units)[1]} drawn')}", fontsize=6.6,
                      color=PALETTE["muted"])
 
         ax.set_xticks([arm_x[a] for a in order])
@@ -1920,9 +1936,9 @@ def fig_f17_metrics_by_arm(metrics, *, arms=None, population=None, cap=None, abs
 
     pop = label_text(population, f"population {NOT_SUPPLIED}")
     cap_words = ("" if _unknown(cap) else
-                 f"; at most {int(cap):,} nuclei per arm, at an even stride")
+                 f"; at most {int(cap):,} {_unit(units)[1]} per arm, at an even stride")
     head = ("F17 - every QC metric across the confounded arms",
-            _wrapped(f"grey violin: every nucleus of the arm. marker: one library's OWN median, "
+            _wrapped(f"grey violin: every {_unit(units)[0]} of the arm. marker: one library's OWN median, "
                      f"in the same colour, shape and position in every panel. amber band: the "
                      f"span those medians cover. blue rule: the arm's median of them. Over "
                      f"{pop}{cap_words}", 132))

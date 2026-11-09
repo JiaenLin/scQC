@@ -17,9 +17,12 @@ the directories where such strings land last and are looked for least. Two kinds
   1. SHAPES of site leakage, spelled here because they are not names: a user home path, a
      site home path, a login-node hostname, a scheduler head-node or job id, an e-mail address,
      a dated scratch directory.
-  2. TERMS supplied from OUTSIDE the repository — the file named by $SCQC_FORBIDDEN_TERMS — so
-     that this guard never spells the cohort or the site it guards against. Without the file the
-     scan proves less, and says so rather than passing quietly.
+  2. TERMS supplied from OUTSIDE the repository — the file or files named by
+     $SCQC_FORBIDDEN_TERMS, several joined as PATH joins them (`os.pathsep`) — so that this guard
+     never spells the cohort or the site it guards against. Unset, the scan proves less, and says
+     so rather than passing quietly. SET, every file it names must exist and yield at least one
+     term, or the guard FAILS: it read one path only, so a ':'-joined pair of lists scanned 0
+     terms and printed PASS - a guard proving nothing in the words of one that proved everything.
 
 This file exempts only itself. Stdlib only.
 """
@@ -54,12 +57,35 @@ def files():
             yield p
 
 
+class TermSourceError(ValueError):
+    """A term list was named and gave nothing to search for."""
+
+
 def terms() -> list:
-    f = os.environ.get("SCQC_FORBIDDEN_TERMS")
-    if not f or not Path(f).exists():
+    """Every term of every list $SCQC_FORBIDDEN_TERMS names; [] only when it is not set.
+
+    A list that is named and missing, or that holds no term, raises: a typo in the path, or a
+    value carrying two lists where one was read, must not quietly shrink what the guard looks for.
+    """
+    spec = os.environ.get("SCQC_FORBIDDEN_TERMS")
+    if spec is None:
         return []
-    return [l.strip() for l in Path(f).read_text(encoding="utf-8").splitlines()
-            if l.strip() and not l.startswith("#")]
+    files = [Path(x) for x in spec.split(os.pathsep) if x.strip()]
+    if not files:
+        raise TermSourceError("SCQC_FORBIDDEN_TERMS is set and names no file")
+    out, bad = [], []
+    for f in files:
+        if not f.is_file():
+            bad.append(f"{f}: no such file")
+            continue
+        got = [l.strip() for l in f.read_text(encoding="utf-8").splitlines()
+               if l.strip() and not l.strip().startswith("#")]
+        if not got:
+            bad.append(f"{f}: 0 terms")
+        out.extend(got)
+    if bad:
+        raise TermSourceError("; ".join(bad))
+    return list(dict.fromkeys(out))
 
 
 # Author metadata is attribution, not leakage: an e-mail in the citation file names who to cite.
@@ -68,7 +94,13 @@ ATTRIBUTION = {"CITATION.cff", "pyproject.toml"}
 
 def main() -> int:
     pats = [(re.compile(p), why) for p, why in SHAPES]
-    site = terms()
+    try:
+        site = terms()
+    except TermSourceError as e:
+        print(f"FAIL: the term source cannot be read as given - {e}. Set SCQC_FORBIDDEN_TERMS to "
+              f"one or more files of terms, joined by {os.pathsep!r}; a scan of 0 terms from a "
+              f"named source proves nothing and is not reported as a pass.")
+        return 1
     pats += [(re.compile(re.escape(t), re.I), f"site term {t!r}") for t in site]
     hits = []
     for p in files():

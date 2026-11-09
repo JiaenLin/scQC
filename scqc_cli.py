@@ -200,13 +200,23 @@ def cmd_validate(a) -> int:
     sheet = a.samplesheet or (Path(a.project) / "samplesheet.csv" if a.project else None)
     if sheet is None:
         raise SystemExit("scqc validate: give --samplesheet FILE or --project DIR")
+    # THE PROJECT'S REGISTRY, REQUIRED. This fell back to the registry scQC shipped, whose one row
+    # was the first cohort's mouse reference - so a samplesheet naming that reference validated
+    # against a file the project never declared. scQC ships no registry now, and `run` refuses at
+    # ingest without one, so validating without one would pass rows the run then refuses.
+    if not a.registry:
+        raise SystemExit("scqc validate: give --registry FILE, the project's reference registry "
+                         "(TSV: species, build, path, ...). The samplesheet's `reference` is "
+                         "checked against it; scQC ships none and falls back to none.")
+    reg_path = Path(a.registry)
+    if not reg_path.is_file():
+        raise SystemExit(f"scqc validate: --registry {a.registry!r} is not a file")
     rows = read_csv(Path(sheet))
-    reg_path = Path(a.registry) if a.registry else ROOT / "references" / "_registry" / "registry.tsv"
     registry = ing.read_registry(reg_path)
     print(f"samplesheet : {sheet}  ({len(rows)} row(s))")
     print(f"registry    : {reg_path}  ({len(registry)} entr{'y' if len(registry) == 1 else 'ies'})")
     if not registry:
-        print("  NOTE: the registry is empty or missing, so every declared reference will fail.")
+        print("  NOTE: the registry holds no row, so every declared reference will fail.")
     bad = 0
     results = []
     for r in rows:
@@ -570,9 +580,8 @@ def cmd_run(a) -> int:
     tools = {k: v for k, v in {
         "celescope": a.celescope, "cellranger": a.cellranger, "cellbender": a.cellbender,
         "rscript": a.rscript, "device": ("cpu" if a.cpu else "cuda"),
-        # Resolved to an absolute path, and refused if it does not exist: a typo would otherwise
-        # fall through to the shipped example and refuse every row three steps later, or worse,
-        # accept one the project never declared.
+        # Resolved to an absolute path, and refused if it does not exist. Absent, it drops out of
+        # `tools` and ingest refuses every library: there is no shipped registry to fall back to.
         "registry": _registry_path(getattr(a, "registry", None)),
         "light_floor": a.light_floor, "seed": a.seed, "resolution": a.resolution,
         # DECLARED, with no default anywhere. The doublet adapter refuses a missing dbr rather
@@ -747,7 +756,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
 
     v = sub.add_parser("validate", help="check a samplesheet before anything is computed")
-    v.add_argument("--project"); v.add_argument("--samplesheet"); v.add_argument("--registry")
+    v.add_argument("--project"); v.add_argument("--samplesheet")
+    v.add_argument("--registry", help="the project's reference registry (TSV: species, build, path, "
+                                      "...); required - scQC ships none")
     v.add_argument("--json", action="store_true"); v.set_defaults(fn=cmd_validate)
 
     r = sub.add_parser("verify", help="is a matrix raw? (from summary statistics you supply)")
@@ -792,11 +803,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="apply (default) derives the thresholds, applies them and writes the "
                          "deliverable; evidence measures and applies nothing")
     r2.add_argument("--samplesheet")
-    # THE PROJECT'S REFERENCES, not the tool's. Absent, ingest falls back to the registry this
-    # repository ships - ONE example row, the first cohort's mouse reference - so a second
-    # species could not be declared without editing the tool. `validate` already took this flag.
+    # THE PROJECT'S REFERENCES, not the tool's, and nothing else. Absent, ingest fell back to a
+    # registry this repository shipped - ONE row, the first cohort's mouse reference - which is a
+    # first-cohort value surviving as a default. The repository ships none now and ingest refuses
+    # without this flag. Not `required=` at the parser: the refusal is ingest's, so it reaches the
+    # run's report and STATUS.json like any other refusal, and the API path refuses identically.
     r2.add_argument("--registry", help="the project's reference registry (TSV: species, build, "
-                                       "path, ...); default: the example shipped with scQC")
+                                       "path, ...). Ingest refuses without it; scQC ships none")
     r2.add_argument("--decisions", help="apply mode only; evidence mode refuses it")
     r2.add_argument("--executor", choices=["local", "pbs"], default="local")
     r2.add_argument("--allow-local", dest="allow_local", action="store_true",

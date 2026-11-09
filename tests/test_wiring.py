@@ -561,36 +561,52 @@ for _label, _decl in (("mixed", {"A": "scrna", "B": "snrna"}), ("missing", {"A":
 print(f"M. the declared assay reaches 05_quality, for both assays; mixed or missing refuses: "
       f"{_axis_bad} bad")
 
-# ---- N. the project's registry reaches ingest.
+# ---- N. the project's registry reaches ingest, and nothing else stands in for it.
 #
-# Ingest read the registry beside the project's PARENT, else the one this repository ships - one
-# example row, the first cohort's mouse reference. A second species could not be declared without
-# editing the tool. `scqc run --registry` hands ingest the project's own; the same human row must be
-# accepted with it and refused, naming the registry, without it.
+# Ingest read the registry beside the project's PARENT, else the one this repository shipped - one
+# row, the first cohort's mouse reference. A second species could not be declared without editing
+# the tool, and a project that brought no registry was resolved against that cohort's reference
+# without a word. `scqc run --registry` hands ingest the project's own. A row is accepted with it;
+# WITHOUT it every row is refused naming `--registry` - the row that was the shipped example, and
+# a row a registry beside the project's parent would have accepted, included.
 import tempfile as _tf  # noqa: E402
 from engine.task import Task as _Task  # noqa: E402
 _reg_bad = 0
 with _tf.TemporaryDirectory() as _td:
     _reg = Path(_td) / "registry.tsv"
     _reg.write_text("species\tbuild\tpath\nhomo_sapiens\tGRCh38\t-\n")
+    # The parent-directory fallback, planted beside ONE project only: a registry naming the human
+    # reference. The other project's parent holds none, so the tool's own fallback is what a
+    # registry-less run would have reached there.
+    (Path(_td) / "planted" / "references" / "_registry").mkdir(parents=True)
+    (Path(_td) / "planted" / "references" / "_registry" / "registry.tsv").write_text(
+        "species\tbuild\tpath\nhomo_sapiens\tGRCh38\t-\n")
+    _plain, _planted = Path(_td) / "plain" / "proj", Path(_td) / "planted" / "proj"
     _hrow = _row("A", **_CELLS)
-    for _given, _should in ((str(_reg), "accepted"), (None, "refused")):
+    for _label, _row_in, _proj, _given, _should in (
+            ("a human row, with the project's registry", _hrow, _plain, str(_reg), "accepted"),
+            ("a human row, no registry", _hrow, _plain, None, "refused"),
+            ("the row the tool used to ship, no registry", _row("A"), _plain, None, "refused"),
+            ("a row the parent-directory registry names, no registry", _hrow, _planted, None,
+             "refused")):
         class _PR(_P):
-            project = Path(_td) / "proj"
+            project = _proj
             tools = {"registry": _given} if _given else {}
         _t = _Task(key="00_ingest/A", step="00_ingest", sample="A", fn=_st._ingest,
-                   params={"row": _hrow, "python_exe": "python", "expected_genes": None})
+                   params={"row": _row_in, "python_exe": "python", "expected_genes": None})
         try:
             _st._ingest(_t, _PR, Path(_td) / "log.txt")
             _said = ""
         except Exception as e:                                        # noqa: BLE001
             _said = str(e)
-        _named = "not in the registry" in _said
-        if (_should == "accepted") == _named:
-            fails.append(f"N: with registry={_given!r} the human reference was "
-                         f"{'refused' if _named else 'accepted'}; expected {_should}. Said: {_said[:160]}")
+        # Accepted: the registry passed and the row went on (here to a missing matrix). Refused
+        # for the registry: the refusal names the flag that supplies one.
+        _got = ("refused" if "--registry" in _said else
+                "accepted" if "registry" not in _said else "refused for another reason")
+        if _got != _should:
+            fails.append(f"N: {_label}: {_got}; expected {_should}. Said: {_said[:160]}")
             _reg_bad += 1
-print(f"N. a project's --registry reaches ingest (accepted with it, refused without): {_reg_bad} bad")
+print(f"N. a project's --registry reaches ingest; without it every row is refused: {_reg_bad} bad")
 
 print("=" * 74)
 if fails:
