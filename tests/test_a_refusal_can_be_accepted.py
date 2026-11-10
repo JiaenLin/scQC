@@ -92,8 +92,8 @@ CHECK = "design differential: genotype"
 
 def cohort(td: Path) -> Path:
     rows = []
-    for i, (s, g, dbr) in enumerate((("WT_1", "WT", 0.02), ("MUT_1", "Mut", 0.07),
-                                     ("WT_2", "WT", 0.02), ("MUT_2", "Mut", 0.07))):
+    for i, (s, g, dbr) in enumerate((("CT_1", "ctl", 0.02), ("TR_1", "trt", 0.07),
+                                     ("CT_2", "ctl", 0.02), ("TR_2", "trt", 0.07))):
         raw, filt, _ = C.cellranger_library(td / "data", s, 30 + i, C.HUMAN)
         rows.append({"sample": s, "platform": "10x", "species": "homo_sapiens",
                      "reference": "homo_sapiens/ref", "assay": "scrna", "matrix": raw,

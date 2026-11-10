@@ -54,10 +54,10 @@ if HAVE:
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         rows = []
-        for i, (s, g, lane, dbr) in enumerate((("WT_1", "WT", "L1", 0.02),
-                                                ("MUT_1", "Mut", "L1", 0.02),
-                                                ("WT_2", "WT", "L2", 0.07),
-                                                ("MUT_2", "Mut", "L2", 0.07))):
+        for i, (s, g, lane, dbr) in enumerate((("CT_1", "ctl", "L1", 0.02),
+                                                ("TR_1", "trt", "L1", 0.02),
+                                                ("CT_2", "ctl", "L2", 0.07),
+                                                ("TR_2", "trt", "L2", 0.07))):
             raw, filt, _ = C.cellranger_library(td / "data", s, 50 + i, C.HUMAN)
             rows.append({"sample": s, "platform": "10x", "species": "homo_sapiens",
                          "reference": "homo_sapiens/ref", "assay": "scrna", "matrix": raw,

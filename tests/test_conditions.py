@@ -78,7 +78,7 @@ def cells(td, names, spec=C.HUMAN if HAVE else None, depths=None, **kw):
         raw, filt, _ = C.cellranger_library(td / "data", s, 10 + i, spec, **extra)
         rows.append({"sample": s, "platform": "10x", "species": spec["species"],
                      "reference": f"{spec['species']}/ref", "assay": "scrna", "matrix": raw,
-                     "aligner_cells": filt, "genotype": "WT" if i % 2 == 0 else "Mut",
+                     "aligner_cells": filt, "genotype": "ctl" if i % 2 == 0 else "trt",
                      "mt_prefix": spec["mt_prefix"], "ribo_pattern": spec["ribo_pattern"],
                      "dbr": 0.05, "dbr_sd": 0.05})
     return rows
@@ -117,7 +117,7 @@ MOUSE_REG = [("mus_musculus", "ref")]
 if HAVE:
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        rows = cells(td, ["WT_1", "MUT_1"])
+        rows = cells(td, ["CT_1", "TR_1"])
         completes("cells_human", td, rows, "evidence", HUMAN_REG)
 
         def human_apply(R):
@@ -135,7 +135,7 @@ if HAVE:
 
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        completes("cells_mouse", td, cells(td, ["WT_1", "MUT_1"], C.MOUSE), "apply", MOUSE_REG)
+        completes("cells_mouse", td, cells(td, ["CT_1", "TR_1"], C.MOUSE), "apply", MOUSE_REG)
 
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
@@ -147,13 +147,13 @@ if HAVE:
         def no_antibodies(R):
             # The QC object holds gene expression only: an antibody count is not a transcript,
             # and counted as one it inflates every cell's depth and dilutes its mito share.
-            o = ad.read_h5ad(R / "objects" / "WT_1_ambient.h5", backed="r")
+            o = ad.read_h5ad(R / "objects" / "CT_1_ambient.h5", backed="r")
             ft = o.var["feature_types"].astype(str).tolist() if "feature_types" in o.var else []
             if any(t != "Gene Expression" for t in ft) or any("TotalSeq" in str(v)
                                                                for v in o.var_names):
                 fails.append("cells_h5_adt: antibody-capture features reached the QC object")
             o.file.close()
-        completes("cells_h5_adt", td, cells(td, ["WT_1", "MUT_1"], fmt="h5", n_adt=8,
+        completes("cells_h5_adt", td, cells(td, ["CT_1", "TR_1"], fmt="h5", n_adt=8,
                                             duplicate=True),
                   "apply", HUMAN_REG, no_antibodies)
 
@@ -165,13 +165,13 @@ if HAVE:
 
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        rows = cells(td, ["WT_1", "MUT_1"])
+        rows = cells(td, ["CT_1", "TR_1"])
         rows[1]["assay"] = "snrna"
         refused("mixed_assays", td, rows, HUMAN_REG, "mixes assays")
 
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        rows = cells(td, ["WT_1", "MUT_1"])
+        rows = cells(td, ["CT_1", "TR_1"])
         for r in rows:
             r["mt_prefix"] = "MITO-"
         refused("no_mito_genes", td, rows, HUMAN_REG, "MITO-")
@@ -179,14 +179,14 @@ if HAVE:
     # ---- a CELL-CALLED input on single cells (harness autodev W020, B1-046)
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        rows = cells(td, ["WT_1", "MUT_1"])
+        rows = cells(td, ["CT_1", "TR_1"])
         for r in rows:
             r["matrix"], r["aligner_cells"] = r["aligner_cells"], ""
 
         def called_only(R):
             st = json.loads((R / "STATUS.json").read_text())
             said = [c for c in st.get("cannot_show") or [] if "cell-called input" in c]
-            if sorted(c.split(":", 1)[0] for c in said) != ["MUT_1", "WT_1"]:
+            if sorted(c.split(":", 1)[0] for c in said) != ["CT_1", "TR_1"]:
                 fails.append(f"cells_called_only: STATUS.json cannot_show does not name each "
                              f"cell-called library: {said}")
             if list((R / "tables").glob("*.barcode_rank.csv")):
@@ -196,8 +196,8 @@ if HAVE:
             checks = ((pay.get("provenance") or {}).get("input_check") or [])
             kinds = {c.get("name"): (c.get("input_kind"), c.get("p2_raw_droplets"),
                                      c.get("p2_required")) for c in checks}
-            if kinds != {"WT_1": ("called_cells", False, False),
-                         "MUT_1": ("called_cells", False, False)}:
+            if kinds != {"CT_1": ("called_cells", False, False),
+                         "TR_1": ("called_cells", False, False)}:
                 fails.append(f"cells_called_only: the input record does not say cell-called: {kinds}")
             with open(R / "tables" / "count_floors.csv", encoding="utf-8") as fh:
                 applied = {r["applied_to"] for r in csv.DictReader(fh)}
@@ -216,7 +216,7 @@ if HAVE:
 
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        rows = cells(td, ["WT_1", "MUT_1"])
+        rows = cells(td, ["CT_1", "TR_1"])
         for r in rows:
             r["aligner_cells"] = ""
         refused("cells_raw_no_call", td, rows, HUMAN_REG, "no `aligner_cells`")
