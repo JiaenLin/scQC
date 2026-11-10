@@ -73,3 +73,43 @@ if fails:
         print("  -", f)
     raise SystemExit(1)
 print("a cluster too small to rank is not evaluated, and the profile is still written")
+
+# ---- 3. a LIBRARY too small to cluster is profiled as one group, and the op does not fail
+# (harness autodev W020: the development suite's `tiny_sample` hazard, 7 cells, failed step 6)
+if HAVE:
+    import tempfile
+
+    def tiny(n=7):
+        rng = np.random.default_rng(5)
+        genes = ["MT-CO1", "MT-ND1", "RPL3"] + [f"G{i}" for i in range(40)]
+        X = rng.poisson(4.0, size=(n, len(genes))).astype("float32")
+        a = ad.AnnData(X=X, obs=pd.DataFrame(index=[f"C{i}" for i in range(n)]),
+                       var=pd.DataFrame(index=genes))
+        a.obs["cell"] = True
+        return a
+
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            outs, met = so._op_cluster(
+                tiny(), {"sample": "S", "resolution": 2.0, "seed": 0, "doublet_key": None,
+                         "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]",
+                         "uninformative_classes": ["mt"],
+                         "population": {"cell_call_key": "cell"},
+                         "embedding": {"population": "cell_called"},
+                         "extra_resolutions": [1.0, 3.0]},
+                str(Path(td) / "S"))
+            prof = Path(td) / "S.cluster_profile.csv"
+            if not prof.is_file() or met.get("n_clusters") != 1 or met.get("n_profile_rows") != 1:
+                fails.append(f"3: a 7-cell library was not profiled as one group: {met}")
+            if (met.get("embedding") or {}).get("skipped") is None or \
+                    (Path(td) / "S.embedding.csv").exists():
+                fails.append("3: a 7-cell library was embedded, or its skipped embedding not recorded")
+            if not any("too few" in n or "under the" in n for n in met.get("profile_notes") or []):
+                fails.append(f"3: the profile does not say why the library was not clustered: "
+                             f"{met.get('profile_notes')}")
+        except Exception as e:                                            # noqa: BLE001
+            fails.append(f"3: _op_cluster failed on a 7-cell library: {type(e).__name__}: {e}")
+    print("3 a 7-cell library: profiled as one group, not clustered, not embedded, and said so")
+    if fails:
+        print("FAILED - " + "; ".join(fails))
+        raise SystemExit(1)

@@ -2653,6 +2653,14 @@ def _population_mask(adata, pop, *, honour=("cell_call_key", "umi_floor", "gene_
     return keep, applied
 
 
+#: Below this many cells a library is PROFILED AS ONE GROUP and not clustered or embedded
+#: (harness autodev W020, found on the development suite's `tiny_sample` hazard): a projection of
+#: seven points is not a manifold, and failing the task - and the run with it - over one small
+#: library cost every other library its cluster check. The group carries criteria A, B and D
+#: where they are computable and C as UNKNOWN, with a note saying why.
+MIN_CELLS_TO_CLUSTER = 50
+
+
 def _op_cluster(adata, params, out_prefix) -> tuple:
     """Cluster at one resolution and profile the result."""
     if "resolution" not in params or _unknown(params["resolution"]):
@@ -2765,35 +2773,44 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
         emb_keep, emb_applied = ((_population_mask(adata, pop, honour=honour))
                                  if not _unknown(pop) else (None, []))
         emb_adata = adata[emb_keep].copy() if emb_keep is not None else adata.copy()
-        if int(emb_adata.n_obs) < 50:
-            raise TaskFailure(
-                f"the embedding population leaves {emb_adata.n_obs} cell(s) of {n_before} - too "
-                f"few to embed. A projection of that many points is not a manifold.")
-        emb_barcodes = [str(b) for b in emb_adata.obs_names]
-        emb_coords, emb_record = embed(
-            emb_adata, seed=int(params["seed"]),
-            n_hvg=int(embedding.get("n_hvg", params.get("n_hvg", 2000))),
-            n_pcs=int(embedding.get("n_pcs", params.get("n_pcs", 50))),
-            n_neighbors=int(embedding.get("n_neighbors", params.get("n_neighbors", 15))),
-            min_dist=float(embedding.get("min_dist", 0.5)),
-            allow_transformed=bool(params.get("allow_transformed", False)))
-        emb_record["population"] = emb_pop
-        emb_record["population_applied"] = emb_applied or ["nothing - every droplet embedded"]
-        emb_record["n_before"] = n_before
+        if int(emb_adata.n_obs) < MIN_CELLS_TO_CLUSTER:
+            # NOT EMBEDDED, AND SAID SO: the record carries the reason, and no coordinates file is
+            # written for this library (MIN_CELLS_TO_CLUSTER).
+            emb_record = {"population": emb_pop, "n_before": n_before,
+                          "n_embedded": 0,
+                          "skipped": (f"the embedding population leaves {emb_adata.n_obs} "
+                                      f"cell(s) of {n_before}, under the {MIN_CELLS_TO_CLUSTER} "
+                                      f"this op embeds: a projection of that many points is not "
+                                      f"a manifold")}
+        else:
+            emb_barcodes = [str(b) for b in emb_adata.obs_names]
+            emb_coords, emb_record = embed(
+                emb_adata, seed=int(params["seed"]),
+                n_hvg=int(embedding.get("n_hvg", params.get("n_hvg", 2000))),
+                n_pcs=int(embedding.get("n_pcs", params.get("n_pcs", 50))),
+                n_neighbors=int(embedding.get("n_neighbors", params.get("n_neighbors", 15))),
+                min_dist=float(embedding.get("min_dist", 0.5)),
+                allow_transformed=bool(params.get("allow_transformed", False)))
+            emb_record["population"] = emb_pop
+            emb_record["population_applied"] = emb_applied or ["nothing - every droplet embedded"]
+            emb_record["n_before"] = n_before
         # Freed before the clustering copy is taken. Two copies of a droplet matrix alive at once
         # is the difference between this op fitting in its memory request and being killed by the
         # scheduler, and the kill arrives as an exit code with no message about why.
         del emb_adata
 
     pop_note = "UNFILTERED - every droplet clustered, including empty ones"
+    too_small = ""
     if not _unknown(pop):
         keep, applied = _population_mask(adata, pop)
         n_keep = int(keep.sum())
-        if n_keep < 50:
-            raise TaskFailure(
-                f"the declared population leaves {n_keep} cell(s) of {n_before} - too few to "
-                f"cluster. A threshold this severe is a mistake in the declaration, and "
-                f"clustering the remainder would produce flags about nothing.")
+        if n_keep < MIN_CELLS_TO_CLUSTER:
+            # PROFILED AS ONE GROUP, NOT CLUSTERED (MIN_CELLS_TO_CLUSTER). The task used to fail
+            # here, and the run with it. The library's cells are still measured - depth,
+            # mitochondrial share, doublet share - as one group, criterion C UNKNOWN.
+            too_small = (f"the declared population leaves {n_keep} cell(s) of {n_before}, under "
+                         f"the {MIN_CELLS_TO_CLUSTER} this op clusters: profiled as ONE group, "
+                         f"not clustered, criterion C UNKNOWN, no extra resolution")
         adata = adata[keep].copy()
         pop_note = (f"quality-filtered before clustering: {n_keep} of {n_before} "
                     f"({100.0 * n_keep / n_before:.1f}%) by {', '.join(applied)}; "
@@ -2829,23 +2846,35 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
             "reference. Without it C would read 0% for every cluster.")
     # The remaining .get() defaults below mirror the documented defaults of cluster() and
     # cluster_profile(); each is a FIXED procedure parameter, not a stand-in for a declaration.
-    cluster(adata,
-            resolution=float(params["resolution"]),
-            seed=int(params["seed"]),
-            n_hvg=int(params.get("n_hvg", 2000)),
-            n_pcs=int(params.get("n_pcs", 50)),
-            n_neighbors=int(params.get("n_neighbors", 15)),
-            key_added=params.get("key_added"),
-            allow_transformed=bool(params.get("allow_transformed", False)))
+    if too_small:
+        import pandas as _pd
+        key = str(params.get("key_added") or "leiden")
+        adata.obs[key] = _pd.Categorical(["all"] * int(adata.n_obs))
+        adata.uns["scqc_cluster"] = {
+            "key": key, "algorithm": None, "resolution": float(params["resolution"]),
+            "seed": int(params["seed"]), "n_clusters": 1, "n_hvg_selected": None,
+            "pca_variance_ratio_sum": None, "leiden_flavor_default": None, "flagged_hvg": [],
+            "too_small": too_small}
+    else:
+        cluster(adata,
+                resolution=float(params["resolution"]),
+                seed=int(params["seed"]),
+                n_hvg=int(params.get("n_hvg", 2000)),
+                n_pcs=int(params.get("n_pcs", 50)),
+                n_neighbors=int(params.get("n_neighbors", 15)),
+                key_added=params.get("key_added"),
+                allow_transformed=bool(params.get("allow_transformed", False)))
     key = adata.uns["scqc_cluster"]["key"]
     rows = cluster_profile(adata, key, uninformative,
                            sample=params.get("sample"),
                            sample_key=params.get("sample_key"),
                            doublet_key=params.get("doublet_key"),
                            doublet_positive=params.get("doublet_positive"),
-                           markers=bool(params.get("markers", True)),
+                           markers=(False if too_small else bool(params.get("markers", True))),
                            marker_topn=int(params.get("marker_topn", MARKER_TOPN)),
                            marker_method=str(params.get("marker_method", "wilcoxon")))
+    if too_small:
+        adata.uns["scqc_cluster_profile"]["notes"].append(too_small)
     profile = write_profile_csv(rows, str(out_prefix) + ".cluster_profile.csv")
 
     # WHICH BARCODE IS IN WHICH CLUSTER, written out rather than discarded.
@@ -2903,7 +2932,9 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
     # which is what step 6's flag task selects on. Nothing downstream can pick one up by accident.
     extra_failed, extra_done = {}, []
     extras = params.get("extra_resolutions")
-    if not _unknown(extras):
+    if too_small and not _unknown(extras):
+        extra_failed = {f"{float(r):g}": "not clustered: " + too_small for r in extras}
+    elif not _unknown(extras):
         import scanpy as sc
 
         primary_uns = dict(adata.uns["scqc_cluster"])
@@ -3232,6 +3263,12 @@ def _op_apply_measure(adata, params, out_prefix) -> tuple:
 #: not one: coercing "10" to 10.0 turns an identifier into an arithmetic type, and anything that
 #: then sorts or averages it produces a result with no meaning and no error.
 _ANNOTATION_LABELS = ("cluster", "sample")
+#: The three-valued verdict columns. Named so that a column holding NO known value - a library
+#: profiled as one unclustered group carries FLAG and WATCH as unknown on every cell - is still
+#: typed as the nullable boolean it is, and concatenates with the other libraries' (harness
+#: autodev W020: an all-unknown column fell to categorical and the merged object could not be
+#: written).
+_ANNOTATION_BOOLEANS = ("cluster_FLAG", "cluster_WATCH")
 
 
 def _annotation_value(column: str, raw):
@@ -3305,7 +3342,7 @@ def _unique_var_index(a, sample: str):
         f"symbols that are not in the reference.")
 
 
-def _annotation_column(values: list):
+def _annotation_column(values: list, column: str = ""):
     """One annotation column, typed from its own values, with unknown still unknown.
 
     Every column used to be assigned as `dtype=object`, which is not writable: anndata
@@ -3330,6 +3367,10 @@ def _annotation_column(values: list):
     import pandas as pd
 
     known = [v for v in values if v is not None]
+    if not known and column in _ANNOTATION_BOOLEANS:
+        return pd.array([None] * len(values), dtype="boolean")
+    if not known and column not in _ANNOTATION_LABELS and column:
+        return pd.array([np.nan] * len(values), dtype="float64")
     if known and all(isinstance(v, bool) for v in known):
         return pd.array([None if v is None else bool(v) for v in values], dtype="boolean")
     if known and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in known):
@@ -3492,7 +3533,7 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
             for c in cols:
                 sub.obs[c] = _annotation_column(
                     [_annotation_value(c, table.get(str(b), {}).get(c))
-                     for b in sub.obs_names])
+                     for b in sub.obs_names], c)
 
         # ONE NAME PER CELL ACROSS THE COHORT. Libraries from one aligner share one barcode
         # whitelist, so the same barcode recurs between libraries - about thirty times per pair of

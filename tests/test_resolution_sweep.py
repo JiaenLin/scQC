@@ -24,21 +24,48 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-print("\n1 - the applied resolution defaults to 2.0")
+print("\n1 - the applied resolution is the ASSAY'S unless one is declared")
+# `--resolution` has no default at the parser (harness autodev W020, B1-074): absent, each library
+# takes its assay's entry of cluster_flags.RESOLUTION - 2.0 on both assays, measured on nuclei and
+# lent to cells by a table that says so - and the graph is what puts it on the step-6 task.
 import scqc_cli  # noqa: E402
+from engine import graph as _graph  # noqa: E402
+from engine.pipeline import step_module as _sm  # noqa: E402
 
-parser = scqc_cli.build_parser() if hasattr(scqc_cli, "build_parser") else None
-if parser is None:                       # the CLI builds its parser inside main(); read the source
-    src = (HERE.parent / "scqc_cli.py").read_text(encoding="utf-8")
-    m = re.search(r'--resolution["\s,]+type=float,\s*default=([0-9.]+)', src)
-    check("--resolution default is 2.0", bool(m) and float(m.group(1)) == 2.0,
-          f"found {m.group(1) if m else 'nothing'}")
-    m2 = re.search(r'--extra-resolutions".*?default="([^"]*)"', src, re.S)
-    check("--extra-resolutions defaults to 1.0,3.0", bool(m2) and m2.group(1) == "1.0,3.0",
-          f"found {m2.group(1) if m2 else 'nothing'}")
-else:
-    a = parser.parse_args(["run", "--project", "."])
-    check("--resolution default is 2.0", a.resolution == 2.0, f"got {a.resolution}")
+parser = scqc_cli.build_parser()
+a = parser.parse_args(["run", "--project", "."])
+check("--resolution has no default at the parser", a.resolution is None, f"got {a.resolution}")
+check("--extra-resolutions defaults to 1.0,3.0", a.extra_resolutions == "1.0,3.0",
+      f"got {a.extra_resolutions!r}")
+_cf = _sm("cluster_flags")
+check("the per-assay table carries 2.0 for nuclei, as measured", _cf.RESOLUTION.get("snrna") == 2.0,
+      f"{_cf.RESOLUTION}")
+
+
+class _P:
+    results = Path("/tmp/r"); work = Path("/tmp/w"); project = Path("/tmp/p")
+    decisions: dict = {}
+    mode = "evidence"
+    samples: list = []
+
+
+def _res(assay, tools):
+    _P.samples = [{"sample": "S1", "platform": "10x", "species": "x", "reference": "x/y",
+                   "assay": assay, "matrix": "/d/S1/raw", "aligner_cells": "/d/S1/f",
+                   "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]"}]
+    g = {t.key: t for t in _graph.main_stage(_P, "python", tools, {"S1": {"mode": "accept"}})}
+    return g["06_cluster/S1"].params.get("resolution"), g["06_cluster/S1"].params.get("extra_resolutions")
+
+
+for assay in ("snrna", "scrna"):
+    r, _ = _res(assay, {})
+    check(f"with no --resolution a {assay} library takes its assay's entry",
+          r == _cf.RESOLUTION[assay], f"got {r!r}")
+r, ex = _res("snrna", {"resolution": 1.5, "extra_resolutions": [1.0, 1.5, 3.0]})
+check("a declared --resolution is applied, and is never also an extra",
+      r == 1.5 and ex == [1.0, 3.0], f"got {r!r}, extras {ex!r}")
+_, ex = _res("snrna", {"extra_resolutions": [1.0, 2.0, 3.0]})
+check("...nor is the assay's entry an extra when none is declared", ex == [1.0, 3.0], f"{ex!r}")
 
 
 print("\n2 - the extras list is parsed, deduplicated, and never repeats the applied resolution")
@@ -96,8 +123,9 @@ print("\n6 - the parameter actually reaches the op")
 graph_src = (HERE.parent / "engine" / "graph.py").read_text(encoding="utf-8")
 steps_src = (HERE.parent / "engine" / "steps.py").read_text(encoding="utf-8")
 ops_src = (HERE.parent / "adapters" / "scanpy_ops.py").read_text(encoding="utf-8")
-check("graph.py puts extra_resolutions on the step-6 task",
-      '"extra_resolutions": tools.get("extra_resolutions")' in graph_src)
+# BEHAVIOUR, NOT SOURCE TEXT (harness autodev W020): the graph built in section 1 above put the
+# declared extras on the step-6 task, minus the applied resolution.
+check("graph.py puts extra_resolutions on the step-6 task", ex == [1.0, 3.0], f"{ex!r}")
 check("steps.py forwards it into the op's parameters",
       '"extra_resolutions": p.get("extra_resolutions")' in steps_src)
 check("the op reads it", 'params.get("extra_resolutions")' in ops_src)
