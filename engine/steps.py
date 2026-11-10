@@ -540,7 +540,8 @@ def _ambient_audit(task, pipeline, log):
                 "versions": {}}
 
     findings = _declared_only(aa.audit(rows, per_gene, task.params["design"],
-                                       assay=_cohort_assay(task.params.get("assay"))),
+                                       assay=_cohort_assay(task.params.get("assay"),
+                                                           "01_ambient (audit)")),
                               task.params.get("design_declared"))
 
     # --- IS ANY FIT UNLIKE ITS SIBLINGS? modules/01_ambient/lr_policy.py has answered this since
@@ -774,7 +775,8 @@ def _cellcall(task, pipeline, log):
             f"compares libraries whose cells were selected by different rules.")
 
     findings = _declared_only(cg.gate(calls, task.params["design"],
-                                      assay=_cohort_assay(task.params.get("assay"))),
+                                      assay=_cohort_assay(task.params.get("assay"),
+                                                          "02_cells (cell-call gate)")),
                               task.params.get("design_declared"))
 
     # THE TWO OBSERVATIONS ABOUT ONE DENOISING, READ TOGETHER.
@@ -1265,7 +1267,7 @@ def _doublet_health(task, pipeline, log):
                                         if isinstance(m.get("dbr"), (int, float))},
                          n_scored={s: m.get("n_scored") for s, m in m4.items()
                                    if isinstance(m.get("n_scored"), int)},
-                         assay=_cohort_assay(task.params.get("assay")))
+                         assay=_cohort_assay(task.params.get("assay"), "04_doublets (health)"))
     findings = _declared_only(findings, task.params.get("design_declared"))
     pipeline.gate("04_doublets", findings, dh.verdict(findings))
 
@@ -1579,8 +1581,9 @@ def _quality_measure(task, pipeline, log):
             "versions": res.get("versions", {})}
 
 
-def _cohort_assay(declared) -> str:
-    """The one assay a cohort declared, or a refusal - never a default.
+def _cohort_assay(declared, where: str = "05_quality (mitochondrial ceiling)") -> str:
+    """The one assay a cohort declared, or a refusal - never a default. `where` names the step
+    whose lines the assay selects, so a refusal names the step that asked.
 
     THIS WAS `task.params.get("assay", "snrna")`, read from a task that was never given `assay`:
     every cohort was bounded as single-nucleus whatever its samplesheet said, and no test could
@@ -1592,14 +1595,14 @@ def _cohort_assay(declared) -> str:
     kinds = sorted({str(v or "").strip().lower() for v in declared.values()})
     if not declared or "" in kinds:
         raise Refusal(
-            f"05_quality (mitochondrial ceiling): no assay reached this step for "
+            f"{where}: no assay reached this step for "
             f"{', '.join(sorted(s for s, v in declared.items() if not v)) or 'any library'}. "
             f"The samplesheet's `assay` column is required at ingest, so this is a wiring defect "
             f"in the pipeline, not a missing declaration - refusing rather than assuming one.")
     if len(kinds) != 1:
         raise Refusal(
-            f"05_quality (mitochondrial ceiling): the cohort mixes assays {kinds}. A cell and a "
-            f"nucleus are bounded differently and this step derives one bound for the cohort; "
+            f"{where}: the cohort mixes assays {kinds}. A cell and a nucleus are judged by "
+            f"separate rule sets and this step applies one set to the cohort; "
             f"run each assay as its own project.")
     return kinds[0]
 
@@ -2145,6 +2148,24 @@ def _cluster_flags(task, pipeline, log):
             "detail": ["clusters per library: " + ", ".join(
                 f"{s}={sum(1 for r in rows if r.get('sample') == s)}"
                 for s in task.params["samples"])]}])
+
+    # A LIBRARY TOO SMALL TO CLUSTER WAS PROFILED AS ONE GROUP (adapters/scanpy_ops,
+    # MIN_CELLS_TO_CLUSTER): measured, not clustered, criterion C unknown. A reader of the flags
+    # must see which libraries had no clustering behind them; nothing is refused for it.
+    one_group = {s: (getattr(pipeline.results_by_key.get(f"06_cluster/{s}"), "metrics", None)
+                     or {}).get("profiled_as_one_group") for s in task.params["samples"]}
+    one_group = {s: why for s, why in one_group.items() if why}
+    if one_group:
+        print(f"    profiled as ONE group, not clustered: {', '.join(sorted(one_group))}")
+        pipeline.record_findings("06_cluster_check", [{
+            "step": "06_cluster_check", "check": "libraries too small to cluster",
+            "severity": "REVIEW",
+            "message": (f"{len(one_group)} library(ies) ({', '.join(sorted(one_group))}) hold too "
+                        f"few cells to cluster or embed, and were each profiled as ONE group: "
+                        f"depth, mitochondrial and doublet shares measured, criterion C unknown, "
+                        f"no extra resolution. Their flags rest on no clustering, and their row "
+                        f"joins the cohort's in proposing the thresholds."),
+            "detail": [f"{s}: {why}" for s, why in sorted(one_group.items())]}])
 
     fired, unknown = flagged.counts(), flagged.unknown_counts()
     for k in ("A", "B", "C", "FLAG", "WATCH"):

@@ -2653,11 +2653,17 @@ def _population_mask(adata, pop, *, honour=("cell_call_key", "umi_floor", "gene_
     return keep, applied
 
 
-#: Below this many cells a library is PROFILED AS ONE GROUP and not clustered or embedded
-#: (harness autodev W020, found on the development suite's `tiny_sample` hazard): a projection of
-#: seven points is not a manifold, and failing the task - and the run with it - over one small
-#: library cost every other library its cluster check. The group carries criteria A, B and D
-#: where they are computable and C as UNKNOWN, with a note saying why.
+#: Below this many cells nothing is clustered or embedded - the number this op already refused
+#: under; a projection of that many points is not a manifold. What the shortfall MEANS depends on
+#: where it comes from (harness autodev W020, found on the development suite's `tiny_sample`
+#: hazard, a library of 7 cells that failed step 6 and the run with it):
+#:   - the LIBRARY'S OWN called cells are under it: the library is small, not mis-declared. It is
+#:     PROFILED AS ONE GROUP - depth, mitochondrial and doublet shares measured, criterion C
+#:     UNKNOWN - not clustered, not embedded, and the op's metrics say so (`profiled_as_one_group`),
+#:     which step 6 reports as a REVIEW finding naming the library;
+#:   - the library called at least this many cells and the DECLARED POPULATION (the floors and
+#:     the ceiling) leaves fewer, or none: a threshold that severe is a mistake in the declaration,
+#:     and the op refuses, as it always has.
 MIN_CELLS_TO_CLUSTER = 50
 
 
@@ -2742,6 +2748,31 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
     pop = params.get("population")
     n_before = int(adata.n_obs)
 
+    # --- IS THE LIBRARY SMALL, OR IS THE DECLARATION SEVERE? Decided before anything is computed
+    # (MIN_CELLS_TO_CLUSTER), from the same declaration the clustering and the embedding read.
+    # Masks only - no copy of the matrix is taken here.
+    too_small = ""
+    if not _unknown(pop):
+        n_called = int(_population_mask(adata, pop, honour=("cell_call_key",))[0].sum())
+        n_pop = int(_population_mask(adata, pop)[0].sum())
+        if n_pop == 0 or (n_pop < MIN_CELLS_TO_CLUSTER <= n_called):
+            raise TaskFailure(
+                f"the declared population leaves {n_pop} cell(s) of the {n_called} called "
+                f"({n_before} in the object) - too few to cluster. A threshold this severe is a "
+                f"mistake in the declaration, and clustering the remainder would produce flags "
+                f"about nothing.")
+        if n_pop < MIN_CELLS_TO_CLUSTER:
+            too_small = (f"the library called {n_called} cell(s) and the declared population "
+                         f"holds {n_pop}, under the {MIN_CELLS_TO_CLUSTER} this op clusters: "
+                         f"profiled as ONE group, not clustered and not embedded, criterion C "
+                         f"UNKNOWN, no extra resolution")
+    elif n_before == 0:
+        raise TaskFailure("the object holds no barcode - too few to cluster or to profile.")
+    elif n_before < MIN_CELLS_TO_CLUSTER:
+        too_small = (f"the object holds {n_before} barcode(s), under the {MIN_CELLS_TO_CLUSTER} "
+                     f"this op clusters: profiled as ONE group, not clustered and not embedded, "
+                     f"criterion C UNKNOWN, no extra resolution")
+
     # --- THE EMBEDDING, COMPUTED FIRST AND OVER A WIDER POPULATION THAN THE CLUSTERING.
     #
     # First, because `cluster()` normalises adata.X IN PLACE and the embedding needs counts.
@@ -2770,19 +2801,22 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
                 f"floors or the ceiling removed and cannot show where they sat).")
         honour = (("cell_call_key",) if emb_pop == "cell_called"
                   else ("cell_call_key", "umi_floor", "gene_floor", "mito_ceiling"))
-        emb_keep, emb_applied = ((_population_mask(adata, pop, honour=honour))
-                                 if not _unknown(pop) else (None, []))
-        emb_adata = adata[emb_keep].copy() if emb_keep is not None else adata.copy()
-        if int(emb_adata.n_obs) < MIN_CELLS_TO_CLUSTER:
+        if too_small:
             # NOT EMBEDDED, AND SAID SO: the record carries the reason, and no coordinates file is
             # written for this library (MIN_CELLS_TO_CLUSTER).
-            emb_record = {"population": emb_pop, "n_before": n_before,
-                          "n_embedded": 0,
-                          "skipped": (f"the embedding population leaves {emb_adata.n_obs} "
-                                      f"cell(s) of {n_before}, under the {MIN_CELLS_TO_CLUSTER} "
-                                      f"this op embeds: a projection of that many points is not "
-                                      f"a manifold")}
+            emb_record = {"population": emb_pop, "n_before": n_before, "n_embedded": 0,
+                          "skipped": f"{too_small} - a projection of that few points is not a "
+                                     f"manifold"}
         else:
+            emb_keep, emb_applied = ((_population_mask(adata, pop, honour=honour))
+                                     if not _unknown(pop) else (None, []))
+            emb_adata = adata[emb_keep].copy() if emb_keep is not None else adata.copy()
+            if int(emb_adata.n_obs) < MIN_CELLS_TO_CLUSTER:
+                # Not reachable: a library that is not too small has at least that many cells in
+                # either population. Refused rather than embedded, as before.
+                raise TaskFailure(
+                    f"the embedding population leaves {emb_adata.n_obs} cell(s) of {n_before} - "
+                    f"too few to embed. A projection of that many points is not a manifold.")
             emb_barcodes = [str(b) for b in emb_adata.obs_names]
             emb_coords, emb_record = embed(
                 emb_adata, seed=int(params["seed"]),
@@ -2794,23 +2828,18 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
             emb_record["population"] = emb_pop
             emb_record["population_applied"] = emb_applied or ["nothing - every droplet embedded"]
             emb_record["n_before"] = n_before
-        # Freed before the clustering copy is taken. Two copies of a droplet matrix alive at once
-        # is the difference between this op fitting in its memory request and being killed by the
-        # scheduler, and the kill arrives as an exit code with no message about why.
-        del emb_adata
+            # Freed before the clustering copy is taken. Two copies of a droplet matrix alive at
+            # once is the difference between this op fitting in its memory request and being
+            # killed by the scheduler, and the kill arrives as an exit code with no message about
+            # why.
+            del emb_adata
 
     pop_note = "UNFILTERED - every droplet clustered, including empty ones"
-    too_small = ""
     if not _unknown(pop):
+        # A population too severe for the library's own cells was refused above; one that leaves
+        # a small library its few cells is profiled as one group below (MIN_CELLS_TO_CLUSTER).
         keep, applied = _population_mask(adata, pop)
         n_keep = int(keep.sum())
-        if n_keep < MIN_CELLS_TO_CLUSTER:
-            # PROFILED AS ONE GROUP, NOT CLUSTERED (MIN_CELLS_TO_CLUSTER). The task used to fail
-            # here, and the run with it. The library's cells are still measured - depth,
-            # mitochondrial share, doublet share - as one group, criterion C UNKNOWN.
-            too_small = (f"the declared population leaves {n_keep} cell(s) of {n_before}, under "
-                         f"the {MIN_CELLS_TO_CLUSTER} this op clusters: profiled as ONE group, "
-                         f"not clustered, criterion C UNKNOWN, no extra resolution")
         adata = adata[keep].copy()
         pop_note = (f"quality-filtered before clustering: {n_keep} of {n_before} "
                     f"({100.0 * n_keep / n_before:.1f}%) by {', '.join(applied)}; "
@@ -2996,7 +3025,10 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
                # alone: a resolution that was asked for and failed must not look like one that
                # was never asked for.
                "extra_resolutions": (extra_done if not _unknown(extras) else None),
-               "extra_resolutions_failed": (extra_failed or None)}
+               "extra_resolutions_failed": (extra_failed or None),
+               # A small library profiled as one group (MIN_CELLS_TO_CLUSTER); step 6 reports it
+               # as a REVIEW finding. Absent otherwise, so the record is what it was.
+               **({"profiled_as_one_group": too_small} if too_small else {})}
     return outputs, metrics
 
 
@@ -3267,7 +3299,8 @@ _ANNOTATION_LABELS = ("cluster", "sample")
 #: profiled as one unclustered group carries FLAG and WATCH as unknown on every cell - is still
 #: typed as the nullable boolean it is, and concatenates with the other libraries' (harness
 #: autodev W020: an all-unknown column fell to categorical and the merged object could not be
-#: written).
+#: written). Every other all-unknown column keeps the categorical it always had: a guessed float
+#: there would not concatenate with another library's categorical text (`doublet_class`).
 _ANNOTATION_BOOLEANS = ("cluster_FLAG", "cluster_WATCH")
 
 
@@ -3369,8 +3402,6 @@ def _annotation_column(values: list, column: str = ""):
     known = [v for v in values if v is not None]
     if not known and column in _ANNOTATION_BOOLEANS:
         return pd.array([None] * len(values), dtype="boolean")
-    if not known and column not in _ANNOTATION_LABELS and column:
-        return pd.array([np.nan] * len(values), dtype="float64")
     if known and all(isinstance(v, bool) for v in known):
         return pd.array([None if v is None else bool(v) for v in values], dtype="boolean")
     if known and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in known):

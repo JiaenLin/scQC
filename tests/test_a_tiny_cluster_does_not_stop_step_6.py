@@ -107,9 +107,69 @@ if HAVE:
             if not any("too few" in n or "under the" in n for n in met.get("profile_notes") or []):
                 fails.append(f"3: the profile does not say why the library was not clustered: "
                              f"{met.get('profile_notes')}")
+            if "ONE group" not in str(met.get("profiled_as_one_group") or ""):
+                fails.append(f"3: the op's metrics do not carry profiled_as_one_group, which step 6 "
+                             f"reports: {sorted(met)}")
         except Exception as e:                                            # noqa: BLE001
             fails.append(f"3: _op_cluster failed on a 7-cell library: {type(e).__name__}: {e}")
     print("3 a 7-cell library: profiled as one group, not clustered, not embedded, and said so")
+
+    # ---- 4. a SEVERE DECLARATION on a library that called enough cells is still refused: the
+    # library is not small, the floors are - one group would hide a declaration that emptied it.
+    # And a population that leaves no cell at all is refused whatever the library's size.
+    for label, pop in (("4a floors that leave 10 of 120 called cells",
+                        {"cell_call_key": "cell", "umi_floor": None}),
+                       ("4b a population that leaves no cell", {"cell_call_key": "cell",
+                                                                "umi_floor": 1e9})):
+        with tempfile.TemporaryDirectory() as td:
+            a = tiny(120)
+            if pop["umi_floor"] is None:
+                # the depth of every cell is known after qc_metrics; pick a floor only 10 clear
+                so.qc_metrics(a, "MT-", "^RP[SL]")
+                pop = {**pop, "umi_floor": float(np.sort(a.obs["total_counts"].to_numpy())[-10])}
+            try:
+                so._op_cluster(a, {"sample": "S", "resolution": 2.0, "seed": 0, "doublet_key": None,
+                                   "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]",
+                                   "uninformative_classes": ["mt"], "population": pop,
+                                   "embedding": {"population": "cell_called"}},
+                               str(Path(td) / "S"))
+                fails.append(f"{label}: profiled instead of refused")
+            except so.TaskFailure as e:
+                if "too few" not in str(e):
+                    fails.append(f"{label}: refused for another reason: {str(e)[:120]}")
+    print("4 a declaration that empties a library of enough called cells is refused, as before")
+
+    # ---- 5. step 6 REPORTS the library profiled as one group: a REVIEW finding naming it.
+    import types
+    from engine import steps
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        (td / "tables").mkdir()
+        recorded = []
+        profiles = {}
+        for s, n in (("BIG", 120), ("SMALL", 7)):
+            outs, met = so._op_cluster(
+                tiny(n), {"sample": s, "resolution": 2.0, "seed": 0, "doublet_key": None,
+                          "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]",
+                          "uninformative_classes": ["mt"], "n_pcs": 10,
+                          "population": {"cell_call_key": "cell"}, "embedding": None},
+                str(td / s))
+            profiles[f"06_cluster/{s}"] = types.SimpleNamespace(outputs=[str(o) for o in outs],
+                                                                metrics=met)
+        pipe = types.SimpleNamespace(results=td, results_by_key=profiles,
+                                     record_findings=lambda step, fs: recorded.extend(fs))
+        task = types.SimpleNamespace(params={"samples": ["BIG", "SMALL"],
+                                             "assay": {"BIG": "scrna", "SMALL": "scrna"}})
+        try:
+            steps._cluster_flags(task, pipe, None)
+            got = [f for f in recorded if f.get("check") == "libraries too small to cluster"]
+            if len(got) != 1 or got[0].get("severity") != "REVIEW" \
+                    or "SMALL" not in got[0].get("message", "") \
+                    or "BIG" in got[0].get("message", ""):
+                fails.append(f"5: step 6 did not report the one-group library as REVIEW: {recorded}")
+        except Exception as e:                                            # noqa: BLE001
+            fails.append(f"5: step 6 failed over a one-group library: {type(e).__name__}: {e}")
+    print("5 step 6 names the library profiled as one group, as a REVIEW finding")
     if fails:
         print("FAILED - " + "; ".join(fails))
         raise SystemExit(1)

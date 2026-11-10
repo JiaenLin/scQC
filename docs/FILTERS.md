@@ -409,7 +409,11 @@ medians, so one cluster in twenty is "high" whatever the values; on healthy whol
 of 2–5%) that labels ordinary clusters, so on `scrna` B never sits below **10%**, the lowest
 per-cell ceiling applied to a cell. **When no cluster carries any uninformative marker**, C has
 nothing to threshold and **cannot fire** — reported, not refused. A cluster too small to rank
-(under 3 cells) has C **unknown**; the others are still evaluated.
+(under 3 cells) has C **unknown**; the others are still evaluated. A **library** whose own called
+cells are fewer than `MIN_CELLS_TO_CLUSTER` (50, `adapters/scanpy_ops.py`) is not clustered or
+embedded: it is profiled as **one group** (A, B and D measured, C unknown) and step 6 reports it
+as a REVIEW finding naming the library. A declared population that leaves fewer than 50 of a
+library that called at least 50, or no cell at all, is a mistake in the declaration and is refused.
 
 **C's set is per assay** (`cluster_flags.UNINFORMATIVE_CLASSES`). On a nucleus both mitochondrial
 and ribosomal transcripts are carry-over, so a cluster marked by either describes contamination.
