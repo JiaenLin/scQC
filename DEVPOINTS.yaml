@@ -18,7 +18,10 @@ tests:
 # a step that assumed one would fail the other. It copies the run's STATUS.json to {out}.
 fixture:
   command: ["{python}", "scqc_cli.py", "fixture-run", "--observations", "{observations}", "--design", "{design}", "--sample-key", "{role_sample}", "--counts-layer", "{role_counts}", "--mt-prefix", "{mt_prefix}", "--ribo-pattern", "{ribo_pattern}", "--dbr", "0.05", "--jobs", "{jobs}", "--out", "{out}"]
-  products: [results/latest/reports/report.json]
+  products: [reports/report.json, STATUS.json]
+  # What the run records about its OWN execution, reported by `agree` and never judged: the two
+  # shapes are two executions. Everything else the two shapes write is compared.
+  execution_record: ["*::*elapsed*", "*::*seconds*", "*::*duration*", "*::*output_stat*", "*::*mtime*", "*::*bytes*", "*::*size*", "*::*started*", "*::*finished*", "*::*generated*", "*::*newest_input*", "*::*jobs*", "*::*pid*", "*::*hostname*"]
 
 baseline_dir: tests/baselines
 

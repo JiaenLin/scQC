@@ -8,8 +8,9 @@ under different column names, layer names and gene spellings. scQC's fixture tie
 because scQC reads a project, not an object - so no step ever ran on it. `scqc fixture-run` splits
 the object into a project from the names it is TOLD and runs `scqc run --mode apply`. Checked here:
 
-  1  each shape completes: a report (`results/latest/reports/report.json`), a deliverable, and the
-     run's STATUS.json copied beside the project, saying ok;
+  1  each shape completes: a report (`reports/report.json` in --out, copied flat from the run), a
+     deliverable in the project beside it (`<out>.project`), and the run's STATUS.json in --out,
+     saying ok;
   2  the two shapes - the same numbers under other names - keep the same cells: a step that read a
      column, a layer or a gene spelling by name would make them differ;
   3  a name the object does not carry is refused by name, not guessed.
@@ -95,7 +96,7 @@ if HAVE:
         for shape in SHAPES:
             h5, design = write_object(td, shape)
             rc, log, out = fixture_run(td, shape, h5, design)
-            report = out / "results" / "latest" / "reports" / "report.json"
+            report = out / "reports" / "report.json"
             status = out / "STATUS.json"
             if rc != 0 or not report.is_file():
                 tail = "\n".join(ln for ln in log.splitlines() if ln.strip())[-900:]
@@ -105,7 +106,8 @@ if HAVE:
             if st.get("status") != "ok":
                 fails.append(f"1 shape {shape}: STATUS.json beside the project says "
                              f"{st.get('status')!r}: {st.get('headline')}")
-            d = ad.read_h5ad(out / "results" / "latest" / "objects" / "cohort.deliverable.h5ad",
+            project = out.parent / (out.name + ".project")
+            d = ad.read_h5ad(project / "results" / "latest" / "objects" / "cohort.deliverable.h5ad",
                              backed="r")
             kept[shape] = int(d.n_obs)
             d.file.close()

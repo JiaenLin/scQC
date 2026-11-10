@@ -24,6 +24,10 @@ This splits the object into the project scQC is built to read, and nothing more:
     caller declares, and every column of the caller's design table, under its own name;
   * a registry naming the synthetic reference.
 
+The project lives beside the suite's `--out` (default `<out>.project`), and `--out` receives a flat
+copy of the run's text products, because the project's run directories are named by a digest of the
+samplesheet and the two shapes' samplesheets differ by construction.
+
 Library names are the sample column's values; cell names are the object's own `obs_names`. A design
 row with no cells in the object is left out and said to be. Nothing here is any cohort's data.
 """

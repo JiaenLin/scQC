@@ -821,24 +821,51 @@ def cmd_fixture_run(a) -> int:
     sys.path.insert(0, str(ROOT))
     from adapters import fixture_project as fp
 
+    # TWO DIRECTORIES, ON PURPOSE. The scQC project keeps its content-addressed layout
+    # (results/<digest>, logs/<digest>, work/<digest>), and the digest differs between the two
+    # fixture shapes by construction - their samplesheets differ in every column name and
+    # spelling. The suite's `agree` tier compares the two shapes' products PATH BY PATH, so the
+    # project lives beside `--out` (default `<out>.project`), and `--out` receives a flat copy of
+    # the run's text products: STATUS.json, reports/, tables/ (no numba cache), and the task logs.
     out = Path(a.out).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
-    made = fp.build_project(a.observations, out, sample_key=a.sample_key,
+    project = (Path(a.project).expanduser().resolve() if a.project
+               else out.parent / (out.name + ".project"))
+    project.mkdir(parents=True, exist_ok=True)
+    made = fp.build_project(a.observations, project, sample_key=a.sample_key,
                             counts_layer=a.counts_layer, mt_prefix=a.mt_prefix,
                             ribo_pattern=a.ribo_pattern, dbr=a.dbr, design=a.design)
-    print(f"fixture project: {len(made['libraries'])} libraries, {made['cells']:,} cells -> {out}")
+    print(f"fixture project: {len(made['libraries'])} libraries, {made['cells']:,} cells -> "
+          f"{project}; products -> {out}")
     if made["design_rows_without_cells"]:
         print(f"  design rows with no cells in the object, left out: "
               f"{', '.join(made['design_rows_without_cells'])}")
     rscript = a.rscript or str(ROOT / "tests" / "fixtures" / "fake_rscript.py")
-    cmd = [sys.executable, str(ROOT / "scqc_cli.py"), "run", "--project", str(out),
+    cmd = [sys.executable, str(ROOT / "scqc_cli.py"), "run", "--project", str(project),
            "--samplesheet", str(made["samplesheet"]), "--registry", str(made["registry"]),
            "--mode", "apply", "--executor", "local", "--python", sys.executable,
            "--rscript", rscript, "--jobs", str(a.jobs), "--seed", "0"]
     rc = subprocess.run(cmd).returncode
-    status = out / "results" / "latest" / "STATUS.json"
-    if status.is_file():
-        _sh.copyfile(status, out / "STATUS.json")
+    latest = project / "results" / "latest"
+    run_dir = latest.resolve() if latest.exists() else None
+    if run_dir is not None and run_dir.is_dir():
+        # A FLAT COPY OF THE TEXT PRODUCTS. The objects stay in the project (they are opaque to
+        # the tier and large); the numba cache is a compiled-code cache, not a product.
+        for sub_dir in ("reports", "tables"):
+            src = run_dir / sub_dir
+            if src.is_dir():
+                for f in sorted(src.rglob("*")):
+                    if f.is_file() and ".numba" not in f.relative_to(src).parts:
+                        dst = out / sub_dir / f.relative_to(src)
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        _sh.copyfile(f, dst)
+        for f in sorted((project / "logs" / run_dir.name).glob("*.log")) \
+                if (project / "logs" / run_dir.name).is_dir() else []:
+            (out / "logs").mkdir(parents=True, exist_ok=True)
+            _sh.copyfile(f, out / "logs" / f.name)
+        if (run_dir / "STATUS.json").is_file():
+            _sh.copyfile(run_dir / "STATUS.json", out / "STATUS.json")
+        (out / "PROJECT.txt").write_text(f"{project}\n{run_dir}\n", encoding="utf-8")
     return rc
 
 
@@ -1028,7 +1055,11 @@ def build_parser() -> argparse.ArgumentParser:
                                      "become samplesheet columns under their own names")
     fx.add_argument("--rscript", help="the doublet detector; default the repository's stand-in")
     fx.add_argument("--jobs", type=int, default=4)
-    fx.add_argument("--out", required=True, help="where the project and its run are written")
+    fx.add_argument("--out", required=True,
+                    help="where the run's text products are copied, flat: STATUS.json, reports/, "
+                         "tables/, logs/ (the suite compares two shapes of the fixture path by path)")
+    fx.add_argument("--project", help="where the scQC project and its content-addressed run live; "
+                                      "default: <out>.project beside --out")
     fx.set_defaults(fn=cmd_fixture_run)
 
     s = sub.add_parser("selftest", help="run the bundled test suites")
