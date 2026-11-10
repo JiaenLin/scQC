@@ -52,11 +52,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-ZERO_RATE = 0.005 # a library calling <0.5% has effectively returned silence
+# PER ASSAY (harness autodev W020, B1-074): these lines were set against nuclei, and a whole cell
+# is not one. The same values on both assays, with LINES_SOURCE saying where each came from.
+ZERO_RATE = {"snrna": 0.005, "scrna": 0.005}  # a library calling <0.5% has effectively returned silence
 SPREAD_IMPOSED = 1.05 # rate variance this low means the fraction is being set, not measured
 SPREAD_UNSTABLE = 5.0
-DESIGN_REFUSE = 3.0
-MATERIAL = 0.01 # worst arm must call at least this before the ratio binds
+DESIGN_REFUSE = {"snrna": 3.0, "scrna": 3.0}
+MATERIAL = {"snrna": 0.01, "scrna": 0.01}  # worst arm must call at least this before the ratio binds
+
+#: Where each per-assay line came from. The values are the same on both assays today: every one
+#: was set or measured on the calibration cohort's NUCLEI, and lending it to cells is done here
+#: knowingly, in a table that says so, never by a default (harness autodev W020, B1-074; the PI,
+#: 2026-10-02: single cells and single nuclei are fundamentally different).
+LINES_SOURCE = {"snrna": "set or measured on the calibration cohort's nuclei",
+                "scrna": "calibrated on nuclei, unmeasured on cells - the same value, lent knowingly "
+                         "until a single-cell cohort measures its own"}
+
+
+def per_assay(table: dict, assay, what: str):
+    """The assay's entry of a per-assay table. No default: an unknown assay is refused by name."""
+    a = str(assay or "").strip().lower()
+    if a not in table:
+        raise ValueError(f"{what}: no value for assay {assay!r} (known: {sorted(table)}). The "
+                         f"lines are declared per assay, and one assay's is not lent to another.")
+    return table[a]
+
 # A threshold written in decimal is not the threshold the machine tests. 0.30 / 0.10 is
 # 2.9999999999999996 in binary floating point, so a differential that is EXACTLY 3x slips under a
 # bare `>= 3.0` by one unit in the last place - and exactly-on-the-line is the case a reader
@@ -91,7 +111,7 @@ class HealthFinding:
 
 def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=None,
            detector_name="detector", reproducible=True, declared_rate=None,
-           n_scored=None) -> list:
+           n_scored=None, *, assay) -> list:
     """per_sample_rate: {sample: fraction of that library called a doublet}.
     design: {factor: {sample: level}} - without it the check that matters most cannot run.
     deep_decile_rate: fraction of the deepest UMI decile called, if it was computed.
@@ -104,6 +124,9 @@ def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=
     out = []
     rates = per_sample_rate
     v = list(rates.values())
+    zero_rate = per_assay(ZERO_RATE, assay, "ZERO_RATE")
+    design_refuse = per_assay(DESIGN_REFUSE, assay, "DESIGN_REFUSE")
+    material_floor = per_assay(MATERIAL, assay, "MATERIAL")
 
     # SILENCE IS JUDGED AGAINST WHAT THE LIBRARY'S OWN DECLARATION PREDICTS (harness autodev W020,
     # B1-103). The line marks a detector that collapsed and returned (almost) nothing. A library
@@ -112,15 +135,15 @@ def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=
     # rate it was declared at is itself under the line, falling under the line agrees with it.
     # Either is REVIEW, naming the declared rate and the expected count; a library whose
     # declaration expected doublets and that called under the line is still REFUSED. No number is
-    # added: the line is ZERO_RATE and the rest is the library's own declaration.
-    zero = {s: r for s, r in rates.items() if r < ZERO_RATE}
+    # added: the line is zero_rate and the rest is the library's own declaration.
+    zero = {s: r for s, r in rates.items() if r < zero_rate}
     silent, expected_so = {}, {}
     for s, r in zero.items():
         d = (declared_rate or {}).get(s)
         n = (n_scored or {}).get(s)
         if d is None or n is None:
             silent[s] = f"{s}: {100*r:.2f}%"
-        elif d < ZERO_RATE:
+        elif d < zero_rate:
             expected_so[s] = (f"{s}: {100*r:.2f}% of {n:,} scored, declared at {100*d:.2f}% - "
                               f"the declaration itself is under the line")
         elif n * d < 1:
@@ -131,14 +154,14 @@ def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=
                          f"expected {n * d:.1f}")
     out.append(HealthFinding(
         "silent libraries", "REFUSE" if silent else ("REVIEW" if expected_so else "ok"),
-        (f"{len(silent)} library(ies) called under {100*ZERO_RATE:.1f}% - the threshold has "
+        (f"{len(silent)} library(ies) called under {100*zero_rate:.1f}% - the threshold has "
          f"collapsed and returned silence, which is not the same as finding no doublets. This "
          f"is Scrublet's failure signature: 0% in seven of ten"
          if silent else
-         f"{len(expected_so)} library(ies) called under {100*ZERO_RATE:.1f}%, which their own "
+         f"{len(expected_so)} library(ies) called under {100*zero_rate:.1f}%, which their own "
          f"declared rate predicts - too few cells scored to expect a doublet, or a rate declared "
          f"under the line. Reported, not refused: this is not a silence the line can tell"
-         if expected_so else f"every library called above {100*ZERO_RATE:.1f}%"),
+         if expected_so else f"every library called above {100*zero_rate:.1f}%"),
         sorted(silent.values()) + sorted(expected_so.values())))
 
     if not v:
@@ -193,17 +216,17 @@ def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=
                     f"exists for; the refusal for it comes from the silent-library check"))
                 continue
             ratio = hi / lo
-            material = _at_least(hi, MATERIAL)
-            if _at_least(ratio, DESIGN_REFUSE) and material:
+            material = _at_least(hi, material_floor)
+            if _at_least(ratio, design_refuse) and material:
                 sev, note = "REFUSE", (
-                    f" REFUSED: the differential is at or above {DESIGN_REFUSE:.0f}x and the "
+                    f" REFUSED: the differential is at or above {design_refuse:.0f}x and the "
                     f"rate is material - the worst arm calls {100*hi:.2f}%. A detection rate "
                     f"that tracks an arm of the design turns a technical property into an "
                     f"apparent biological difference, and nothing downstream can undo it")
-            elif _at_least(ratio, DESIGN_REFUSE):
-                sev, note = "REVIEW", (f" ratio is at or above {DESIGN_REFUSE:.0f}x but the "
+            elif _at_least(ratio, design_refuse):
+                sev, note = "REVIEW", (f" ratio is at or above {design_refuse:.0f}x but the "
                                        f"worst arm calls only {100*hi:.2f}%, under the "
-                                       f"{100*MATERIAL:.0f}% floor - a ratio between two "
+                                       f"{100*material_floor:.0f}% floor - a ratio between two "
                                        f"near-zero rates is dominated by single libraries, so "
                                        f"this is reported, not refused")
             else:

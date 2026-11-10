@@ -61,6 +61,7 @@ S2	singleron	mus_musculus	mus_musculus/ensembl_112	snrna	/data/S2/outs/raw	mt-	^
 | `fastq_r1` / `fastq_r2` | to start from reads | alignment runs first and produces the matrix |
 | `mt_prefix`, `ribo_pattern` | for steps 5 and 6 | **species-specific; nothing guesses them** |
 | `ambient_h5` | if already denoised | a CellBender object you produced elsewhere |
+| `ambient_skip_reason`, `ambient_skip_approved_by` | to skip CellBender on a **nucleus** library | both, or the run is refused: the reason and the person who approved it. The library then takes the not-denoised route (raw counts, `aligner_cells` required); the skip is DECLARED in the report and STATUS.json. Never needed on `scrna`, where CellBender is never run |
 | `aligner_cells` | for step 2; **required for `scrna` with a raw matrix** | the aligner's filtered matrix (CellRanger `filtered_feature_bc_matrix`, CeleScope `outs/filtered`). On nuclei it is compared with the denoiser's call; on single cells, which this pipeline does not denoise, it **is** the cell call, and a raw-droplet run without it is refused before anything is submitted. A single-cell `matrix` that holds called cells only - the authors' filtered matrix, as most public data is published - needs none: it is accepted as a **cell-called input**, its own barcodes are the cell call, and the run records that it has no empty droplets (no ambient estimate, no empty-droplet model, no F1) |
 | anything else | no | a **design factor**, discovered automatically |
 

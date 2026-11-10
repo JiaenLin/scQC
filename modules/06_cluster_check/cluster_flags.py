@@ -96,6 +96,17 @@ TOPN = 20
 #: class left out is NOT EVALUATED - C_ribo reads unknown - never scored as 0%.
 UNINFORMATIVE_CLASSES = {"snrna": ("mt", "ribo"), "scrna": ("mt",)}
 
+#: THE CLUSTERING RESOLUTION STEP 6 FLAGS ON, PER ASSAY (harness autodev W020, B1-074). 2.0 was
+#: MEASURED on the calibration cohort's nuclei (CALIBRATION.md: criterion D fires at 2.0 and not at
+#: 1.0 or 1.5). The single-cell entry is the same number, lent knowingly: no single-cell cohort has
+#: swept it, and the table says so. `--resolution` replaces either; absent, a library takes its
+#: assay's, and the report names the source.
+RESOLUTION = {"snrna": 2.0, "scrna": 2.0}
+RESOLUTION_SOURCE = {"snrna": "measured on the calibration cohort's nuclei: criterion D fires at 2.0 "
+                              "and not at 1.0 or 1.5 (CALIBRATION.md)",
+                     "scrna": "calibrated on nuclei, unmeasured on cells - the same value, lent "
+                              "knowingly until a single-cell cohort sweeps its own"}
+
 #: THE LEAST A CLUSTER'S MEDIAN MITO CAN BE AND STILL BE CALLED HIGH (criterion B), per assay.
 #: B is the cohort's p95 of cluster medians, so about one cluster in twenty is "high" whatever the
 #: values are. On healthy whole cells - medians of 2-5% - that labels ordinary clusters, so on

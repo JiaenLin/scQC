@@ -73,7 +73,7 @@ if rec.setting != "dbr":
 print("\n" + "-" * 74)
 print("D. health of the chosen calls (dbr.sd = dbr)")
 f = health(res[1].per_sample_rate, {"condition": CONDITION}, deep_decile_rate=DEEP["dbr"],
-           n_kept_unscored=0, detector_name="scDblFinder", reproducible=True)
+           n_kept_unscored=0, detector_name="scDblFinder", reproducible=True, assay="snrna")
 for x in f:
     print(x)
 print(f"\n verdict: {verdict(f)}")
@@ -85,7 +85,8 @@ print("E. Scrublet's real failure, replayed through the health check")
 SCRUB = {"ctrl_03": .2064, "ctrl_04": .0729, "ctrl_05": .0000, "treat_03": .0000,
          "treat_04": .0001, "treat_05": .0000, "ctrl_01": .1139, "ctrl_02": .0001,
          "treat_01": .0000, "treat_02": .0000}
-f2 = health(SCRUB, {"condition": CONDITION}, detector_name="Scrublet", reproducible=True)
+f2 = health(SCRUB, {"condition": CONDITION}, detector_name="Scrublet", reproducible=True,
+            assay="snrna")
 for x in f2:
     if x.severity != "ok":
         print(x)

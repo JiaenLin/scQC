@@ -96,10 +96,15 @@ threshold afterwards and they no longer apply.
 | 7 | **apply** | measure, write the ledger, then write the filtered objects | **yes — only here** |
 
 Single nuclei and single cells take different routes, decided by the declared `assay`.
-Nuclei are denoised (mandatory), and the denoiser's call is the cell call. Single cells are
-**not denoised by this pipeline**: the raw counts are the object, the aligner's call
-(`aligner_cells`) is the cell call, and the count bounds and the cluster check are the
-whole-cell ones. Apply mode runs on single cells too: step 7's cell criterion is
+Nuclei are denoised by CellBender (mandatory, unless a skip is declared in the samplesheet with
+`ambient_skip_reason` and `ambient_skip_approved_by`, which is recorded and reported), and the
+denoiser's call is the cell call. **CellBender is never run on single cells** (the PI, 2026-10-02);
+no other ambient method is built for cells here yet, and one may be added per assay. On single
+cells the raw counts are the object, the aligner's call (`aligner_cells`) is the cell call, and the
+count bounds and the cluster check are the whole-cell ones. Every line calibrated on nuclei - the
+clustering resolution, the doublet silence line, the cell-call gate lines, the design-differential
+line - is a per-assay table with its provenance; the single-cell entries carry the same values and
+say they were calibrated on nuclei. Apply mode runs on single cells too: step 7's cell criterion is
 `fail_not_aligner_cell`, over the aligner's called cells. A single-cell library may also arrive
 as called cells only - the authors' filtered matrix, as most public single-cell data is published:
 it is accepted as a **cell-called input**, its own barcodes are the cell call, and the run records,

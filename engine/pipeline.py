@@ -667,8 +667,8 @@ class Pipeline:
     FIXED_PARAMETERS = (
         ("cell caller", "the denoiser's output on nuclei; the aligner's call on single cells",
          "pipeline contract: cell selection belongs to QC thresholds and doublet detection, not "
-         "to the tool chosen for denoising - and single cells are not denoised here, so their "
-         "empty-droplet boundary is the aligner's (modules/01_ambient, DENOISE)"),
+         "to the tool chosen for denoising - and CellBender is not run on single cells, so their "
+         "empty-droplet boundary is the aligner's (modules/01_ambient, CELLBENDER_RUNS)"),
         ("variable-gene selection", "every gene, no class excluded",
          "no mitochondrial, ribosomal or haemoglobin exclusion term exists; the flagged genes "
          "selection CHOSE are reported instead"),
@@ -715,6 +715,33 @@ class Pipeline:
                 continue
             rows.append({"name": label, "value": v, "class": "DECLARED",
                          "basis": f"supplied as {flag} before the run; no default exists for it"})
+
+        # THE ASSAY'S RESOLUTION, where none was declared (cluster_flags.RESOLUTION, B1-074): a
+        # number the run applied has to be on this page with its source, and the source is a
+        # per-assay table that says the single-cell entry was calibrated on nuclei.
+        if self.tools.get("resolution") is None:
+            kinds = sorted({str(r.get("assay") or "").strip().lower() for r in (self.samples or [])})
+            if len(kinds) == 1 and kinds[0]:
+                _cf = step_module("cluster_flags")
+                if kinds[0] in _cf.RESOLUTION:
+                    rows.append({"name": "clustering resolution", "value": _cf.RESOLUTION[kinds[0]],
+                                 "class": "FIXED",
+                                 "basis": f"the assay's ({kinds[0]}): {_cf.RESOLUTION_SOURCE[kinds[0]]}"
+                                          f"; --resolution replaces it"})
+        # A NUCLEUS LIBRARY'S CORRECTION SKIPPED BY DECLARATION (B1-105): who, and why, as the
+        # DECLARED row it is.
+        for key, r in sorted(self.results_by_key.items()):
+            if not key.startswith("01_ambient/"):
+                continue
+            sk = (getattr(r, "metrics", None) or {}).get("declared_skip")
+            if isinstance(sk, dict):
+                s = key.split("/", 1)[1]
+                rows.append({"name": f"ambient correction ({s})", "value": "skipped",
+                             "class": "DECLARED",
+                             "basis": f"samplesheet ambient_skip_reason / ambient_skip_approved_by: "
+                                      f"{sk.get('reason')} - approved by {sk.get('approved_by')}",
+                             "decided_by": str(sk.get("approved_by") or ""),
+                             "verbatim": str(sk.get("reason") or "")})
 
         # The thresholds step 7 applies. ADJUDICATED where the decisions file declares one - and
         # the operator's own words travel with it, because a row asserting a human decided

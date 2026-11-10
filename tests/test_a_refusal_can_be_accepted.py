@@ -45,7 +45,8 @@ cg = module("modules/02_cells/cellcall_gate.py", "w020_cellcall_gate")
 for lost, want in ((200, "REVIEW"), (600, "REFUSE")):
     calls = {"A": {"aligner": 10_000, "cellbender": 9_900, "lost": lost},
              "B": {"aligner": 10_000, "cellbender": 14_000, "lost": 0}}
-    f = next(x for x in cg.gate(calls) if x.check.startswith("CellBender must not be stricter"))
+    f = next(x for x in cg.gate(calls, assay="snrna")
+             if x.check.startswith("CellBender must not be stricter"))
     if f.severity != want:
         fails.append(f"2: stricter than the aligner, losing {lost / 100:.0f}%: {f.severity}, "
                      f"expected {want}")
@@ -63,13 +64,14 @@ for label, rate, declared, n, want in CASES:
     rates = {"S": rate, "T": 0.05}
     try:
         got = next(x for x in dh.health(rates, declared_rate={"S": declared, "T": 0.05},
-                                        n_scored={"S": n, "T": 5_000})
+                                        n_scored={"S": n, "T": 5_000}, assay="snrna")
                    if x.check == "silent libraries").severity
     except TypeError as e:
         got = f"not judged ({e})"
     if got != want:
         fails.append(f"3: {label}: 'silent libraries' is {got}, expected {want}")
-old = next(x for x in dh.health({"S": 0.0, "T": 0.05}) if x.check == "silent libraries").severity
+old = next(x for x in dh.health({"S": 0.0, "T": 0.05}, assay="snrna")
+           if x.check == "silent libraries").severity
 if old != "REFUSE":
     fails.append(f"3: with no declaration to judge against, a silent library is {old}, not REFUSE")
 print("3. a silence is refused only where the library's own declaration expected doublets")

@@ -93,6 +93,7 @@ NOT_FACTORS = frozenset({
     "sample", "platform", "species", "reference", "assay", "fastq_r1", "fastq_r2", "matrix",
     "dbr", "dbr_sd", "mt_prefix", "ribo_pattern", "expected_genes", "aligner_cells",
     "cellbender_barcodes", "cellreads_stats", "nf_antisense",
+    "ambient_skip_reason", "ambient_skip_approved_by",
     "ambient_h5", "ambient_tool", "ambient_version", "ambient_params", "ambient_produced_by",
 })
 
@@ -356,7 +357,8 @@ def _ambient_none(task, pipeline, log):
 
     # rule-one: no-removal - every droplet of the raw matrix is kept; the cell call is a column.
 
-    Single cells (modules/01_ambient, DENOISE). Nothing is corrected and nothing is pretended:
+    Single cells (modules/01_ambient, CELLBENDER_RUNS), and a nucleus library whose correction
+    was skipped by declaration (B1-105). Nothing is corrected and nothing is pretended:
     `<sample>_ambient.h5` - the name every later step opens - holds the matrix as the aligner
     wrote it, every droplet in it, and `obs["aligner_cell"]` marks the ones the aligner called.
     The cell call has to come from somewhere, and with no denoiser the aligner's is the one in
@@ -368,7 +370,11 @@ def _ambient_none(task, pipeline, log):
     am = step_module("ambient")
     s = task.sample
     try:
-        plan = am.plan_ambient(s, task.params["assay"])
+        plan = am.plan_ambient(
+            s, task.params["assay"],
+            skip=bool(task.params.get("skip_reason") or task.params.get("approved_by")),
+            skip_reason=task.params.get("skip_reason") or "",
+            approved_by=task.params.get("approved_by") or "")
     except Exception as e:                                                # noqa: BLE001
         raise Refusal(f"01_ambient ({s}): {e}") from None
     if plan.run:
@@ -398,7 +404,9 @@ def _ambient_none(task, pipeline, log):
     return {"outputs": [str(out_h5)],
             "metrics": {"state": plan.state, "reason": plan.reason, "converted": m,
                         "cell_call": "input" if called_input else "aligner", "corrected_here": 0,
-                        **({"input_kind": "called_cells"} if called_input else {})},
+                        **({"input_kind": "called_cells"} if called_input else {}),
+                        **({"declared_skip": dict(plan.declared_skip)}
+                           if plan.declared_skip else {})},
             "versions": {}}
 
 
@@ -492,8 +500,22 @@ def _ambient_audit(task, pipeline, log):
     not_denoised = list(task.params.get("not_denoised") or [])
     if not_denoised:
         print(f"    NOT DENOISED: {len(not_denoised)} library(ies) "
-              f"({', '.join(sorted(not_denoised))}) - this pipeline does not denoise their assay "
-              f"(modules/01_ambient, DENOISE). Their ambient fraction is NOT MEASURED.")
+              f"({', '.join(sorted(not_denoised))}) - CellBender is not run on their assay, or "
+              f"was skipped by declaration (modules/01_ambient, CELLBENDER_RUNS). Their ambient "
+              f"fraction is NOT MEASURED.")
+    # A SKIP DECLARED FOR A NUCLEUS LIBRARY IS SAID IN THE REPORT (B1-105): who, and why. A
+    # REVIEW, because a person decided it and a reader should see that they did.
+    skips = task.params.get("declared_skips") or {}
+    if skips:
+        aa_mod = step_module("audit_ambient")
+        pipeline.record_findings("01_ambient", [aa_mod.Finding(
+            "ambient correction skipped by declaration", "REVIEW",
+            f"{len(skips)} nucleus library(ies) ({', '.join(sorted(skips))}) were NOT denoised: "
+            f"the correction CellBender makes mandatory on nuclei was skipped by a DECLARED "
+            f"decision (samplesheet ambient_skip_reason / ambient_skip_approved_by). Their ambient "
+            f"fraction is not measured, and their cell call is the aligner's.",
+            [f"{s}: {d.get('reason')} - approved by {d.get('approved_by')}"
+             for s, d in sorted(skips.items())])])
     # NOT ESTIMABLE, a stronger statement than not measured (harness autodev W020, B1-046): a
     # cell-called input holds no empty droplets, so no method could estimate its ambient RNA from
     # it, and no empty-droplet model can run on it. Recorded as a finding the report carries.
@@ -517,7 +539,8 @@ def _ambient_audit(task, pipeline, log):
                             "supplied": len(supplied), "not_denoised": len(not_denoised)},
                 "versions": {}}
 
-    findings = _declared_only(aa.audit(rows, per_gene, task.params["design"]),
+    findings = _declared_only(aa.audit(rows, per_gene, task.params["design"],
+                                       assay=_cohort_assay(task.params.get("assay"))),
                               task.params.get("design_declared"))
 
     # --- IS ANY FIT UNLIKE ITS SIBLINGS? modules/01_ambient/lr_policy.py has answered this since
@@ -750,7 +773,8 @@ def _cellcall(task, pipeline, log):
             f"{len(calls)} a denoiser's. One cohort, one cell call: a cohort that mixes them "
             f"compares libraries whose cells were selected by different rules.")
 
-    findings = _declared_only(cg.gate(calls, task.params["design"]),
+    findings = _declared_only(cg.gate(calls, task.params["design"],
+                                      assay=_cohort_assay(task.params.get("assay"))),
                               task.params.get("design_declared"))
 
     # THE TWO OBSERVATIONS ABOUT ONE DENOISING, READ TOGETHER.
@@ -1240,7 +1264,8 @@ def _doublet_health(task, pipeline, log):
                          declared_rate={s: m.get("dbr") for s, m in m4.items()
                                         if isinstance(m.get("dbr"), (int, float))},
                          n_scored={s: m.get("n_scored") for s, m in m4.items()
-                                   if isinstance(m.get("n_scored"), int)})
+                                   if isinstance(m.get("n_scored"), int)},
+                         assay=_cohort_assay(task.params.get("assay")))
     findings = _declared_only(findings, task.params.get("design_declared"))
     pipeline.gate("04_doublets", findings, dh.verdict(findings))
 
@@ -2833,14 +2858,14 @@ STEP_TEXT = {
 #: Where single cells take a different route, the text says so (single cells are not single
 #: nuclei). `STEP_TEXT` above is the nucleus route, and every step not listed here reads the same
 #: on both. Written for the route each step actually takes on `scrna` - modules/01_ambient
-#: DENOISE, quality.FLOOR_METHOD, MITO_MAD_K and MAD_K_BOUNDS_BY_ASSAY - and naming no number,
+#: CELLBENDER_RUNS, quality.FLOOR_METHOD, MITO_MAD_K and MAD_K_BOUNDS_BY_ASSAY - and naming no number,
 #: so a constant changed there cannot leave a stale one here.
 STEP_TEXT_SCRNA = {
     "01_ambient": (
         "Takes each library's raw counts as the object every later step reads, with the "
-        "aligner's cell call written in as a column: this pipeline does not denoise single "
-        "cells (modules/01_ambient, DENOISE). A library supplied already denoised is used as "
-        "supplied, with its provenance.",
+        "aligner's cell call written in as a column: CellBender is not run on single cells "
+        "(modules/01_ambient, CELLBENDER_RUNS), and no other ambient method is built for cells "
+        "here yet. A library supplied already denoised is used as supplied, with its provenance.",
         "How much ambient RNA these libraries carry. Nothing here estimates it on a library it "
         "did not denoise, and an unmeasured fraction is not a low one."),
     "02_cells": (

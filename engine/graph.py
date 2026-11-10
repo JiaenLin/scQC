@@ -108,8 +108,9 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         else:
             raw_of[s] = Path(str(row.get("matrix")))
 
-    # --- step 1: ambient. A policy per assay (modules/01_ambient, DENOISE): nuclei are always
-    # denoised, single cells never by this pipeline. The module decides, not this file.
+    # --- step 1: ambient. A policy per assay (modules/01_ambient, CELLBENDER_RUNS): CellBender
+    # runs on nuclei - unless a skip is DECLARED with a reason and an approver (B1-105) - and is
+    # never run on single cells. The module decides, not this file.
     #
     # A sample may also arrive ALREADY CORRECTED - a samplesheet `ambient_h5` column, with the
     # provenance columns beside it. That is a third state, not a skip (modules/01_ambient), and
@@ -148,16 +149,28 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
               "project.")
     am = step_module("ambient")
     _qmod = step_module("quality")
+    _cmod = step_module("cluster_flags")
     not_denoised = []
+    # A SKIP DECLARED FOR A NUCLEUS LIBRARY (B1-105): both columns, or the module refuses. The
+    # library then takes the not-denoised route below, with the declaration carried into its
+    # step-1 task and the audit, where the report reads it.
+    skip_of = {s: {"reason": str(r.get("ambient_skip_reason") or "").strip(),
+                   "approved_by": str(r.get("ambient_skip_approved_by") or "").strip()}
+               for s, r in by_sample.items()}
+    declared_skips: dict = {}
     for s in by_sample:
         if s in supplied_of:
             continue
+        sk = skip_of[s]
         try:
-            plan = am.plan_ambient(s, assay.get(s))
+            plan = am.plan_ambient(s, assay.get(s), skip=bool(sk["reason"] or sk["approved_by"]),
+                                   skip_reason=sk["reason"], approved_by=sk["approved_by"])
         except Exception as e:                                            # noqa: BLE001
             raise Refusal(f"01_ambient ({s}): {e}") from None
         if not plan.run:
             not_denoised.append(s)
+            if plan.declared_skip:
+                declared_skips[s] = dict(plan.declared_skip)
     # THE JOINT MITOCHONDRIAL x NUCLEAR-FRACTION CRITERION IS A NUCLEUS'S. It removes droplets
     # high in mitochondrial reads AND low in intronic fraction - carry-over around a nucleus. In a
     # whole cell the direction is the opposite: a damaged cell that has lost its cytoplasm is
@@ -218,7 +231,11 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                         "python_exe": python_exe, "aligner_cells": aligner,
                         # The input's own barcodes are the call: a cell-called matrix, no
                         # `aligner_cells`. Absent otherwise, so the task is what it was.
-                        **({"cell_call": "input"} if not aligner else {})},
+                        **({"cell_call": "input"} if not aligner else {}),
+                        # A nucleus library skipped by declaration (B1-105); absent otherwise.
+                        **({"skip_reason": skip_of[s]["reason"],
+                            "approved_by": skip_of[s]["approved_by"]}
+                           if s in declared_skips else {})},
                 # A conversion, not a denoising: no GPU. The raw matrix holds every droplet
                 # (two million on a 10x run), sparse, read once.
                 outputs=(str(h5),), cpus=2, memory_gb=32, walltime_h=2,
@@ -289,6 +306,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 "no_raw": [s for s in by_sample if not raw_of.get(s)],
                 # Named, not dropped: no corrected matrix exists to measure a fraction against.
                 "not_denoised": not_denoised,
+                "assay": {s: assay.get(s) for s in by_sample},
+                **({"declared_skips": declared_skips} if declared_skips else {}),
                 **accepted("01_ambient"), **design_declared,
                 # And a cell-called input has no empty droplets to estimate ambient RNA from at
                 # all, by any method. Passed only when there is one.
@@ -331,7 +350,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # samplesheet, from a run nothing verified was this one.
         needs=tuple(f"05_quality/{s}" for s in by_sample),
         params={"design": design, "samples": list(by_sample), "call_paths": call_paths,
-                "call_by": call_by, **accepted("02_cells"), **design_declared},
+                "call_by": call_by, "assay": {s: assay.get(s) for s in by_sample},
+                **accepted("02_cells"), **design_declared},
     ))
 
     # --- steps 3-4: the light floor, then doublet scoring on what clears it.
@@ -371,6 +391,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     tasks.append(Task(
         key="04_doublet_health", step="04_doublets", fn=steps._doublet_health,
         needs=tuple(dbl_keys), params={"design": design, "samples": list(by_sample),
+                                       "assay": {s: assay.get(s) for s in by_sample},
                                        **accepted("04_doublets"), **design_declared},
         outputs=(str(pipeline.results / "tables" / "doublet_health.csv"),),
     ))
@@ -488,11 +509,21 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
             # transitivity is one a later reordering can remove without anything noticing.
             needs=("05_quality", f"04_doublets/{s}"),
             params={"sample": s, "python_exe": python_exe,
-                    "resolution": tools.get("resolution", 2.0), "seed": tools.get("seed", 0),
+                    # THE ASSAY'S RESOLUTION unless one was declared (cluster_flags.RESOLUTION,
+                    # B1-074): 2.0 was measured on nuclei, and the single-cell entry says it is
+                    # the same value lent knowingly. No default sits in this file.
+                    "resolution": (tools["resolution"] if tools.get("resolution") is not None
+                                   else _cmod.RESOLUTION[assay.get(s)]),
+                    "seed": tools.get("seed", 0),
                     # Profiled beside the default, into sibling files. The op does them LAST and
                     # never touches the default's outputs, so a failure among the extras cannot
-                    # cost the deliverable its cluster flags.
-                    "extra_resolutions": tools.get("extra_resolutions"),
+                    # cost the deliverable its cluster flags. The applied one is never also an
+                    # extra.
+                    "extra_resolutions": ([r for r in tools["extra_resolutions"]
+                                           if r != float(tools["resolution"]
+                                                         if tools.get("resolution") is not None
+                                                         else _cmod.RESOLUTION[assay.get(s)])]
+                                          if tools.get("extra_resolutions") else None),
                     "mt_prefix": str(by_sample[s].get("mt_prefix") or "").strip(),
                     "ribo_pattern": str(by_sample[s].get("ribo_pattern") or "").strip(),
                     "doublet_csv": str(pipeline.results / "tables" / f"{s}_doublets.csv"),

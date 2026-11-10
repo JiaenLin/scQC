@@ -45,11 +45,13 @@ check("SKIP (scrna only)",
 print("\nB. SUPPLIED does not weaken the snRNA rule")
 # The rule is that nuclei are never analysed UNCORRECTED. Supplied data IS corrected, so it does
 # not breach the rule - but a bare skip must still be refused, or SUPPLIED becomes a loophole.
+# A skip with a reason and NO approver is half a declaration (harness autodev W020, B1-105),
+# and the refusal names what is missing.
 try:
     amb.plan_ambient("s", "snrna", skip=True, skip_reason="I already did it elsewhere")
     check("a bare skip is still refused for snRNA", False, "it was allowed")
 except amb.AmbientRefusal as e:
-    check("a bare skip is still refused for snRNA", "cannot be skipped" in str(e))
+    check("a bare skip is still refused for snRNA", "approver" in str(e), str(e)[:160])
 p = amb.plan_ambient("s", "snrna", supplied=PROV)
 check("supplied snRNA still records the correction as mandatory", p.mandatory)
 check("supplied is not run", p.run is False)

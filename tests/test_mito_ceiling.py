@@ -209,12 +209,12 @@ check("a spread above the review line is called out",
 # --- the differential check -----------------------------------------------------------------------
 print("\nassess_mito_removal()")
 design = {"diet": {f"lib{i}": ("chow" if i % 2 else "hfd") for i in range(6)}}
-a = quality.assess_mito_removal(tight, d, design=design)
+a = quality.assess_mito_removal(tight, d, design=design, assay="snrna")
 check("reports an overall removal rate", 0.0 <= a["overall_rate"] <= 1.0)
 check("reports a per-arm ratio", "diet" in a["arms"] and a["arms"]["diet"]["ratio"] is not None)
-check("passes on an even cohort", a.get("worst_ratio", 0) < quality.DESIGN_REFUSE)
+check("passes on an even cohort", a.get("worst_ratio", 0) < quality.DESIGN_REFUSE["snrna"])
 
-no_design = quality.assess_mito_removal(tight, d)
+no_design = quality.assess_mito_removal(tight, d, assay="snrna")
 check("missing design is reported, not passed over",
       any("NO DESIGN" in n for n in no_design["notes"]))
 
@@ -226,9 +226,9 @@ for i in range(6):
     split[f"lib{i}"] = lognormal(rng, 3000, 1.6 if i % 2 else 0.4, 0.8)
 ds_free = quality.derive_mito_ceiling(split, assay="snrna", bounds=(0.5, 60.0),
                                       declared_by="probe: the per-library property, unbounded")
-asx = quality.assess_mito_removal(split, ds_free, design=design)
+asx = quality.assess_mito_removal(split, ds_free, design=design, assay="snrna")
 check("an unbounded per-library fence keeps removal even when arms genuinely differ",
-      asx["worst_ratio"] < quality.DESIGN_REFUSE,
+      asx["worst_ratio"] < quality.DESIGN_REFUSE["snrna"],
       f"ratio {asx.get('worst_ratio')}")
 
 # THE COST OF THE FLOOR, asserted rather than discovered later.
@@ -241,7 +241,7 @@ check("an unbounded per-library fence keeps removal even when arms genuinely dif
 # this is what tells them what they changed.
 ds = quality.derive_mito_ceiling(split, assay="snrna")
 try:
-    quality.assess_mito_removal(split, ds, design=design)
+    quality.assess_mito_removal(split, ds, design=design, assay="snrna")
     check("the 10% floor on a clean-vs-heavy cohort is refused, not applied quietly",
           False, "it passed - the floor no longer costs anything, which needs explaining")
 except quality.ThresholdRefusal as e:
@@ -252,14 +252,14 @@ except quality.ThresholdRefusal as e:
 # mitochondria-heavy arm. This is why the rule is per library.
 fixed = {s: 12.0 for s in split}
 try:
-    quality.assess_mito_removal(split, fixed, design=design)
+    quality.assess_mito_removal(split, fixed, design=design, assay="snrna")
     check("a fixed ceiling on the same data is refused", False, "it passed")
 except quality.ThresholdRefusal:
     check("a fixed ceiling on the same data is refused", True)
 
 refuses("a library with no ceiling refuses rather than borrowing one",
         lambda: quality.assess_mito_removal(split, {k: v for k, v in list(ds["ceilings"].items())[:2]},
-                                            design=design),
+                                            design=design, assay="snrna"),
         ("no derived ceiling",))
 
 # Exactly-on-the-line: 3.00x must refuse, not slip under by one ULP.

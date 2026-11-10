@@ -60,12 +60,32 @@ from dataclasses import dataclass, field
 from statistics import median
 
 MAD_K = 3.5
-DESIGN_REFUSE = 3.0 # the design-differential check: worst arm this many times the best
+# PER ASSAY (harness autodev W020, B1-074): set against nuclei; the same values on both assays,
+# with LINES_SOURCE saying so.
+DESIGN_REFUSE = {"snrna": 3.0, "scrna": 3.0}  # the design-differential check: worst arm this many times the best
 # A ratio between two negligible rates is arithmetic, not evidence: arms removing 0.01% and
 # 0.05% differ by 5x and neither has meaningfully touched the data. So the ratio binds only
 # where the worst arm is also material; below the floor it is REPORTED and not refused. A gate
 # that fires on correct behaviour gets switched off.
-MATERIAL_REMOVAL = 0.01 # worst arm must remove at least this fraction before the ratio binds
+MATERIAL_REMOVAL = {"snrna": 0.01, "scrna": 0.01}  # worst arm must remove at least this before the ratio binds
+
+
+#: Where each per-assay line came from. The values are the same on both assays today: every one
+#: was set or measured on the calibration cohort's NUCLEI, and lending it to cells is done here
+#: knowingly, in a table that says so, never by a default (harness autodev W020, B1-074; the PI,
+#: 2026-10-02: single cells and single nuclei are fundamentally different).
+LINES_SOURCE = {"snrna": "set or measured on the calibration cohort's nuclei",
+                "scrna": "calibrated on nuclei, unmeasured on cells - the same value, lent knowingly "
+                         "until a single-cell cohort measures its own"}
+
+
+def per_assay(table: dict, assay, what: str):
+    """The assay's entry of a per-assay table. No default: an unknown assay is refused by name."""
+    a = str(assay or "").strip().lower()
+    if a not in table:
+        raise ValueError(f"{what}: no value for assay {assay!r} (known: {sorted(table)}). The "
+                         f"lines are declared per assay, and one assay's is not lent to another.")
+    return table[a]
 
 
 # 0.30 / 0.10 is 2.9999999999999996 in binary floating point, so a bare `>= 3.0` misses the
@@ -73,7 +93,7 @@ MATERIAL_REMOVAL = 0.01 # worst arm must remove at least this fraction before th
 RATIO_TOL = 1e-9
 
 
-def _material(rate: float) -> bool:
+def _material(rate: float, floor: float) -> bool:
     """Is the worst arm removing enough for a ratio between arms to mean anything?
 
     Compared with the same relative tolerance the ratio uses. A bare `>=` on a float
@@ -81,7 +101,7 @@ def _material(rate: float) -> bool:
     0.26% and 1.74% is 0.009999999999999998, nominally 1.00%, and read as immaterial
     while the same cohort written as 1.00%/1.00% is read as material.
     """
-    return rate >= MATERIAL_REMOVAL * (1 - RATIO_TOL)
+    return rate >= floor * (1 - RATIO_TOL)
 
 GENE_GUT = 0.90 # a gene losing >=90% of its counts
 DETECTION_COLLAPSE = 0.80 # detected fraction falling by >=80% of its original
@@ -149,13 +169,15 @@ def _median_by(rows, key, value):
     return {k: median(v) for k, v in buckets.items() if v}
 
 
-def audit(summary, per_gene=None, design=None) -> list:
+def audit(summary, per_gene=None, design=None, *, assay) -> list:
     """summary: rows (list of dicts, or a DataFrame) with sample, fraction_removed_overall,
                 genes_fully_removed.
     per_gene: optional rows with sample, symbol, fraction_removed, raw_detection_frac,
               denoised_detection_frac.
     design: optional {factor: {sample: level}} for the differential check.
     """
+    design_refuse = per_assay(DESIGN_REFUSE, assay, "DESIGN_REFUSE")
+    material_removal = per_assay(MATERIAL_REMOVAL, assay, "MATERIAL_REMOVAL")
     out = []
     summary = _rows(summary)
     per_gene = _rows(per_gene)
@@ -204,7 +226,7 @@ def audit(summary, per_gene=None, design=None) -> list:
                 # zero-denominator case to REVIEW made a wholly one-sided material removal
                 # milder than a merely large one - 50% against 0.0000001% refused, and the same
                 # 50% against exactly 0% did not.
-                if _material(hi):
+                if _material(hi, material_removal):
                     out.append(Finding(
                         f"design differential: {factor}", "REFUSE",
                         f"one level removes nothing while another removes {100*hi:.2f}% of its "
@@ -217,13 +239,13 @@ def audit(summary, per_gene=None, design=None) -> list:
                         f"design differential: {factor}", "REVIEW",
                         f"one level removes nothing while another does ({lvls}). The ratio is "
                         f"UNDEFINED rather than large, and the worst arm is below the "
-                        f"{100*MATERIAL_REMOVAL:.0f}% materiality floor - reported, not refused. "
+                        f"{100*material_removal:.0f}% materiality floor - reported, not refused. "
                         f"A one-sided removal across a design factor is still exactly what this "
                         f"check exists to catch, however small"))
             else:
                 ratio = hi / lo
-                exceeds = ratio >= DESIGN_REFUSE * (1 - RATIO_TOL)
-                material = _material(hi)
+                exceeds = ratio >= design_refuse * (1 - RATIO_TOL)
+                material = _material(hi, material_removal)
                 if exceeds and material:
                     sev, note = "REFUSE", (
                         f" REFUSED: the design-differential check - and the removal is "
@@ -231,9 +253,9 @@ def audit(summary, per_gene=None, design=None) -> list:
                         f"technical property has become an apparent biological difference")
                 elif exceeds:
                     sev, note = "REVIEW", (
-                        f" ratio exceeds {DESIGN_REFUSE:.0f}x but the removal is NOT material "
+                        f" ratio exceeds {design_refuse:.0f}x but the removal is NOT material "
                         f"- the worst arm removes {100*hi:.2f}%, under the "
-                        f"{100*MATERIAL_REMOVAL:.0f}% floor. A ratio between two near-zero "
+                        f"{100*material_removal:.0f}% floor. A ratio between two near-zero "
                         f"rates is dominated by single libraries; reported, not refused")
                 else:
                     sev, note = "ok", ""

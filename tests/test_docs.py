@@ -86,7 +86,8 @@ def percents(lo, hi) -> str:
 
 def per_assay(table, render) -> bool:
     """Every assay's value is in the document - one assay's alone would bound the other unseen."""
-    return bool(table) and all(render(*v) in doc for v in table.values())
+    return bool(table) and all(
+        (render(*v) if isinstance(v, tuple) else render(v)) in doc for v in table.values())
 
 
 #: (what it is, the document states the code's value)
@@ -109,11 +110,11 @@ CHECKS = [
     ("MAD scale factor", f"{Q.MAD_SCALE:g}" in doc),
     ("mito derivation max", f"`MITO_DERIVATION_MAX = {S.MITO_DERIVATION_MAX!r}`" in doc),
     ("light floor default", f"defaulting to **{L.DEFAULT_FLOOR}**" in doc),
-    ("doublet silence", f"< {100 * D.ZERO_RATE:g}%" in doc),
+    ("doublet silence", per_assay(D.ZERO_RATE, lambda v: f"< {100 * v:g}%")),
     ("doublet rate imposed", f"{D.SPREAD_IMPOSED:g}×" in doc),
     ("doublet rate unstable", f"> {D.SPREAD_UNSTABLE:g}×" in doc),
-    ("design differential", f"≥ {D.DESIGN_REFUSE:g}×" in doc),
-    ("materiality floor", f"≥ {100 * D.MATERIAL:g}%" in doc),
+    ("design differential", per_assay(D.DESIGN_REFUSE, lambda v: f"≥ {v:g}×")),
+    ("materiality floor", per_assay(D.MATERIAL, lambda v: f"≥ {100 * v:g}%")),
     ("cluster marker top-N", f"top-{C.TOPN} markers" in doc),
     ("KDE grid size", f"**{FV['grid_size']}**" in doc),
     ("valley depth", f"`min_valley_depth = {FV['min_valley_depth']:.2f}`" in doc),

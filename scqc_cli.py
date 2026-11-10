@@ -326,7 +326,7 @@ def cmd_gate_cells(a) -> int:
         }
     design = design_from(rows, skip=need | {"lost"})
     note(f"libraries: {len(calls)}   design factors: {list(design) or 'none'}\n", a.json)
-    return code_for(emit(g.gate(calls, design), a.json))
+    return code_for(emit(g.gate(calls, design, assay=a.assay), a.json))
 
 
 def cmd_doublet_health(a) -> int:
@@ -341,7 +341,8 @@ def cmd_doublet_health(a) -> int:
     design = design_from(rows, skip={"sample", "rate"})
     note(f"libraries: {len(rates)}   design factors: {list(design) or 'none'}\n", a.json)
     findings = dh.health(rates, design, n_kept_unscored=a.unscored,
-                         detector_name=a.detector, reproducible=not a.non_reproducible)
+                         detector_name=a.detector, reproducible=not a.non_reproducible,
+                         assay=a.assay)
     return code_for(emit(findings, a.json))
 
 
@@ -355,7 +356,7 @@ def cmd_quality(a) -> int:
                         str(r.get("bimodal", "true")).strip().lower() not in ("false", "0", "no"))
                for r in rows]
     try:
-        prop = q.derive(valleys, a.metric, light_floor=a.light_floor)
+        prop = q.derive(valleys, a.metric, light_floor=a.light_floor, assay=a.assay)
     except Exception as e:                                            # noqa: BLE001
         print(f"REFUSED: {e}")
         return 2
@@ -641,7 +642,7 @@ def cmd_run(a) -> int:
         "extra_resolutions": (sorted({r for r in
                                       (float(t.strip()) for t in
                                        str(a.extra_resolutions).split(",") if t.strip())
-                                      if r != float(a.resolution)})
+                                      if a.resolution is None or r != float(a.resolution)})
                               if a.extra_resolutions else None),
     }.items() if v is not None}
     # AFTER `tools`, because the run's output directory is named from the parameters it was given.
@@ -876,6 +877,8 @@ def build_parser() -> argparse.ArgumentParser:
     g = sub.add_parser("gate-cells", help="did the denoiser drop cells the aligner kept?")
     g.add_argument("--calls", required=True,
                    help="CSV: sample,aligner,cellbender[,lost][,<design columns>]")
+    g.add_argument("--assay", required=True, choices=["snrna", "scrna"],
+                   help="the lines are per assay (cellcall_gate); required, no default")
     g.add_argument("--json", action="store_true"); g.set_defaults(fn=cmd_gate_cells)
 
     d = sub.add_parser("doublet-health", help="is a doublet rate a measurement or the prior?")
@@ -884,12 +887,16 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--unscored", type=int, default=0,
                    help="cells kept that were never scored (an unknown, not a zero)")
     d.add_argument("--non-reproducible", action="store_true")
+    d.add_argument("--assay", required=True, choices=["snrna", "scrna"],
+                   help="the lines are per assay (doublet_health); required, no default")
     d.add_argument("--json", action="store_true"); d.set_defaults(fn=cmd_doublet_health)
 
     q = sub.add_parser("quality", help="propose a count floor from per-library valleys")
     q.add_argument("--valleys", required=True, help="CSV: sample,valley[,bimodal]")
     q.add_argument("--metric", choices=["umi", "genes"], required=True)
     q.add_argument("--light-floor", dest="light_floor", type=int, default=200)
+    q.add_argument("--assay", required=True, choices=["snrna", "scrna"],
+                   help="the count bounds are per assay (quality); required, no default")
     q.set_defaults(fn=cmd_quality)
 
     c = sub.add_parser("cluster-preflight", help="contradictions before a removal is applied")
@@ -961,9 +968,12 @@ def build_parser() -> argparse.ArgumentParser:
     # and criterion D - a cluster's doublet frequency - cannot fire, because a doublet pocket is
     # small and dissolves into the lineage cluster around it. Measured on the calibration cohort:
     # D fired on nothing at 1.0 or 1.5 and on two clusters at 2.0, both above 72% doublet.
-    r2.add_argument("--resolution", type=float, default=2.0,
+    # NO DEFAULT HERE (B1-074): absent, each library takes its ASSAY'S resolution from
+    # modules/06_cluster_check/cluster_flags.RESOLUTION, a table that says the nuclear 2.0 was
+    # measured and the single-cell entry is lent; the report names the source either way.
+    r2.add_argument("--resolution", type=float, default=None,
                     help="the clustering resolution step 6 flags on, and the one every downstream "
-                         "artifact carries (default 2.0)")
+                         "artifact carries; default: the assay's (cluster_flags.RESOLUTION)")
     # Profiled and flagged ALONGSIDE the default, into sibling files. They change no deliverable
     # and nothing downstream reads them; they exist so the flags at one resolution can be read
     # against the flags at another, which is the only way to tell a contamination POCKET (isolates

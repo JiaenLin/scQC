@@ -364,6 +364,13 @@ detector:
 | unstable | spread > 5× |
 | design-differential | worst arm / best arm ≥ 3×, **and** the worst arm calls ≥ 1% |
 
+The lines are declared per assay (`ZERO_RATE`, `DESIGN_REFUSE`, `MATERIAL` in
+`modules/04_doublets/doublet_health.py`, and likewise the cell-call gate's lines and the
+clustering resolution): the same values on `snrna` and `scrna` today, every one set against
+nuclei, and the single-cell entry says so (`LINES_SOURCE`). A library under the silence line is
+refused only where its own declared rate predicted at least one doublet among the cells it
+scored; otherwise the silence is what the declaration predicts, and it is reported.
+
 The materiality condition on the last one is deliberate: a ratio between two near-zero rates is
 dominated by single libraries, and is reported rather than refused.
 

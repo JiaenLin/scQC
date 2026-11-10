@@ -32,7 +32,7 @@ DESIGN = {"condition": CONDITION, "batch": BATCH}
 fails = []
 print("Step 2 - cell-call gate\n" + "=" * 74)
 print("A. the calibration cohort's calls, as accepted")
-f = gate(COHORT, DESIGN)
+f = gate(COHORT, DESIGN, assay="snrna")
 for x in f:
     print(x)
 v = verdict(f)
@@ -48,13 +48,13 @@ print("B. injected: CellBender stricter than the aligner")
 # under REVIEW_LOST of the aligner's cells lost is REVIEW; with REVIEW_LOST or more it is REFUSED.
 b = {k: dict(v) for k, v in COHORT.items()}
 b["ctrl_05"]["cellbender"] = 11000 # below the aligner's 13,140
-f2 = gate(b, DESIGN)
+f2 = gate(b, DESIGN, assay="snrna")
 hit = [x for x in f2 if "stricter" in x.check]
 print(hit[0])
 if hit[0].severity != "REVIEW":
     fails.append("B: a ratio below 1.0 that loses under the REVIEW line must be REVIEW")
 b["ctrl_05"]["lost"] = int(0.06 * b["ctrl_05"]["aligner"])
-hit = [x for x in gate(b, DESIGN) if "stricter" in x.check]
+hit = [x for x in gate(b, DESIGN, assay="snrna") if "stricter" in x.check]
 print(hit[0])
 if hit[0].severity != "REFUSE":
     fails.append("B: a ratio below 1.0 that loses 6% of the aligner's cells must REFUSE")
@@ -63,7 +63,7 @@ print("\n" + "-" * 74)
 print("C. injected: 14% of aligner cells lost in one sample")
 c = {k: dict(v) for k, v in COHORT.items()}
 c["ctrl_02"]["lost"] = int(0.14 * c["ctrl_02"]["aligner"])
-f3 = gate(c, DESIGN)
+f3 = gate(c, DESIGN, assay="snrna")
 hit = [x for x in f3 if x.check.startswith("aligner cells lost")]
 print(hit[0])
 if hit[0].severity != "REFUSE":

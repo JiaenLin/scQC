@@ -138,9 +138,10 @@ The two forms are not interchangeable, and the diagram marks the difference.
   retries (up to `SCQC_QSUB_LIMIT_WAIT_S`, 6 h); any other refusal fails at once.
 
 - **A single cell is not a nucleus, and the route says so from step 1.** The assay decides
-  whether this pipeline denoises at all (`modules/01_ambient`, `DENOISE`): nuclei always, single
-  cells never - the PI's ruling of 2026-10-02, after the first single-cell cohort went down the
-  nuclear route whole and failed inside CellBender. A single-cell library's object is its raw
+  whether CellBender runs (`modules/01_ambient`, `CELLBENDER_RUNS`): nuclei always - unless a skip
+  is declared with a reason and an approver - and single cells never, the PI's ruling of
+  2026-10-02, after the first single-cell cohort went down the nuclear route whole and failed
+  inside CellBender. A single-cell library's object is its raw
   counts, every droplet kept; the aligner's call is written into it as `aligner_cell`, and steps
   2, 4, 5 and 6 select cells by that column. Step 2 has nothing to compare and reports NOT RUN
   rather than a loss of zero. The count bounds and criterion C's marker classes are per assay.

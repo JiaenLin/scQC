@@ -66,7 +66,7 @@ by = rows_by_name(block)
 check("FIXED rows are present", any(r["class"] == "FIXED" for r in block))
 check("DECLARED rows come from the tools dict", by.get("light floor (UMI)", {}).get("class")
       == "DECLARED", str(by.get("light floor (UMI)")))
-check("a tools key that was not given produces no row", "clustering resolution" not in by,
+check("a tools key that was not given produces no row", "dbr.sd sweep" not in by,
       str(sorted(by)))
 check("the derived floors are DERIVED", by.get("UMI floor", {}).get("class") == "DERIVED")
 check("...and carry a basis, which is what makes them reviewable",

@@ -170,9 +170,11 @@ Stated plainly, because this is the section that is usually omitted:
 - **Whether the gate thresholds are correctly placed.** The 5% / 10% cell-call lines and the 3×
   design-differential line were set against distributions from this cohort and one accepted
   outcome. A threshold that has never fired in anger is a hypothesis.
-- **Anything about single-cell (as opposed to single-nuclei) data.** The ambient step is mandatory
-  for nuclei and never run on cells (`DENOISE`); the single-cell route has run on one real cell
-  cohort only.
+- **Anything about single-cell (as opposed to single-nuclei) data.** CellBender is mandatory for
+  nuclei and never run on cells (`CELLBENDER_RUNS`); the single-cell route has run on one real cell
+  cohort only, and every nucleus-calibrated line it uses (the resolution, the doublet and cell-call
+  lines, the design-differential line) is a per-assay table whose single-cell entry says it was
+  calibrated on nuclei and is unmeasured on cells.
 - **Droplet-free or plate-based protocols.** Not supported and not tested.
 
 ## How to calibrate on your own data

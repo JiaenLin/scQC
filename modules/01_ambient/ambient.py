@@ -23,10 +23,21 @@ This read "default-on-but-skippable for `scrna`" until 2026-10-02, and the run r
 that: it scheduled CellBender for every library whatever the assay, so the first single-cell
 cohort spent its GPU hours denoising whole cells and failed there (single-cell-harness ADR-0027).
 The PI's ruling that day: "do not run cellbender for single cell" - "single cell and single
-nuclei is fundamentally different!". So the rule is now a POLICY per assay, `DENOISE` below:
-mandatory for `snrna`, never run by this pipeline for `scrna`. A single-cell library arrives
-already corrected (SUPPLIED, with its provenance) or is not corrected at all, and the report says
-which. Its cell call is then the aligner's, because there is no denoiser to take one from.
+nuclei is fundamentally different!". So the rule is a POLICY per assay, `CELLBENDER_RUNS` below:
+CellBender is mandatory for `snrna` and is never run on `scrna`. The words name CellBender, and
+the policy is read no wider than them (harness autodev W020, B1-075): no other ambient method is
+built for cells here yet, and one may be added, per assay, without touching this rule. A
+single-cell library arrives already corrected (SUPPLIED, with its provenance) or takes its raw
+counts as the object, and the report says which. Its cell call is then the aligner's, because
+there is no denoiser to take one from.
+
+A NUCLEUS LIBRARY'S CORRECTION MAY BE SKIPPED BY DECLARATION (harness autodev W020, B1-105).
+"There is no flag for this" made the skip impossible, against the project's rule that a bypass is
+possible and logged, never impossible (docs/PRINCIPLES.md section 3); a site without a GPU queue
+could not run nuclei at all. A skip needs a reason AND a named approver (samplesheet columns
+`ambient_skip_reason`, `ambient_skip_approved_by`); it is recorded DECLARED and stated in the
+report, and the library then takes the not-denoised route - raw counts, the aligner's call - with
+every other nucleus rule unchanged. Half a declaration skips nothing.
 
 CELLBENDER IS A DENOISER, NOT THIS PIPELINE'S CELL CALLER
 
@@ -52,11 +63,15 @@ from dataclasses import dataclass
 
 ASSAYS = ("snrna", "scrna")
 
-# WHETHER THIS PIPELINE RUNS A DENOISER, PER ASSAY. A policy, not a default a flag can flip: a
-# nucleus is denoised because the ambient pool is a sixth to a quarter of its counts, and a whole
-# cell is not, by the PI's ruling of 2026-10-02 (see above). Every assay in ASSAYS has an entry,
-# and a new assay must state its own rather than inherit either.
-DENOISE = {"snrna": True, "scrna": False}
+# WHETHER CELLBENDER RUNS, PER ASSAY. A policy, not a default a flag can flip: a nucleus is
+# denoised because the ambient pool is a sixth to a quarter of its counts, and CellBender is never
+# run on a whole cell, by the PI's ruling of 2026-10-02 (see above). Every assay in ASSAYS has an
+# entry, and a new assay must state its own rather than inherit either. CellBender-specific: an
+# ambient method built for cells would have its own table beside this one.
+CELLBENDER_RUNS = {"snrna": True, "scrna": False}
+#: Why the single-cell policy is what it is, in the words that set it.
+CELLBENDER_POLICY_SOURCE = ("the PI, 2026-10-02: \"do not run cellbender for single cell\" - "
+                            "\"single cell and single nuclei is fundamentally different!\"")
 # CellBender package defaults. A departure from either - a halved learning rate, for instance -
 # is a stated choice, not a setting, and must be recorded as one. `lr_policy` decides when the
 # learning rate has to move and requires the halved run to be RE-MEASURED before it is adopted.
@@ -75,6 +90,8 @@ class AmbientPlan:
     params: dict = None
     # SUPPLIED is a third state and NOT a kind of skip. See plan_ambient.
     supplied: dict = None
+    # A skip DECLARED for a nucleus library: {reason, approved_by}. None otherwise (B1-105).
+    declared_skip: dict = None
 
     @property
     def state(self) -> str:
@@ -96,14 +113,15 @@ SUPPLIED_REQUIRED = ("tool", "version", "params", "produced_by")
 
 
 def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=None,
-                 params=None, supplied=None) -> AmbientPlan:
+                 params=None, supplied=None, approved_by="") -> AmbientPlan:
     """Decide whether CellBender runs for this sample, and refuse an unsafe skip.
 
     THREE STATES, AND THE THIRD IS NOT A KIND OF SKIP
 
       RUN       this pipeline corrects the matrix.
-      SKIP      no correction happens at all. Refused outright for snRNA; for scRNA it is
-                the policy (DENOISE), not a request.
+      SKIP      no correction happens here. For scRNA it is the policy (CELLBENDER_RUNS), not a
+                request; for snRNA it is refused unless DECLARED with a reason and a named
+                approver (`skip_reason`, `approved_by`), and is then recorded as declared.
       SUPPLIED  the correction ALREADY HAPPENED, elsewhere, and its output is the input here.
 
     Conflating SUPPLIED with SKIP is the failure this distinction exists to prevent, and it can
@@ -165,30 +183,43 @@ def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=No
             f"({supplied['params']}), run by {supplied['produced_by']}. NOT performed by this "
             f"run - the fraction removed is NOT MEASURABLE here and must not be reported as if "
             f"it were.",
-            p, dict(supplied))
+            p, supplied=dict(supplied))
 
-    if not DENOISE[assay]:
+    if not CELLBENDER_RUNS[assay]:
         # NOT a skip somebody asked for, so it needs no reason from the caller: it is this
         # pipeline's rule for the assay, and the rule is the reason. A reason given anyway is
         # kept beside it.
         return AmbientPlan(
             sample, assay, False, mandatory,
-            f"NOT RUN: this pipeline does not denoise {assay} (PI, 2026-10-02: single cells and "
-            f"single nuclei are fundamentally different). The ambient fraction is NOT MEASURED "
-            f"and must not be reported as low; the cell call is the aligner's."
+            f"NOT RUN: CellBender is not run on {assay} ({CELLBENDER_POLICY_SOURCE}). No other "
+            f"ambient method is built for cells here yet; one may be added per assay. The "
+            f"ambient fraction is NOT MEASURED and must not be reported as low; the cell call is "
+            f"the aligner's."
             + (f" Also recorded: {skip_reason}" if str(skip_reason).strip() else ""),
             p)
 
-    # Only an assay this pipeline denoises reaches here, and every such assay is mandatory: the
-    # branch that took a recorded reason for a single-cell skip went with the policy above, since
-    # no caller can now arrive at it.
+    # Only an assay CellBender runs on reaches here, and on every such assay it is mandatory. A
+    # skip is DECLARED or it is refused: a reason without a named approver, or an approver
+    # without a reason, is half a declaration and skips nothing.
     if skip:
+        reason, who = str(skip_reason or "").strip(), str(approved_by or "").strip()
+        if reason and who:
+            return AmbientPlan(
+                sample, assay, False, mandatory,
+                f"SKIPPED BY DECLARATION: ambient correction is mandatory for {assay} and was "
+                f"skipped for this library - reason: {reason}; approved by {who}. DECLARED, not "
+                f"the policy: the ambient fraction is NOT MEASURED and must not be reported as "
+                f"low, and the cell call is the aligner's.",
+                p, declared_skip={"reason": reason, "approved_by": who})
+        missing = ", ".join(x for x, v in (("a reason (ambient_skip_reason)", reason),
+                                           ("a named approver (ambient_skip_approved_by)", who))
+                            if not v)
         raise AmbientRefusal(
-            f"{sample}: ambient correction cannot be skipped for snRNA-seq. There is no flag "
-            f"for this. A nucleus holds roughly an order of magnitude less RNA than its cell "
-            f"and the ambient pool IS the lysed cytoplasm, so the background is a far larger "
-            f"fraction of the signal - measured at 15.5-23.7% of all counts across ten "
-            f"solid-tissue libraries. Skipping it does not analyse nuclei; it analyses a "
-            f"mixture.")
+            f"{sample}: ambient correction is mandatory for snRNA-seq, and a skip must be "
+            f"DECLARED with a reason and a named approver - this one lacks {missing}. A nucleus "
+            f"holds roughly an order of magnitude less RNA than its cell and the ambient pool IS "
+            f"the lysed cytoplasm, so the background is a far larger fraction of the signal - "
+            f"measured at 15.5-23.7% of all counts across ten solid-tissue libraries. Skipping "
+            f"it analyses a mixture, and a person has to say so, in writing, before it is done.")
 
     return AmbientPlan(sample, assay, True, mandatory, "ambient correction will run", p)

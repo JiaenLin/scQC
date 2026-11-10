@@ -897,8 +897,24 @@ def derive_mito_ceiling_from_quartiles(stats, assay, bounds=None, mult=IQR_MULT,
 # meaningful statistic. Same values and same reasoning as modules/04_doublets/doublet_health.py
 # and modules/02_cells/cellcall_gate.py - restated rather than imported so each module's refusal
 # is legible where it fires.
-DESIGN_REFUSE = 3.0
-MATERIAL = 0.01     # worst arm must lose at least this fraction before the ratio binds
+# PER ASSAY (harness autodev W020, B1-074), the same values on both; LINES_SOURCE says why.
+DESIGN_REFUSE = {"snrna": 3.0, "scrna": 3.0}
+MATERIAL = {"snrna": 0.01, "scrna": 0.01}  # worst arm must lose at least this before the ratio binds
+
+
+def per_assay(table: dict, assay, what: str):
+    """The assay's entry of a per-assay table. No default: an unknown assay is refused by name."""
+    a = str(assay or "").strip().lower()
+    if a not in table:
+        raise ThresholdRefusal(f"{what}: no value for assay {assay!r} (known: {sorted(table)}). "
+                               f"The lines are declared per assay, and one assay's is not lent to "
+                               f"another.")
+    return table[a]
+
+
+LINES_SOURCE = {"snrna": "set or measured on the calibration cohort's nuclei",
+                "scrna": "calibrated on nuclei, unmeasured on cells - the same value, lent knowingly "
+                         "until a single-cell cohort measures its own"}
 # A threshold written in decimal is not the threshold the machine tests. This is not theoretical
 # here: on the calibration cohort a candidate fixed ceiling produced a diet ratio of EXACTLY
 # 3.00x, which is precisely the value a bare `>= 3.0` can miss by one unit in the last place.
@@ -910,7 +926,7 @@ def _at_least(value: float, threshold: float) -> bool:
     return value >= threshold - abs(threshold) * ON_THE_LINE
 
 
-def assess_mito_removal(per_library, ceilings, design=None) -> dict:
+def assess_mito_removal(per_library, ceilings, design=None, *, assay) -> dict:
     """What the derived ceilings WOULD remove, and whether that is even across the design.
 
     `per_library` maps sample -> per-nucleus mitochondrial percentages, the same input
@@ -918,10 +934,12 @@ def assess_mito_removal(per_library, ceilings, design=None) -> dict:
     `design` maps factor -> {sample: level}; without it the check that matters most cannot run,
     and that is reported rather than passed over.
 
-    Refuses when one design arm loses at least DESIGN_REFUSE times the fraction another does.
+    Refuses when one design arm loses at least design_refuse times the fraction another does.
     That is rule one Q3: a filter removing 53% of one arm and 6% of another has converted a
     technical property into an apparent biological difference, and nothing downstream can undo it.
     """
+    design_refuse = per_assay(DESIGN_REFUSE, assay, "DESIGN_REFUSE")
+    material_floor = per_assay(MATERIAL, assay, "MATERIAL")
     cs = ceilings.get("ceilings", ceilings) if isinstance(ceilings, dict) else ceilings
     per_sample_rate, removed, total = {}, 0, 0
     for s, vals in per_library.items():
@@ -973,23 +991,23 @@ def assess_mito_removal(per_library, ceilings, design=None) -> dict:
         # evidence: 0.02% against 0.005% is 4x and means nothing. It cuts the other way too - at a
         # very LARGE removal the 3x test cannot fail, because three times the smallest arm exceeds
         # 100%. Both are stated so a passing check is not read as a strong one.
-        if hi_r < MATERIAL:
+        if hi_r < material_floor:
             out["notes"].append(
-                f"worst arm ({factor}) loses {100*hi_r:.3f}%, below the {100*MATERIAL:.0f}% "
+                f"worst arm ({factor}) loses {100*hi_r:.3f}%, below the {100*material_floor:.0f}% "
                 f"materiality floor - the {ratio:.2f}x ratio is arithmetic on small numbers and "
                 f"does not bind.")
-        elif _at_least(ratio, DESIGN_REFUSE):
+        elif _at_least(ratio, design_refuse):
             raise ThresholdRefusal(
                 f"the mitochondrial ceiling removes unevenly across {factor}: "
                 + ", ".join(f"{k} {100*v:.2f}%" for k, v in out['arms'][factor]['levels'].items())
-                + f" - a {ratio:.2f}x differential against a {DESIGN_REFUSE}x refusal line. A "
+                + f" - a {ratio:.2f}x differential against a {design_refuse}x refusal line. A "
                 f"filter this uneven across a design factor has converted a technical property "
                 f"into an apparent biological difference, and no downstream analysis can undo "
                 f"that. Do not apply it.")
         else:
             out["notes"].append(
                 f"worst design-arm ratio {ratio:.2f}x on {factor}, under the "
-                f"{DESIGN_REFUSE}x refusal line.")
+                f"{design_refuse}x refusal line.")
         if 3 * min(min(a["levels"].values()) for a in out["arms"].values()) > 1.0:
             out["notes"].append(
                 "NOTE: at this removal rate the 3x test CANNOT fail - three times the lowest arm "

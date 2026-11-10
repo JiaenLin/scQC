@@ -62,10 +62,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-REVIEW_LOST = 0.05 # aligner cells lost by CellBender
-REFUSE_LOST = 0.10
-REFUSE_RATIO = 1.00 # CellBender calling fewer cells than the aligner
-DESIGN_REFUSE = 3.0 # the design-differential check
+# PER ASSAY (harness autodev W020, B1-074): the lines below were measured on nuclei (the header
+# above), and a whole cell is not one. The same values on both assays, with LINES_SOURCE saying so.
+REVIEW_LOST = {"snrna": 0.05, "scrna": 0.05}   # aligner cells lost by CellBender
+REFUSE_LOST = {"snrna": 0.10, "scrna": 0.10}
+REFUSE_RATIO = {"snrna": 1.00, "scrna": 1.00}  # CellBender calling fewer cells than the aligner
+DESIGN_REFUSE = {"snrna": 3.0, "scrna": 3.0}   # the design-differential check
 # Binary floating point puts an exact 3x differential on the wrong side of the line: 0.30/0.10
 # evaluates to 2.9999999999999996, so an exactly-3x loss - the one case the threshold names -
 # would not fire. The comparison therefore carries a relative tolerance.
@@ -78,7 +80,25 @@ RATIO_TOL = 1e-9
 # a >=3x differential is still reported - it is informative - but as REVIEW, and it does not stop
 # the run. That is deliberate: a real >=3x differential passes as REVIEW whenever the worst arm
 # loses under 1% of its cells.
-MATERIAL_LOSS = 0.01 # worst arm must lose at least this fraction for the ratio to bind
+MATERIAL_LOSS = {"snrna": 0.01, "scrna": 0.01}  # worst arm must lose at least this for the ratio to bind
+
+
+#: Where each per-assay line came from. The values are the same on both assays today: every one
+#: was set or measured on the calibration cohort's NUCLEI, and lending it to cells is done here
+#: knowingly, in a table that says so, never by a default (harness autodev W020, B1-074; the PI,
+#: 2026-10-02: single cells and single nuclei are fundamentally different).
+LINES_SOURCE = {"snrna": "set or measured on the calibration cohort's nuclei",
+                "scrna": "calibrated on nuclei, unmeasured on cells - the same value, lent knowingly "
+                         "until a single-cell cohort measures its own"}
+
+
+def per_assay(table: dict, assay, what: str):
+    """The assay's entry of a per-assay table. No default: an unknown assay is refused by name."""
+    a = str(assay or "").strip().lower()
+    if a not in table:
+        raise ValueError(f"{what}: no value for assay {assay!r} (known: {sorted(table)}). The "
+                         f"lines are declared per assay, and one assay's is not lent to another.")
+    return table[a]
 
 class GateRefusal(RuntimeError):
     """Raised when the cell-call gate refuses the run."""
@@ -96,7 +116,7 @@ class GateFinding:
             s += f"\n - {d}"
         return s
 
-def _ratio_binds(hi: float, lo: float, threshold: float = DESIGN_REFUSE) -> bool:
+def _ratio_binds(hi: float, lo: float, threshold: float) -> bool:
     """True when `hi` is at least `threshold` times `lo`, the exact boundary included.
 
     Written as a cross-multiplication with a relative tolerance rather than `hi / lo >=
@@ -105,44 +125,50 @@ def _ratio_binds(hi: float, lo: float, threshold: float = DESIGN_REFUSE) -> bool
     """
     return hi > 0 and hi + abs(hi) * RATIO_TOL >= threshold * lo
 
-def gate(calls, design=None) -> list:
+def gate(calls, design=None, *, assay) -> list:
     """calls: {sample: {"aligner": n, "cellbender": n, "lost": n}} - `lost` is aligner cells
-    NOT called by CellBender. design: {factor: {sample: level}}."""
+    NOT called by CellBender. design: {factor: {sample: level}}. `assay` selects the lines
+    (per assay above); it is required and has no default."""
     out = []
+    review_lost = per_assay(REVIEW_LOST, assay, "REVIEW_LOST")
+    refuse_lost = per_assay(REFUSE_LOST, assay, "REFUSE_LOST")
+    refuse_ratio = per_assay(REFUSE_RATIO, assay, "REFUSE_RATIO")
+    design_refuse = per_assay(DESIGN_REFUSE, assay, "DESIGN_REFUSE")
+    material_loss = per_assay(MATERIAL_LOSS, assay, "MATERIAL_LOSS")
 
     strict = {s: v["cellbender"] / max(v["aligner"], 1) for s, v in calls.items()}
-    bad = {s: r for s, r in strict.items() if r < REFUSE_RATIO}
+    bad = {s: r for s, r in strict.items() if r < refuse_ratio}
     lost = {s: v["lost"] / max(v["aligner"], 1) for s, v in calls.items()}
     # STRICTER IS A FILTER ONLY WHEN IT COSTS CELLS (harness autodev W020, B1-103). A denoiser that
-    # calls fewer cells than the aligner while losing under REVIEW_LOST of the aligner's own cells
+    # calls fewer cells than the aligner while losing under review_lost of the aligner's own cells
     # has dropped droplets the aligner called and kept nearly every cell - the loss check below
     # judges exactly that, and refusing on the ratio alone stopped runs the loss check passed.
-    # Such a library is REVIEW; one that is stricter AND loses at least REVIEW_LOST is REFUSED.
-    material = {s for s in bad if lost[s] >= REVIEW_LOST}
+    # Such a library is REVIEW; one that is stricter AND loses at least review_lost is REFUSED.
+    material = {s for s in bad if lost[s] >= review_lost}
     out.append(GateFinding(
         "CellBender must not be stricter than the aligner",
         "REFUSE" if material else ("REVIEW" if bad else "ok"),
         (f"{len(material)} sample(s) call FEWER cells than the aligner and lose at least "
-         f"{100*REVIEW_LOST:.0f}% of the aligner's cells - the boundary has become a filter, and "
+         f"{100*review_lost:.0f}% of the aligner's cells - the boundary has become a filter, and "
          f"a cell-selection decision has migrated into a denoiser"
          if material else
          f"{len(bad)} sample(s) call fewer cells than the aligner, but each loses under "
-         f"{100*REVIEW_LOST:.0f}% of the aligner's cells - reported, not refused"
+         f"{100*review_lost:.0f}% of the aligner's cells - reported, not refused"
          if bad else
          f"all {len(strict)} call more (ratio {min(strict.values()):.2f}-"
          f"{max(strict.values()):.2f})"),
         [f"{s}: ratio {r:.2f}, lost {100*lost[s]:.1f}%" for s, r in sorted(bad.items())]))
 
-    refuse = {s: f for s, f in lost.items() if f > REFUSE_LOST}
-    review = {s: f for s, f in lost.items() if REVIEW_LOST <= f <= REFUSE_LOST}
+    refuse = {s: f for s, f in lost.items() if f > refuse_lost}
+    review = {s: f for s, f in lost.items() if review_lost <= f <= refuse_lost}
     sev = "REFUSE" if refuse else ("REVIEW" if review else "ok")
     out.append(GateFinding(
         "aligner cells lost by CellBender",
         sev,
-        (f"worst {100*max(lost.values()):.1f}%; REVIEW at {100*REVIEW_LOST:.0f}%, "
-         f"REFUSE at {100*REFUSE_LOST:.0f}%"),
+        (f"worst {100*max(lost.values()):.1f}%; REVIEW at {100*review_lost:.0f}%, "
+         f"REFUSE at {100*refuse_lost:.0f}%"),
         [f"{s}: {100*f:.1f}% ({calls[s]['lost']:,} of {calls[s]['aligner']:,}) "
-         f"{'REFUSE' if f > REFUSE_LOST else 'review'}"
+         f"{'REFUSE' if f > refuse_lost else 'review'}"
          for s, f in sorted({**refuse, **review}.items(), key=lambda x: -x[1])]))
 
     # Small losses can still be one-sided. A percentage per sample cannot see this.
@@ -169,17 +195,17 @@ def gate(calls, design=None) -> list:
                     f"the design-differential check exists to catch, however small"))
             else:
                 r = hi / max(lo, 1e-12)
-                binds = _ratio_binds(hi, lo)
-                material = hi >= MATERIAL_LOSS
+                binds = _ratio_binds(hi, lo, design_refuse)
+                material = hi >= material_loss
                 if binds and material:
                     sev, note = "REFUSE", (
-                        f" - REFUSED: at or above the {DESIGN_REFUSE:.0f}x design-differential "
+                        f" - REFUSED: at or above the {design_refuse:.0f}x design-differential "
                         f"line, and the loss is material - the worst arm loses "
                         f"{100*hi:.2f}% of its cells")
                 elif binds:
                     sev, note = "REVIEW", (
-                        f" ratio reaches {DESIGN_REFUSE:.0f}x but the loss is NOT material - "
-                        f"the worst arm loses {100*hi:.2f}%, under the {100*MATERIAL_LOSS:.0f}% "
+                        f" ratio reaches {design_refuse:.0f}x but the loss is NOT material - "
+                        f"the worst arm loses {100*hi:.2f}%, under the {100*material_loss:.0f}% "
                         f"floor. A ratio between two near-zero rates is dominated by single "
                         f"libraries; reported, not refused")
                 else:

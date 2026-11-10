@@ -204,8 +204,9 @@ try:
     basis = {r["name"]: r.get("basis", "") for r in _Pipeline._parameters_block(
         _types.SimpleNamespace(FIXED_PARAMETERS=_Pipeline.FIXED_PARAMETERS,
                                DECLARED_PARAMETERS=_Pipeline.DECLARED_PARAMETERS, decisions={},
-                               tools={}, results_by_key={"05_quality": _Done(sup_m),
-                                                         "07_apply": _Done({})}))}
+                               tools={}, samples=[],
+                               results_by_key={"05_quality": _Done(sup_m),
+                                               "07_apply": _Done({})}))}
     if "the denoiser's called cells" not in basis.get("UMI floor", "") \
             or "aligner" in basis.get("UMI floor", ""):
         fails.append(f"G4: the parameter table's basis for the floor: {basis.get('UMI floor')!r}")
@@ -542,6 +543,116 @@ if HAVE:
                         fails.append(f"D4: the report's {st.get('key')} text says nucleus on "
                                      f"single cells: {text[:100]}")
         print("D. the CLI: no denoiser invoked, every droplet kept, step 2 compares nothing")
+
+# ---- I. every nucleus-calibrated line is declared per assay, and the policy names CellBender
+# (harness autodev W020, B1-074, B1-075, B1-105)
+import importlib.util  # noqa: E402
+
+
+def _load(rel, name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
+    m = importlib.util.module_from_spec(spec)
+    sys.modules[name] = m
+    spec.loader.exec_module(m)
+    return m
+
+
+_am = _load("modules/01_ambient/ambient.py", "w020_ambient")
+_cg = _load("modules/02_cells/cellcall_gate.py", "w020_cg")
+_dh = _load("modules/04_doublets/doublet_health.py", "w020_dh")
+_aa = _load("modules/01_ambient/audit_ambient.py", "w020_aa")
+_qm = _load("modules/05_quality/quality.py", "w020_qm")
+_cf = _load("modules/06_cluster_check/cluster_flags.py", "w020_cf")
+ASSAYS = set(_am.ASSAYS)
+TABLES = {"cluster_flags.RESOLUTION": (_cf, "RESOLUTION"),
+          "doublet_health.ZERO_RATE": (_dh, "ZERO_RATE"),
+          "doublet_health.DESIGN_REFUSE": (_dh, "DESIGN_REFUSE"),
+          "doublet_health.MATERIAL": (_dh, "MATERIAL"),
+          "cellcall_gate.REVIEW_LOST": (_cg, "REVIEW_LOST"),
+          "cellcall_gate.REFUSE_LOST": (_cg, "REFUSE_LOST"),
+          "cellcall_gate.REFUSE_RATIO": (_cg, "REFUSE_RATIO"),
+          "cellcall_gate.MATERIAL_LOSS": (_cg, "MATERIAL_LOSS"),
+          "cellcall_gate.DESIGN_REFUSE": (_cg, "DESIGN_REFUSE"),
+          "audit_ambient.DESIGN_REFUSE": (_aa, "DESIGN_REFUSE"),
+          "audit_ambient.MATERIAL_REMOVAL": (_aa, "MATERIAL_REMOVAL"),
+          "quality.DESIGN_REFUSE": (_qm, "DESIGN_REFUSE"),
+          "quality.MATERIAL": (_qm, "MATERIAL"),
+          "ambient.CELLBENDER_RUNS": (_am, "CELLBENDER_RUNS")}
+for label, (mod, name) in TABLES.items():
+    table = getattr(mod, name, None)
+    if not isinstance(table, dict) or set(table) != ASSAYS:
+        fails.append(f"I1: {label} is not a table keyed by exactly {sorted(ASSAYS)}: {table!r}")
+for label, mod in (("cluster_flags", _cf), ("doublet_health", _dh), ("cellcall_gate", _cg),
+                   ("audit_ambient", _aa), ("quality", _qm)):
+    src = getattr(mod, "RESOLUTION_SOURCE" if label == "cluster_flags" else "LINES_SOURCE", None)
+    if not isinstance(src, dict) or set(src) != ASSAYS or "nuclei" not in str(src.get("scrna")):
+        fails.append(f"I1: {label} carries no per-assay provenance saying the single-cell line was "
+                     f"calibrated on nuclei: {src!r}")
+# No default assay: an unknown one is refused by every gate, never read as either.
+for label, call in (
+        ("cellcall_gate.gate", lambda: _cg.gate({"A": {"aligner": 10, "cellbender": 12, "lost": 0}},
+                                                assay="spatial")),
+        ("doublet_health.health", lambda: _dh.health({"A": 0.05}, assay="spatial")),
+        ("audit_ambient.audit", lambda: _aa.audit([{"sample": "A", "fraction_removed_overall": 0.1,
+                                                    "genes_fully_removed": 0}], None, None,
+                                                  assay="spatial")),
+        ("quality.assess_mito_removal", lambda: _qm.assess_mito_removal(
+            {"A": [1.0, 2.0, 3.0, 4.0]}, {"A": 5.0}, assay="spatial"))):
+    try:
+        call()
+        fails.append(f"I2: {label} accepted assay 'spatial' instead of refusing it")
+    except (ValueError, _qm.ThresholdRefusal):
+        pass
+    except TypeError as e:
+        fails.append(f"I2: {label} takes no assay: {e}")
+# The policy names CellBender, and nothing wider.
+r = _am.plan_ambient("x", "scrna").reason
+if "CellBender" not in r or "never run by this pipeline" in r or "not corrected at all" in r:
+    fails.append(f"I3: plan_ambient's single-cell reason does not name CellBender, or bans more: {r[:160]}")
+# A nucleus library's correction can be skipped by declaration - with a reason AND an approver.
+sk = _am.plan_ambient("n", "snrna", skip=True, skip_reason="no GPU queue at this site; pilot ambient 4%",
+                      approved_by="the PI")
+if sk.state != "SKIP" or not sk.declared_skip or sk.declared_skip.get("approved_by") != "the PI":
+    fails.append(f"I4: a declared skip on snrna is {sk.state}, declared_skip {sk.declared_skip}")
+for kw in ({"skip_reason": "no GPU queue"}, {"approved_by": "the PI"}, {}):
+    try:
+        _am.plan_ambient("n", "snrna", skip=True, **kw)
+        fails.append(f"I4: a snrna skip with {kw} was allowed - half a declaration skips nothing")
+    except _am.AmbientRefusal:
+        pass
+# ...and through the graph: the skipped library takes the not-denoised route, the step-1 task and
+# the audit carry the declaration, and the resolution comes from the assay's table.
+gsk = _build([_row("A1", "snrna", aligner_cells="/d/A1/filtered",
+                   ambient_skip_reason="no GPU queue at this site; pilot ambient 4%",
+                   ambient_skip_approved_by="the PI"),
+              _row("B2", "snrna")])
+t1 = gsk.get("01_ambient/A1")
+if t1 is None or t1.fn is not steps._ambient_none or t1.params.get("approved_by") != "the PI":
+    fails.append(f"I5: a declared skip did not send the library down the not-denoised route with "
+                 f"its declaration: {getattr(t1, 'params', None)}")
+if getattr(gsk.get("01_ambient/B2"), "gpu", False) is not True:
+    fails.append("I5: the other nucleus library is no longer denoised")
+if (gsk["01_ambient_audit"].params.get("declared_skips") or {}).get("A1", {}).get("approved_by") != "the PI":
+    fails.append(f"I5: the audit does not carry the declared skip: "
+                 f"{gsk['01_ambient_audit'].params.get('declared_skips')}")
+try:
+    _build([_row("A1", "snrna", ambient_skip_reason="no GPU queue"), _row("B2", "snrna")])
+    fails.append("I5: a skip with a reason and no approver built")
+except Refusal as e:
+    if "approver" not in str(e):
+        fails.append(f"I5: refused without naming the missing approver: {str(e)[:120]}")
+for s, want in (("A1", _cf.RESOLUTION["snrna"]),):
+    got = gsk[f"06_cluster/{s}"].params.get("resolution")
+    if got != want:
+        fails.append(f"I6: with no --resolution, 06_cluster/{s} takes {got!r}, not the assay's {want}")
+if g["06_cluster/A1"].params.get("resolution") != _cf.RESOLUTION["scrna"]:
+    fails.append(f"I6: single cells take {g['06_cluster/A1'].params.get('resolution')!r} rather than "
+                 f"their assay's entry")
+if {t.params.get("assay", {}).get("A1") for k, t in gsk.items()
+        if k in ("02_cells", "04_doublet_health", "01_ambient_audit")} != {"snrna"}:
+    fails.append("I7: the gating tasks are not told the assay whose lines they judge by")
+print("I. every nucleus-calibrated line is a per-assay table with its provenance; the policy names")
+print("   CellBender; a nucleus library's correction is skipped only by a declared, approved reason")
 
 print("\n" + "=" * 74)
 if fails:

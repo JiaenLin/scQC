@@ -37,6 +37,9 @@ scqc run --project ~/projects/my-study [--jobs N] [--mode evidence|apply] [--dec
 - `--gpu-queue` — under `--executor pbs`, the queue a task that declares a GPU (the denoiser)
   is sent to; every other task goes to `--queue`. Without it, every task goes to `--queue`. Several
   may be named, comma-separated: a GPU task goes to the first whose `resources_max` admits it.
+- `--resolution` — the clustering resolution step 6 flags on. No default here: absent, each library
+  takes its assay's entry of `cluster_flags.RESOLUTION` (2.0 on both; measured on nuclei, lent to
+  cells and said so), and the report names the source.
 - `--resources STEP=cpus:mem_gb:walltime_h[,...]` — what a task may ask for, over the graph's
   defaults (07_apply 8 CPU / 48 GB / 4 h, the denoiser 64 GB, ...). `STEP` is a step (`07_apply`)
   or a task-key prefix (`07_measure`, `06_cluster`). Keyed into the run key when given. Every task
