@@ -175,13 +175,13 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     # high in mitochondrial reads AND low in intronic fraction - carry-over around a nucleus. In a
     # whole cell the direction is the opposite: a damaged cell that has lost its cytoplasm is
     # HIGH in intronic fraction. Armed on cells it would remove intact cells for the wrong reason.
-    nf_on_cells = sorted(s for s, r in by_sample.items()
-                         if assay.get(s) == "scrna" and str(r.get("cellreads_stats") or "").strip())
-    if nf_on_cells:
-        raise Refusal(
-            f"05_quality: `cellreads_stats` is declared for single-cell libraries "
-            f"({', '.join(nf_on_cells)}). The nuclear-fraction criterion is calibrated on nuclei "
-            f"and points the other way in a whole cell; remove the column for scrna.")
+    # IGNORED ON CELLS, WITH A NOTE - NOT REFUSED (harness autodev W020, B1-076). A samplesheet
+    # shared with nucleus libraries carries the column for every row; refusing the run over it
+    # sent the user to edit the sheet per assay. The criterion is never armed on a whole cell:
+    # the column is dropped from the single-cell measure tasks below, and step 5 records which
+    # libraries it was dropped for, so the report says it rather than silently reading nothing.
+    nf_on_cells = {s: str(r.get("cellreads_stats") or "").strip() for s, r in by_sample.items()
+                   if assay.get(s) == "scrna" and str(r.get("cellreads_stats") or "").strip()}
     # A CELL-CALLED INPUT IS ITS OWN CELL CALL (harness autodev W020, B1-046). Step 0 accepts, on
     # single cells, a matrix that holds called cells only - the authors' filtered cells - and says
     # so in its metrics. Such a matrix needs no `aligner_cells`: every barcode in it is a cell
@@ -455,7 +455,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                     # no default in the reader - the columns summed are recorded beside every
                     # value, because including antisense changes what the number means without
                     # changing its name.
-                    "cellreads_stats": str(by_sample[s].get("cellreads_stats") or "").strip(),
+                    "cellreads_stats": ("" if s in nf_on_cells
+                                        else str(by_sample[s].get("cellreads_stats") or "").strip()),
                     "nf_antisense": str(
                         by_sample[s].get("nf_antisense") or "").strip().lower() == "true",
                     # The floor the MITOCHONDRIAL quartiles are taken above. The count valleys in
@@ -494,6 +495,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 # "the aligner's called cells" for every single-cell cohort, and on a library
                 # supplied already denoised the cells are the denoiser's call, not the aligner's.
                 "call_by": {s: call_by[s] for s in by_sample},
+                **({"cellreads_stats_ignored": nf_on_cells} if nf_on_cells else {}),
                 "mito_bounds": tools.get("mito_bounds"),
                 "mito_bound_declared_by": tools.get("mito_bound_declared_by")},
     ))

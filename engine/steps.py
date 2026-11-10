@@ -1646,6 +1646,20 @@ def _quality_stage(task, pipeline, log):
     # valley on nuclei, declared on single cells, where no valley is measured at all.
     cohort_assay = _cohort_assay(task.params.get("assay"))
     floors_declared = qmod.FLOOR_METHOD.get(cohort_assay) == "declared"
+    ignored = task.params.get("cellreads_stats_ignored") or {}
+    if ignored:
+        print(f"    cellreads_stats IGNORED on {len(ignored)} single-cell library(ies) "
+              f"({', '.join(sorted(ignored))}): the nuclear-fraction criterion is calibrated on "
+              f"nuclei and points the other way in a whole cell")
+        pipeline.record_findings("05_quality", [{
+            "step": "05_quality", "check": "cellreads_stats ignored on single cells",
+            "severity": "REVIEW",
+            "message": (f"`cellreads_stats` was declared for {len(ignored)} single-cell "
+                        f"library(ies) ({', '.join(sorted(ignored))}) and was not read: the "
+                        f"nuclear-fraction criterion is calibrated on nuclei and points the other "
+                        f"way in a whole cell, so it is never armed on scrna. Nothing was "
+                        f"measured from the column; the run went on without it."),
+            "detail": [f"{s}: {p}" for s, p in sorted(ignored.items())]}])
     for s in task.params["samples"]:
         r = pipeline.results_by_key.get(f"05_quality/{s}")
         met = (getattr(r, "metrics", None) or {}) if r is not None else {}

@@ -109,14 +109,19 @@ for s in ("A1", "B2"):
         fails.append(f"A11: 05_quality/{s} would measure a valley over raw droplets, or derive the "
                      f"ceiling below the floor it is applied above: {q5.get('valleys_not_used')!r}, "
                      f"{q5.get('mito_floor_umi')!r}")
-# The nuclear-fraction criterion points the other way in a whole cell: refused on scrna.
+# The nuclear-fraction criterion points the other way in a whole cell: on scrna the column is
+# IGNORED and the barrier is told which libraries carried it (harness autodev W020, B1-076) -
+# the run is not refused over a column a shared samplesheet carries for every row.
 try:
-    _build([_row("A1", "scrna", aligner_cells="/d/f", cellreads_stats="/d/CellReads.stats"),
-            _row("B2", "scrna", aligner_cells="/d/f")])
-    fails.append("A12: the nucleus-calibrated nuclear-fraction criterion was armed on single cells")
+    gi = _build([_row("A1", "scrna", aligner_cells="/d/f", cellreads_stats="/d/CellReads.stats"),
+                 _row("B2", "scrna", aligner_cells="/d/f")])
+    if gi["05_quality/A1"].params.get("cellreads_stats"):
+        fails.append("A12: the nucleus-calibrated nuclear-fraction criterion was armed on single cells")
+    if (gi["05_quality"].params.get("cellreads_stats_ignored") or {}).get("A1") != "/d/CellReads.stats":
+        fails.append(f"A12: the ignored column is not recorded for the report: "
+                     f"{gi['05_quality'].params.get('cellreads_stats_ignored')}")
 except Refusal as e:
-    if "cellreads_stats" not in str(e):
-        fails.append(f"A12: refused for another reason: {str(e)[:120]}")
+    fails.append(f"A12: a single-cell cohort was refused over cellreads_stats: {str(e)[:120]}")
 
 # Nuclei are untouched: denoised on the GPU, the call left to the denoiser, both marker classes.
 NUC = [_row("A1", "snrna"), _row("B2", "snrna")]
