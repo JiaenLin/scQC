@@ -49,8 +49,12 @@ points:
   step:
     what: a stage of the pipeline, run in order over a project
     lives: modules
+    # _STEP_MODULES is keyed by MODULE ("quality") and GATES by STEP ("05_quality"), so no name
+    # was in both and the declaration tier failed for every step, the example included. A step
+    # plugs into _STEP_MODULES as its directory - `ROOT / "modules" / "05_quality" / ...` - and
+    # that is what the pattern looks for (harness autodev W020).
     register:
-      - {file: engine/pipeline.py, table: _STEP_MODULES}
+      - {file: engine/pipeline.py, pattern: "modules. / .{name}. /", fix: "add the step directory module to _STEP_MODULES in engine/pipeline.py"}
       - {file: engine/declare.py, table: GATES}
     must_declare: [inputs it reads, products it writes, its entry in APPLY_REQUIRES if it removes]
     example: 05_quality
