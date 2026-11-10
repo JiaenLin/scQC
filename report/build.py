@@ -49,6 +49,8 @@ Every key is optional; every absence is stated on the page. Nothing below has a 
                       "decided_on": str}, ...],
       "steps":      [{"key": step_key, "status": str, "what_it_does": str,
                       "found": [{"label": str, "value": any, "source": path}, ...],
+                                # a metric about the run's own execution carries
+                                # `execution_value` in place of `value`
                       "cannot_establish": str, "figures": ["F3", ...],
                       "sources": [path, ...]}, ...],
       "figures":    {"F1": {"data": {...}      # keyword arguments for report.figures.fig_f1_*
@@ -915,6 +917,10 @@ def _one_step(key, title, purpose, removes, figures, entry, payload, verdict_blo
             if isinstance(item, dict):
                 label, value, source = _get(item, "label"), _get(item, "value"), \
                     _get(item, "source")
+                if value is MISSING:
+                    # A metric about the run's own execution (engine/pipeline.py,
+                    # EXECUTION_METRIC_SUFFIXES): rendered like any other, read from its own key.
+                    value = _get(item, "execution_value")
                 if _stated(value) and not _stated(source):
                     _defect(defects, where,
                             f"finding {j} ({_text(label)}) states a value with no source file. "

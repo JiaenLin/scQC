@@ -112,6 +112,11 @@ def _why(message: str, limit: int = 300) -> str:
                 lines[0])
     return pick if len(pick) <= limit else pick[:limit - 3] + "..."
 
+#: Metric names that record the run's own execution rather than the data: a start time, an
+#: output's age when a task began. They reach the report under `execution_value`, not `value`.
+EXECUTION_METRIC_SUFFIXES = ("_epoch_s", "_age_s_at_start", "elapsed_s", "_wall_s")
+
+
 class Pipeline:
     """Builds the task graph for a project and runs it."""
 
@@ -1018,7 +1023,14 @@ class Pipeline:
                 sources.extend(str(o) for o in (r.outputs or []))
                 for mk, mv in sorted((r.metrics or {}).items()):
                     label = f"{mk} ({r.sample})" if getattr(r, "sample", None) else mk
-                    found.append({"label": label, "value": mv,
+                    # A METRIC ABOUT THE RUN'S OWN EXECUTION - when a task started, how old an
+                    # output was - is a different kind of fact from one about the data, and is
+                    # written under its own key so a reader (and the development suite's two-shape
+                    # comparison, which reports such fields and judges every other) can tell them
+                    # apart without parsing labels (harness autodev W020).
+                    val_key = ("execution_value" if str(mk).endswith(EXECUTION_METRIC_SUFFIXES)
+                               else "value")
+                    found.append({"label": label, val_key: mv,
                                   "source": (list(r.outputs or []) or [None])[0]})
             statuses = sorted({r.status.value for _, r in items})
             out.append({

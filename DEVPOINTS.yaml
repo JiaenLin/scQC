@@ -21,7 +21,7 @@ fixture:
   products: [reports/report.json, STATUS.json]
   # What the run records about its OWN execution, reported by `agree` and never judged: the two
   # shapes are two executions. Everything else the two shapes write is compared.
-  execution_record: ["*::*elapsed*", "*::*seconds*", "*::*duration*", "*::*output_stat*", "*::*mtime*", "*::*bytes*", "*::*size*", "*::*started*", "*::*finished*", "*::*generated*", "*::*newest_input*", "*::*jobs*", "*::*pid*", "*::*hostname*"]
+  execution_record: ["*::*execution_value*", "*::*elapsed*", "*::*seconds*", "*::*duration*", "*::*output_stat*", "*::*mtime*", "*::*bytes*", "*::*size*", "*::*started*", "*::*finished*", "*::*generated*", "*::*newest_input*", "*::*jobs*", "*::*pid*", "*::*hostname*"]
 
 baseline_dir: tests/baselines
 
