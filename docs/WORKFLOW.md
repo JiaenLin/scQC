@@ -134,9 +134,11 @@ The two forms are not interchangeable, and the diagram marks the difference.
   these, and stops the run before any object is written. Until harness autodev W043 it wrote
   `FAIL`, a word the gate does not act on, so a failed audit was recorded and the objects were
   written anyway.
-- **any refusal** can be accepted in `decisions.yml` (apply mode): `accept: [{step, check,
-  approved_by, verbatim}]` turns that one refusal into an accepted REVIEW, recorded in
-  STATUS.json's `escapes` and in the report. Half an approval accepts nothing.
+- **a refusal of the second form** can be accepted in `decisions.yml` (apply mode): `accept: [{step,
+  check, approved_by, verbatim}]` turns that check's refusal at that step into an accepted REVIEW,
+  recorded in STATUS.json's `escapes` and in the report. It matches by step and check name only, so
+  it lifts that check in every library and in every run that reads the file. Half an approval
+  accepts nothing. A refusal of the first form (a module raises) is not lifted by an accept entry.
 
 ### Branches worth reading twice
 

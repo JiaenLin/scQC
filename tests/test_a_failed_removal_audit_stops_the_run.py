@@ -15,7 +15,7 @@ Checked here:
      (every called cell sits above both, so no unexamined cell is kept today - the inequality is
      what guarantees it on the next cohort) fails 'the light floor is strictly below the quality
      floor'. The run stops at 07_apply with exit 2, STATUS.json's refusal names the step and the
-     check, and no deliverable object, per-library object or write record exists
+     check, no deliverable object, per-library object or write record exists, and the ledger does
   3  the same refusal is lifted the way every refusal is: an accept entry naming 07_apply, the
      check, a person and their words completes the run, recorded in STATUS.json's escapes and in
      the report; half an approval (a bare "ok") accepts nothing and the refusal says why
@@ -148,6 +148,8 @@ if HAVE:
         made = [w for w in WRITTEN if R is not None and (R / "objects" / w).exists()]
         if made:
             fails.append(f"2: the refused run wrote {', '.join(made)}")
+        if R is None or not (R / "tables" / "removal_ledger.csv").is_file():
+            fails.append("2: the refused run left no removal ledger, which the docs say it writes")
         print("2. a failed removal audit stops the run at 07_apply, before any object is written")
 
         rc, log, R = run(td, sheet, "half", [{"step": "07_apply", "check": CHECK,
