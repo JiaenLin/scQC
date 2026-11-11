@@ -179,14 +179,27 @@ def axes_reached(run_dir, *, assay: str, factors, mt_prefix: str, ribo_pattern: 
         return lines, [f"the run's records cannot be read ({e}), so no value can be shown to arrive"]
     rows = described.get("samplesheet") or []
     libs = [str(r.get("sample")) for r in rows]
+    # WHAT EACH STEP RECORDED IT RECEIVED (engine/steps._received; step 5's `mito_assay`). The
+    # samplesheet and the parameter record say what was TOLD; only these say what ARRIVED.
+    rec = {}
+    for st in report.get("steps") or []:
+        for fd in st.get("found") or []:
+            if fd.get("label") in ("assay_received", "mito_assay", "design_factors_received"):
+                rec.setdefault(fd["label"], []).append((str(st.get("key")), str(fd.get("value"))))
+    ran = rec.get("assay_received", []) + rec.get("mito_assay", [])
+    gates = rec.get("design_factors_received", [])
 
     seen = sorted({str(r.get("assay") or "").strip().lower() for r in rows})
     said = str((report.get("run") or {}).get("assay") or "")
-    if seen == [assay] and said == assay:
-        lines.append(f"assay {assay!r}: every library of the run's samplesheet and its report say it")
+    other = [f"{k} ran under {v!r}" for k, v in ran if v != assay]
+    if seen == [assay] and said == assay and ran and not other:
+        lines.append(f"assay {assay!r}: every library of the run's samplesheet, its report, and the "
+                     f"steps that record the assay they ran under ({', '.join(k for k, _ in ran)})")
     else:
-        misses.append(f"assay {assay!r} was told; the run's samplesheet says {seen} and its report "
-                      f"{said!r}")
+        misses.append(f"assay {assay!r} was told; the run's samplesheet says {seen}, its report "
+                      f"{said!r}, and " + ("; ".join(other) if other else
+                                           "no step recorded the assay it ran under" if not ran
+                                           else "every recording step agrees"))
 
     raw = str((described.get("parameters") or {}).get("design_factors") or "")
     try:
@@ -198,11 +211,16 @@ def axes_reached(run_dir, *, assay: str, factors, mt_prefix: str, ribo_pattern: 
         where = [w for w, ok in (("the run's parameters", f in declared),
                                  ("its samplesheet", bool(rows) and all(f in r for r in rows)),
                                  ("its design", f in found)) if not ok]
+        if not gates:
+            where.append("every gate's record (no gate recorded the factors it was given)")
+        where += [f"the factors the {k} gate received ({v})" for k, v in gates
+                  if f not in v.split(",")]
         if where:
             misses.append(f"design factor {f!r} was told and is absent from {', '.join(where)}")
         else:
             lines.append(f"design factor {f!r}: declared in the run's parameters, a column of its "
-                         f"samplesheet, a factor of its design")
+                         f"samplesheet, a factor of its design, and received by the gate(s) of "
+                         f"{', '.join(k for k, _ in gates)}")
 
     for name, told, n_genes, col in (("mitochondrial prefix", mt_prefix, genes_mt, "pct_counts_mt"),
                                      ("ribosomal pattern", ribo_pattern, genes_ribo,

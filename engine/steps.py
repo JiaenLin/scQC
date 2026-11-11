@@ -132,6 +132,22 @@ def _design(samples: list[dict], max_levels: int = 6) -> dict:
 _DIFFERENTIAL_CHECKS = ("design differential: ", "loss differential: ")
 
 
+def _received(assay, declared) -> dict:
+    """WHAT A GATE WAS TOLD, AS IT RECEIVED IT: two metrics, written where the gate uses them.
+
+    The development suite's fixture tells the pipeline its assay and its design's factors and then
+    reads the run's records to show that each reached the step that reads it (harness autodev W048,
+    fix round 1). It read the CLI's parameter record, the samplesheet and the report's design, and
+    none of those changes when a gate never receives the value: with the graph's `design_declared`
+    emptied, no gate saw the factor and the check stayed green. So each gate writes down the assay
+    it ran under and the factors it was given, at the point of use. Recording is all this does;
+    no finding, criterion or kept cell depends on it.
+    """
+    return {"assay_received": str(assay),
+            "design_factors_received": ",".join(sorted(str(f) for f in (declared or [])))
+            or "none declared"}
+
+
 def _declared_only(findings, declared):
     """Findings, with a REFUSE on a factor the design did not DECLARE turned into a REVIEW.
 
@@ -539,10 +555,10 @@ def _ambient_audit(task, pipeline, log):
                             "supplied": len(supplied), "not_denoised": len(not_denoised)},
                 "versions": {}}
 
-    findings = _declared_only(aa.audit(rows, per_gene, task.params["design"],
-                                       assay=_cohort_assay(task.params.get("assay"),
-                                                           "01_ambient (audit)")),
-                              task.params.get("design_declared"))
+    told_assay = _cohort_assay(task.params.get("assay"), "01_ambient (audit)")
+    told_factors = task.params.get("design_declared")
+    findings = _declared_only(aa.audit(rows, per_gene, task.params["design"], assay=told_assay),
+                              told_factors)
 
     # --- IS ANY FIT UNLIKE ITS SIBLINGS? modules/01_ambient/lr_policy.py has answered this since
     # it was written and nothing had ever called it - neither it nor the two adapter entry points
@@ -555,6 +571,7 @@ def _ambient_audit(task, pipeline, log):
     pipeline.gate("01_ambient", findings, aa.verdict(findings))
     return {"outputs": [str(out)],
             "metrics": {"libraries": len(rows), "no_raw": len(no_raw),
+                        **_received(told_assay, told_factors),
                         "supplied": len(supplied),
                         # Carried on the result so step 2 can read it from the manifest and judge
                         # an outlying fit together with an unusual cell-call loss.
@@ -774,10 +791,9 @@ def _cellcall(task, pipeline, log):
             f"{len(calls)} a denoiser's. One cohort, one cell call: a cohort that mixes them "
             f"compares libraries whose cells were selected by different rules.")
 
-    findings = _declared_only(cg.gate(calls, task.params["design"],
-                                      assay=_cohort_assay(task.params.get("assay"),
-                                                          "02_cells (cell-call gate)")),
-                              task.params.get("design_declared"))
+    told_assay = _cohort_assay(task.params.get("assay"), "02_cells (cell-call gate)")
+    told_factors = task.params.get("design_declared")
+    findings = _declared_only(cg.gate(calls, task.params["design"], assay=told_assay), told_factors)
 
     # THE TWO OBSERVATIONS ABOUT ONE DENOISING, READ TOGETHER.
     #
@@ -815,7 +831,9 @@ def _cellcall(task, pipeline, log):
         w.writerow(["sample", "aligner", "denoiser", "lost"])
         for s, c in sorted(calls.items()):
             w.writerow([s, c["aligner"], c["cellbender"], c["lost"]])
-    return {"outputs": [str(out)], "metrics": {"libraries": len(calls)}, "versions": {}}
+    return {"outputs": [str(out)],
+            "metrics": {"libraries": len(calls), **_received(told_assay, told_factors)},
+            "versions": {}}
 
 
 def _bare(barcode, sample) -> str:
@@ -1261,14 +1279,16 @@ def _doublet_health(task, pipeline, log):
     # silence is judged against them (doublet_health, B1-103).
     m4 = {s: (getattr(pipeline.results_by_key.get(f"04_doublets/{s}"), "metrics", None) or {})
           for s in known}
+    told_assay = _cohort_assay(task.params.get("assay"), "04_doublets (health)")
+    told_factors = task.params.get("design_declared")
     findings = dh.health(known, task.params["design"], n_kept_unscored=unscored_total,
                          detector_name="scDblFinder", reproducible=True,
                          declared_rate={s: m.get("dbr") for s, m in m4.items()
                                         if isinstance(m.get("dbr"), (int, float))},
                          n_scored={s: m.get("n_scored") for s, m in m4.items()
                                    if isinstance(m.get("n_scored"), int)},
-                         assay=_cohort_assay(task.params.get("assay"), "04_doublets (health)"))
-    findings = _declared_only(findings, task.params.get("design_declared"))
+                         assay=told_assay)
+    findings = _declared_only(findings, told_factors)
     pipeline.gate("04_doublets", findings, dh.verdict(findings))
 
     # THE RATES THIS GATE JUDGED, written down. They were returned as metrics and the task
@@ -1287,7 +1307,8 @@ def _doublet_health(task, pipeline, log):
             n_pos = sum(1 for _score, is_doublet in calls.values() if is_doublet)
             w.writerow([s, len(calls), n_pos, rates[s]])
     return {"outputs": [str(out)],
-            "metrics": {"libraries": len(known), "never_scored": unscored_total},
+            "metrics": {"libraries": len(known), "never_scored": unscored_total,
+                        **_received(told_assay, told_factors)},
             "versions": {}}
 
 
