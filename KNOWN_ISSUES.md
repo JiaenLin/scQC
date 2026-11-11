@@ -239,7 +239,10 @@ environment is not pinned (section 7).
   the report's notices too; and the report's step records are checked against the run's work state.
   `tests/test_fixture_run.py`, cases 4-6. **Still open, a limit of the fixture:** both shapes are
   cells, so only `scrna` is ever told; a step wired to `scrna` passes, and the nucleus value does
-  not reach the pipeline through this check.
+  not reach the pipeline through this check. **Still open, a limit of reading records:** a gate
+  that computes the factor's differential on another column's levels under the factor's name
+  passes (its record counts the levels of the design the gate was handed), as do a recorder that
+  writes what it was told and a report and work state rewritten together.
 - **Two local runs whose project folders shared a name shared their scratch** and failed each
   other (`$TMPDIR/scqc_<folder name>`). Local and `SCQC_SCRATCH` scratch is named for the run;
   the PBS scratch path is unchanged. `tests/test_runs_do_not_share_scratch.py`.

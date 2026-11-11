@@ -21,13 +21,15 @@ tests:
 # ({role_condition}), the mitochondrial prefix and the ribosomal pattern. After the run,
 # fixture-run reads the records the steps write (each gate's assay_received, design_factors_received
 # and design_computed_on - the factors its own findings report a differential for, with their
-# levels - step 5's mito_assay, the per-cell fractions), checks every step record in the report
-# against the run's work state, and exits 1, naming the value, when one did not reach the step that
-# reads it - so a gate never told the factor, a gate that computed on a design without its levels,
-# a factor the design dropped (named with the reason), or a step that ran under another assay than
-# told, turns this tier red. Limits: both shapes are cells, so only scrna is told, a step wired to
-# scrna passes, and the nucleus value never reaches the pipeline through this tier; a recorder that
-# writes what it was told rather than what it used is not caught by reading its record.
+# levels counted on the design the gate was handed - step 5's mito_assay, the per-cell fractions),
+# checks those step records in the report against the run's work state, and exits 1, naming the
+# value, when one did not reach the step that reads it - so a gate never told the factor, a gate
+# handed a design without the factor, a factor the design dropped (named with the reason), or a step
+# that ran under another assay than told, turns this tier red. Limits: both shapes are cells, so only
+# scrna is told, a step wired to scrna passes, and the nucleus value never reaches the pipeline
+# through this tier; not caught by reading the records: a recorder that writes what it was told
+# rather than what it used, a gate that computes the factor's differential on another column's
+# levels under the factor's name, and a report and work state rewritten together.
 fixture:
   command: ["{python}", "scqc_cli.py", "fixture-run", "--observations", "{observations}", "--design", "{design}", "--sample-key", "{role_sample}", "--counts-layer", "{role_counts}", "--mt-prefix", "{mt_prefix}", "--ribo-pattern", "{ribo_pattern}", "--assay", "scrna", "--design-factors", "{role_condition}", "--dbr", "0.05", "--jobs", "{jobs}", "--out", "{out}"]
   products: [reports/report.json, STATUS.json]
