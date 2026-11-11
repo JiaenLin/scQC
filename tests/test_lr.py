@@ -12,7 +12,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "modules" / "01_ambient"))
 from lr_policy import assess_cohort, compare_after_halving # noqa: E402
 
-# The cohort experiment: all ten libraries at the package default 1e-4. treat_02 is the
+# A synthetic cohort, every library at the package default 1e-4. treat_02 is the
 # degenerate fit - a clearly smaller share of counts removed than elsewhere, a convergence
 # indicator several times the others'. The rest are spread across ordinary ranges (synthetic).
 COHORT_DEFAULT = {

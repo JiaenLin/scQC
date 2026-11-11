@@ -35,8 +35,8 @@ A pull request that adds or changes a removal answers the removal checklist from
 ## 2. A new gate needs a materiality bound
 
 A gate that fires on correct behaviour gets switched off, which is worse than not having it. A
-ratio between two near-zero rates is arithmetic, not evidence: a 5.42× differential computed from
-541 observations against 76 is not a finding. State the bound, state the value you chose, and say
+ratio between two near-zero rates is arithmetic, not evidence: a tenfold differential computed from
+10 observations against 1 (an illustration) is not a finding. State the bound, state the value you chose, and say
 what data the value was chosen against.
 
 The same applies in the other direction. A gate that has never fired on any data available is a

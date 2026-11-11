@@ -143,8 +143,11 @@ called cells - the aligner's, or the denoiser's on a library supplied already de
 bounds, chosen by the PI to be lenient — "make reasonable QC, do not be too harsh, avoid removing
 true signal" — and the report classes them `DECLARED`, never `DERIVED`.
 
-The bounds are the real guard. On one cohort, two libraries' minima wandered far above the valley under a
-narrower kernel; the upper bound rejects that on sight, and no depth test is needed to catch it.
+The bounds are the real guard, and the nuclear UMI upper bound of 1,000 sits where it does for a
+reason: it is twice the published fixed floor of 500 UMI, which already sat above every nuclear
+valley the calibration cohort measured, so no real valley comes near it, while under a narrower
+kernel some of that cohort's libraries returned minima past it. The bound rejects those on
+sight, and no depth test is needed to catch them.
 Where per-library valleys differ by more than **2.0×**, the spread is reported for review: a
 single constant fits some libraries better than others and the poorest-fit library should be
 looked at.
@@ -217,8 +220,8 @@ than 10–25% did, so the ceiling will frequently be reported as `bound_dominate
 `BOUND_BINDS_REVIEW` exists to say out loud.
 
 `k` is rounded to an integer where it is derived, because the per-library `k_i` typically span far
-more than a decimal's worth: on the calibration cohort they ran **3.44 to 6.56** (1.90×) for a
-median of 4.26. `MAD_K_BOUNDS = (2, 10)` are sanity limits; a cohort landing outside them is
+more than a decimal's worth (on the calibration cohort far more; the values are in its records).
+`MAD_K_BOUNDS = (2, 10)` are sanity limits; a cohort landing outside them is
 reported, not silently clamped to the edge. A library with `MAD = 0` is excluded from the
 calibration, because its implied k is undefined and a library that cannot contribute must not be
 able to change the answer by being counted as a default.
@@ -251,8 +254,9 @@ step read two keys nothing wrote, and the assay it bounded by was always `snrna`
 >
 > **What a narrow bound costs, measured on that cohort:** raising the floor acted only on libraries
 > with a low fence, so where those correlate with a design arm it made the *applied threshold* more
-> even while making the *removal rate* less even — mitochondrial removal by diet moved 1.10× →
-> 1.30×, and within the arm carrying the interaction 0.91× → 0.73×. Threshold-evenness and
+> even while making the *removal rate* less even — the mitochondrial removal differential across
+> the design's factor grew, and within the arm carrying the interaction it moved further from
+> 1×. Threshold-evenness and
 > removal-evenness are different properties and they pull against each other. Lowering the ceiling
 > pushes on both: watch `removal_by_criterion.csv`, which reports what `fail_mito_ceiling` took
 > from each library.
@@ -445,8 +449,8 @@ distributions, and the module proposes rather than remembers.
 
 The default is **2.0**. At 1.0 a droplet library resolves to major lineages only, and criterion D
 cannot fire — a doublet pocket is small and dissolves into the lineage cluster around it. Measured
-on the calibration cohort: D fired on nothing at 1.0 or 1.5, and on two clusters at 2.0, both above
-72% doublet.
+on the calibration cohort: D fired on nothing at 1.0 or 1.5, and fired at 2.0 on clusters that were
+mostly doublets.
 
 `--extra-resolutions` (default `1.0,3.0`) profiles and flags further resolutions into **sibling
 tables** named `cluster_profile.res<r>.csv`. They change no deliverable and nothing downstream

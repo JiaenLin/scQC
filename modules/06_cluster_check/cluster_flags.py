@@ -66,7 +66,7 @@ THE THRESHOLDS DO NOT TRANSFER
 
 The calibration cohort's A < 0.5x, B > 15%, C >= 50% were chosen against its own distributions.
 B = 15 is the p95 of a single cohort. C >= 50 works because that distribution was bimodal - the
-median cluster had ZERO mt/ribo markers in its top 20 and the tail jumped to 43-55% - which is a
+median cluster had ZERO mt/ribo markers in its top 20 and the tail jumped well clear of zero - which is a
 property of that data, not a guarantee. So this module PROPOSES thresholds from the cohort it is
 given, and applies only what is passed to it.
 """

@@ -1013,7 +1013,7 @@ def build_parser() -> argparse.ArgumentParser:
     # 2.0, not 1.0. At 1.0 a droplet-based library of this size resolves to major lineages only,
     # and criterion D - a cluster's doublet frequency - cannot fire, because a doublet pocket is
     # small and dissolves into the lineage cluster around it. Measured on the calibration cohort:
-    # D fired on nothing at 1.0 or 1.5 and on two clusters at 2.0, both above 72% doublet.
+    # D fired on nothing at 1.0 or 1.5, and at 2.0 on clusters that were mostly doublets.
     # NO DEFAULT HERE (B1-074): absent, each library takes its ASSAY'S resolution from
     # modules/06_cluster_check/cluster_flags.RESOLUTION, a table that says the nuclear 2.0 was
     # measured and the single-cell entry is lent; the report names the source either way.

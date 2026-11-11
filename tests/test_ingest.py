@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory() as _td:
 STATS = {
     "vendor_tar": dict(n_barcodes=15000, n_genes=30000, min_counts=500.0,
                        max_counts=20000.0, p98_counts=5000.0, expected_genes=30000),
-    "vendor_h5ad": dict(n_barcodes=14000, n_genes=20000, min_counts=498.0,
+    "vendor_h5ad": dict(n_barcodes=14000, n_genes=20000, min_counts=470.0,
                         max_counts=4999.0, p98_counts=5000.0, expected_genes=30000),
     "ours_raw": dict(n_barcodes=36000, n_genes=30000, min_counts=1,
                      max_counts=20000.0, p98_counts=None, expected_genes=30000),

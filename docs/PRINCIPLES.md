@@ -92,8 +92,8 @@ you cannot enumerate afterwards is a removal nobody can question.
 Every refusal in this pipeline is bounded so it cannot fire on a legitimate run. Three concrete
 forms that bound takes:
 
-- **Bound a ratio by materiality.** A 5.42× differential computed from 541 observations against 76
-  is arithmetic, not evidence. Gates carry a materiality floor as well as a ratio, so a run is not
+- **Bound a ratio by materiality.** A tenfold differential computed from 10 observations against 1
+  (an illustration) is arithmetic, not evidence. Gates carry a materiality floor as well as a ratio, so a run is not
   stopped over half a percentage point of compositional distortion.
 - **Never block the remedy.** A freshness check that refuses the command that would rebuild the
   stale artifact is worse than no check.

@@ -1287,8 +1287,8 @@ def resolve_cell_barcodes(h5_path: str | Path,
         #
         # The probability route derives its barcodes from the OBJECT, so it is already in the
         # object's naming; the CSV is in the denoiser's. Comparing them unreconciled makes the
-        # cross-check fire on two descriptions of one cell call - it reported 38,285 against
-        # 38,285 with every barcode differing, which is a total naming mismatch presenting as a
+        # cross-check fire on two descriptions of one cell call - it reported the same count on
+        # both sides with every barcode differing, which is a total naming mismatch presenting as a
         # total disagreement about which cells exist. Reconciling afterwards, as this first did,
         # is too late for the check that runs in between.
         from_csv, naming_note = reconcile_barcode_naming(barcodes, from_csv)
@@ -1827,7 +1827,7 @@ def _read_metrics_csv(path: Path) -> dict:
     THE TWO-COLUMN CASE IS THE ONE THAT WAS WRONG. The wide-form test required more than two
     columns, so `fraction_counts_removed,n_cells` over `0.10,5000` - a perfectly ordinary
     header-plus-one-row table with two columns - fell through to the long-form branch and was
-    read as `{"fraction_counts_removed": "n_cells", "0.09": "4218"}`. The removal fraction then
+    read as `{"fraction_counts_removed": "n_cells", "0.10": "5000"}`. The removal fraction then
     appeared to be the string `n_cells`, which `parse_learning_curve` reports as a field that
     exists and cannot be parsed - a confusing error about a real number that was sitting in the
     file all along.

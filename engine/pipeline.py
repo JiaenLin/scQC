@@ -168,19 +168,20 @@ class Pipeline:
         #
         # `work/` holds the run manifest and small artefacts and belongs beside the project, on
         # whatever storage the project is on. But the big intermediates are pure inter-process
-        # handoffs - a 233 MB MatrixMarket triple written by Python and read straight back by R,
-        # which nothing downstream ever opens - and on a cluster the project sits on NFS.
+        # handoffs - a MatrixMarket triple of the whole count matrix, written by Python and read
+        # straight back by R, which nothing downstream ever opens - and on a cluster the project
+        # sits on NFS.
         #
-        # Measured: ten doublet tasks writing and re-reading ~1.5 GB across NFS ran at 20-30% CPU
-        # over ten minutes each; the same work is 2.2 minutes when nothing else contends. The
-        # processes were waiting on the network, not computing, on a node with 4 TB of idle local
-        # ext4. Concurrency made that worse rather than better, because ten tasks then contend
-        # for one network mount.
+        # Measured on one cohort's run: doublet tasks writing and re-reading their matrices across
+        # NFS ran at a fraction of one CPU, for several times as long as the same work takes when
+        # nothing else contends. The processes were waiting on the network, not computing, on a
+        # node with idle local disk. Concurrency made that worse rather than better, because every
+        # task then contends for one network mount.
         #
         # WHO HAS TO SEE THE SCRATCH DECIDES WHERE IT GOES, and only the executor knows that.
         #
         # With a local executor every task runs in this process's node, so node-local disk is both
-        # correct and much faster - on NFS the 233 MB inter-process matrices cost more than the
+        # correct and much faster - on NFS the inter-process matrices cost more than the
         # computation they carry.
         #
         # With PBS each task is a job on a DIFFERENT node. TMPDIR inside a job is that job's own
@@ -401,9 +402,9 @@ class Pipeline:
         # INDEPENDENT TASKS RUN CONCURRENTLY.
         #
         # This walked the topological order one task at a time, which made the wall-clock the SUM
-        # of every step even though the graph already knows what does not depend on what. Ten
-        # libraries of doublet scoring at ~2 minutes each is 22 minutes of a 256-core node running
-        # one core. Under PBS it was worse, not better: the executor submits and polls, so serial
+        # of every step even though the graph already knows what does not depend on what. A
+        # cohort's libraries of doublet scoring, one after another, take the sum of their times on a
+        # many-core node running one core. Under PBS it was worse, not better: the executor submits and polls, so serial
         # execution meant submit -> queue -> run -> poll, once per job.
         #
         # Tasks are now released in dependency WAVES: everything whose needs are satisfied starts

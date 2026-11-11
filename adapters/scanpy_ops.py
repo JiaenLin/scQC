@@ -2178,7 +2178,7 @@ def run_scanpy_op(op, h5ad_in, out_prefix, params, log, executor, python_exe=Non
     #
     # UMAP is numba-compiled, and numba caches its compiled functions into the INSTALLED PACKAGE
     # directory by default. On a cluster that directory is one NFS path shared by every concurrent
-    # job, and ten libraries embedding at once raced on it: one job died with
+    # job, and a cohort's libraries embedding at once raced on it: one job died with
     # `OSError: [Errno 116] Stale file handle` inside `numba/core/caching.py` while reading the
     # cache index another job was rewriting. The traceback names numba, so it reads as an
     # environment fault rather than as a pipeline one - it is neither; it is concurrency over a
@@ -2456,7 +2456,7 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     # ------------------------------------------------------------------ the nuclear fraction
     #
     # MEASURED HERE AND APPLIED NOWHERE IN THIS STEP. It is computed in the pass that already
-    # holds the object and its barcodes, so the 131 MB per-droplet file is parsed ONCE per
+    # holds the object and its barcodes, so the aligner's per-droplet file is parsed ONCE per
     # library, in a task that already runs per library and in parallel. Step 7 then reads the
     # small per-barcode CSV written below rather than the aligner's file again.
     #

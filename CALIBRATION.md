@@ -10,8 +10,11 @@ Single-nuclei RNA-seq libraries of a solid tissue, in a two-factor design with r
 in each arm of the factor used in the differential checks. Droplet-based 3' chemistry, two
 chemistry versions within the cohort, intron-inclusive quantification.
 
-It is **unpublished**, so it is not named here, and nothing of it is carried: its study, sample
-names, species, tissue, design levels and MEASURED VALUES are all absent from this repository.
+It is **unpublished**, so it is not named here, and nothing of it is meant to be carried: its
+study, sample names, species, tissue and design levels are absent, and its MEASURED VALUES are
+kept in its own records, not here. A generated word list catches the names and the numbers it
+holds; a measured number no list holds is caught only by reading, so every number this repository
+keeps should say what it is: a default, a bound with its reason, a published value, or synthetic.
 
 One thing that does name a species is the worked registry row in `docs/TOOLS_AND_REFERENCES.md`,
 and it is worth saying what it is so it is not read as a leak. It is an **example of a registry
@@ -28,7 +31,8 @@ cohort's own records finds those numbers, and a value that belongs to one datase
 a portable tool must not carry (harness autodev W048). The measurements are the calibration
 cohort's and live in its records; this file keeps what was calibrated, how, and what the
 measurement showed, in words. The tests assert against synthetic values whose expected results
-are computed, not against one cohort's numbers.
+are computed, not against one cohort's numbers; the last test still running on the cohort's own
+valleys (`tests/test_quality.py`) moved to synthetic ones in W048's fix round.
 
 The design *structure* is kept, as a generic two-level factor, because two of the pipeline's gates
 exist specifically to catch a loss that falls on one arm of a design and cannot be exercised by a
@@ -124,22 +128,26 @@ than 1.5x.
 
 **Under the applied rule** - k = 3, bound 5-10%, with the `mt < 50%` derivation cut also in place -
 the bound binds in about half of the same libraries, at both ends, and the result is still
-classified `derived`, by a margin of one library. The Tukey-implied k stays inside the 2x review
+classified `derived`, narrowly. The Tukey-implied k stays inside the 2x review
 line of the applied 3. Delivered nuclei fall by a few per cent against the unbounded fence.
 
 ### The trade this makes, measured, because it is not visible from the number
 
 Threshold evenness and removal evenness pull against each other, monotonically, across every rule
-tested on this cohort (in this order; the measured values are the cohort's):
+tested on this cohort. Each column ranks the six rules, 1 = the most even (ranks, not values: the
+measured values are the cohort's):
 
 | rule | ceiling spread | removal differential (interaction arm) |
 |---|---|---|
-| one constant for the cohort | none | the largest |
-| **MAD k=3, bound 5-10 - applied (snRNA)** | moderate | moderate |
-| MAD k=4, bound 10-25 - *retired 2026-08-13* | moderate | moderate |
-| MAD k=5, bound 10-25 | larger | moderate |
-| Tukey, bound 10-25 | larger | smaller |
-| Tukey, unbounded | the largest | the smallest |
+| one constant for the cohort | 1 (none) | 6 |
+| **MAD k=3, bound 5-10 - applied (snRNA)** | **2** | **3** |
+| MAD k=4, bound 10-25 - *retired 2026-08-13* | 3 | 5 |
+| MAD k=5, bound 10-25 | 4 | 4 |
+| Tukey, bound 10-25 | 5 | 2 |
+| Tukey, unbounded | 6 | 1 |
+
+The applied rule is more even than the retired one on **both** columns; down the other rows one
+column is bought with the other.
 
 The applied row carries the `mt < 50%` derivation cut and the rows below it do not, so it is not
 exactly comparable with them; it is shown in the same table because the trade is the point.
@@ -213,5 +221,6 @@ check changed with resolution in a way that argued for a different default.
   flagged cluster rose from the coarsest resolution to the finest. Resolution redistributes
   flagging into smaller units; it does not shrink it.
 
-At 2.0 the smallest cluster in this cohort sits right at the line below which `cluster_profile()`
-refuses. It passes narrowly, and a different seed could put a library under that line.
+`cluster_profile()` will not rank a cluster under `min_cells_for_markers` (3 cells, the tool's own
+line). At 2.0 the smallest cluster in this cohort passes that line narrowly, and a different seed
+could put a library under it.

@@ -11,8 +11,8 @@ mitochondrial ceiling — and applies it before clustering. Doublets stay ATTACH
 because criterion D is only computable before a removal.
 
 **Verified on the calibration cohort:** the `population clustered` REVIEW is gone; clusters per
-library are 11–15 where they were 8–21 set by droplet contamination (one library went 8 → 14,
-another 21 → 14); the deliverable is unchanged, since step 6 removes nothing.
+library fall in a much narrower range than when droplet contamination set them (the counts are in
+that cohort's records); the deliverable is unchanged, since step 6 removes nothing.
 
 **Two things this cost, both worth repeating to anyone touching this path.** The first fix
 (`96f76d4`) *never applied*: it read the count floors from `thresholds_per_sample.csv`, which a
@@ -23,7 +23,7 @@ already in `results_by_key["05_quality"].metrics`. Both fallbacks are now refusa
 **The acceptance test for anything here is that the step-6 finding CHANGES, not that the run
 succeeds.** The broken attempt succeeded.
 
-Residual, and now a real question rather than an artefact: five libraries of ten report zero
+Residual, and now a real question rather than an artefact: several libraries report zero
 flagged clusters. That is no longer explained by clustering empty droplets.
 
 ## 1b. Five of the then-fifteen figures were never drawn — FIXED, and three of the reasons were wrong
@@ -81,14 +81,14 @@ reads like a correct report.
 **A run could be resumed exactly once.** `should_skip` requires the recorded status to be DONE,
 and the orchestrator recorded the SKIPPED result over that DONE record. The next resume found a
 non-done record and re-ran the task; the one after that re-ran everything. Silent: exit 0, same
-deliverable, and the only visible difference is RUN where SKIP should be, in a log of seventy
-near-identical lines. On the cohort that found it, a second resume re-copied 2.5 GB of matrices,
-re-scored every library for doublets and re-clustered all ten — to rebuild one report. Nothing is
+deliverable, and the only visible difference is RUN where SKIP should be, in a log of dozens of
+near-identical lines. On the cohort that found it, a second resume re-copied gigabytes of matrices,
+re-scored every library for doublets and re-clustered every library — to rebuild one report. Nothing is
 recorded for a skip now; the record that justified it is already there and is the better one.
 
 **UMAP's numba cache is shared and was not serialised.** numba caches compiled functions into the
 INSTALLED PACKAGE directory, which on a cluster is one NFS path every concurrent job writes to.
-Ten libraries embedding at once raced, and one died with `OSError: [Errno 116] Stale file handle`
+Libraries embedding at once raced, and one died with `OSError: [Errno 116] Stale file handle`
 inside `numba/core/caching.py`. The traceback names numba, so it reads as an environment fault; it
 is concurrency over a shared cache nothing was serialising, and it arrived with the embedding
 (figures F10/F11). Each scanpy op now gets a `NUMBA_CACHE_DIR` unique to its prefix and op. The

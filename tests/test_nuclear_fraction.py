@@ -15,8 +15,8 @@ THREE — AGGREGATE ROWS SUMMED AS CELLS. STARsolo writes rows such as `CBnotInP
 could not assign. Treated as barcodes they contribute one enormous "cell" to any pooled statistic.
 Section B.
 
-FOUR — THE BIGGEST LIBRARY DECIDING THE COHORT FLOOR. Pooling every cell lets a 16,000-cell library
-outvote a 7,500-cell one, and the floor becomes a statement about how many nuclei each animal
+FOUR — THE BIGGEST LIBRARY DECIDING THE COHORT FLOOR. Pooling every cell lets a library twice
+the size of another outvote it, and the floor becomes a statement about how many nuclei each sample
 yielded. The floor is the median of the per-library medians, equal weight per LIBRARY. Section C.
 
 FIVE — THE CRITERION REPLACING THE FENCE INSTEAD OF ADDING TO IT. It must be a strict superset of

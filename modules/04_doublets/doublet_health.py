@@ -4,10 +4,10 @@
 
 WHY THIS EXISTS INSTEAD OF A SECOND DETECTOR
 
-Scrublet failed on this cohort. The failure was not subtle: its automatic threshold returned ~0%
-in most libraries, and the silence was CONDITION-ASSOCIATED - a usable rate in only some of the
-ctrl libraries and in 0 of the 5 treated ones, which lands a technical collapse squarely on one
-arm of the study's primary readout.
+Scrublet failed on the calibration cohort. The failure was not subtle: its automatic threshold
+returned ~0% in most libraries, and the silence was CONDITION-ASSOCIATED - a usable rate in only
+some libraries of one arm and in none of the other's, which lands a technical collapse squarely
+on one arm of the study's primary readout.
 
 Nothing about a vote was required to see that. A look at the per-sample rates was enough. So the
 protection against a detector failing is a check on its output, not a second detector whose own
@@ -24,9 +24,9 @@ WHAT EACH CHECK CATCHES, AND WHAT IT CANNOT
                  arithmetic rather than evidence.
   spread         per-sample variation, read in BOTH directions - too little means the rate is
                  imposed rather than measured, too much means the threshold is unstable.
-  imposed        rate variance across libraries at or near zero. scds returned exactly 6.00%
-                 ten times over because its call was a fixed quantile; a detector that returns
-                 the same fraction of every library is not measuring any of them.
+  imposed        rate variance across libraries at or near zero. scds returned exactly the same
+                 rate in every library because its call was a fixed quantile; a detector that
+                 returns the same fraction of every library is not measuring any of them.
   deep_decile    the share of the deepest UMI decile called. COMPUTED, NOT INTERPRETED: where
                  the deepest nuclei are a large, RNA-rich majority population a high value is
                  alarming, and where no such population dominates it means something else. The
@@ -156,7 +156,7 @@ def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=
         "silent libraries", "REFUSE" if silent else ("REVIEW" if expected_so else "ok"),
         (f"{len(silent)} library(ies) called under {100*zero_rate:.1f}% - the threshold has "
          f"collapsed and returned silence, which is not the same as finding no doublets. This "
-         f"is Scrublet's failure signature: 0% in seven of ten"
+         f"is the signature of a collapsed automatic threshold, the way Scrublet fails"
          if silent else
          f"{len(expected_so)} library(ies) called under {100*zero_rate:.1f}%, which their own "
          f"declared rate predicts - too few cells scored to expect a doublet, or a rate declared "
@@ -181,8 +181,7 @@ def health(per_sample_rate, design=None, deep_decile_rate=None, n_kept_unscored=
             sev, msg = "REVIEW", (
                 f"spread {spread:.2f}x - the rate barely varies across libraries. A detector "
                 f"returning the same fraction of every library is imposing it, not measuring "
-                f"them. scds returned exactly 6.00% ten times because its call was a fixed "
-                f"quantile")
+                f"them, as a detector whose call is a fixed quantile does")
         elif _at_least(spread, SPREAD_UNSTABLE):
             sev, msg = "REVIEW", (
                 f"spread {spread:.2f}x - the rate varies more than {SPREAD_UNSTABLE:.0f}-fold "

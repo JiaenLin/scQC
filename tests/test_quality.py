@@ -1,5 +1,5 @@
 # Derives count-floor proposals from recorded valleys and prints them; it applies no threshold.
-"""Step 5 test: real density valleys, the bounds around them, and the cases that must refuse."""
+"""Step 5 test: synthetic nuclear density valleys, the bounds around them, and the cases that must refuse."""
 import sys
 from pathlib import Path
 
@@ -10,28 +10,31 @@ from quality import (Valley, ThresholdRefusal, derive, # noqa: E402
 
 S = ["ctrl_01", "ctrl_02", "treat_01", "treat_02", "ctrl_03",
      "ctrl_04", "ctrl_05", "treat_03", "treat_04", "treat_05"]
-# the calibration cohort measured: UMI median 348 (274-473), genes median 264 (184-352)
-UMI = [473, 300, 361, 348, 274, 336, 352, 289, 383, 344]
-GENES = [352, 214, 271, 264, 184, 249, 268, 208, 291, 258]
+# SYNTHETIC valleys in the shape of a nuclear cohort's, not any cohort's values: every UMI valley
+# inside the nuclear bounds and under the whole-cell floor, one gene valley under the UMI lower
+# bound. The constants they must give are computed below from the rule (median, rounded to 10).
+UMI = [455, 330, 392, 371, 296, 418, 385, 342, 478, 360]
+GENES = [318, 236, 282, 251, 176, 297, 263, 228, 334, 270]
 
 fails = []
 print("Step 5 - quality thresholds\n" + "=" * 74)
 print(f"bounds: UMI {UMI_BOUNDS}, genes {GENE_BOUNDS}\n")
-# A-H are the calibration cohort's NUCLEI, bounded as nuclei. The bounds are per assay since
+# A-H are NUCLEI (synthetic valleys), bounded as nuclei. The bounds are per assay since
 # 2026-10-02; section I below is what a single-cell cohort gets, and why it is not this.
 SN = "snrna"
 
-print("A. the calibration cohort's real valleys")
+print("A. ten nuclear valleys (synthetic)")
 pu = derive([Valley(s, "umi", v, True) for s, v in zip(S, UMI)], "umi", light_floor=200, assay=SN)
 print(pu)
 pg = derive([Valley(s, "genes", v, True) for s, v in zip(S, GENES)], "genes", assay=SN)
 print(pg)
-if pu.constant != 350 or pg.constant != 260:
-    fails.append(f"A: expected 350/260, got {pu.constant}/{pg.constant}")
-print(f" -> the calibration cohort applied 350/250; derived {pu.constant}/{pg.constant} from the same valleys")
+# median UMI (371 + 385) / 2 = 378 -> 380; median genes (263 + 270) / 2 = 266.5 -> 270
+if pu.constant != 380 or pg.constant != 270:
+    fails.append(f"A: expected 380/270, got {pu.constant}/{pg.constant}")
+print(f" -> one cohort constant from ten per-library valleys: {pu.constant}/{pg.constant}")
 
 print("\nB. the gene lower bound must NOT be the UMI one")
-print(f" smallest measured gene valley is {min(GENES)}, below the UMI lower bound "
+print(f" smallest gene valley is {min(GENES)}, below the UMI lower bound "
       f"{UMI_BOUNDS[SN][0]}")
 if min(GENES) >= UMI_BOUNDS[SN][0]:
     fails.append("B: premise wrong")
@@ -41,9 +44,9 @@ print("\n" + "-" * 74)
 print("C. ONE unimodal library - classified, not refused")
 # This asserted a refusal until 2026-08-10. A shallow minimum says the number is a judgement
 # rather than a measurement; it does not say the number is unusable, and refusing discarded the
-# information the depth test had just produced. On a real ten-library cohort six were shoulders,
-# all six landed inside the bounds, and the constant they produced was the one that cohort had
-# applied. What the depth test decides now is the PROVENANCE label.
+# information the depth test had just produced. On the calibration cohort most libraries were
+# shoulders, every one landed inside the bounds, and the constant they produced was the one that
+# cohort had applied. What the depth test decides now is the PROVENANCE label.
 try:
     p_mixed = derive([Valley(s, "umi", v, s != "ctrl_03") for s, v in zip(S, UMI)], "umi", assay=SN)
     print(f"[ACCEPTED] constant {p_mixed.constant}, provenance {p_mixed.provenance!r}, "
@@ -124,11 +127,11 @@ try:
         fails.append(f"I: a single-cell proposal carried bounds {pc.bounds}")
 except ThresholdRefusal as e:
     fails.append(f"I: a 1,200-UMI whole-cell valley was refused: {str(e)[:120]}")
-# ...and the nuclear calibration cohort's own valleys sit BELOW the whole-cell floor, so lending
+# ...and nuclear valleys sit BELOW the whole-cell floor, so lending
 # either assay's bounds to the other refuses a correct library.
 try:
     derive([Valley(s, "umi", v, True) for s, v in zip(S, UMI)], "umi", assay="scrna")
-    fails.append("I: nuclear valleys (274-473) were accepted under single-cell bounds")
+    fails.append(f"I: nuclear valleys ({min(UMI)}-{max(UMI)}) were accepted under single-cell bounds")
 except ThresholdRefusal as e:
     print(f" [REFUSED, correctly] nuclear valleys under whole-cell bounds: {str(e)[:90]}...")
 # No default assay: the old single pair WAS the nuclear pair, and a default is how it returns.
@@ -150,5 +153,5 @@ print(" " + mito_ceiling_note("snrna")[:300] + "...")
 print("\n" + "=" * 74)
 if fails:
     print("FAILED:"); [print(" -", x) for x in fails]; raise SystemExit(1)
-print("proved: A derives 350 from the same ten valleys the cohort measured - the procedure")
-print("ships and the number does not, because those valleys span 274-473 within ONE cohort")
+print(f"proved: A derives {pu.constant} from ten per-library valleys - the procedure ships and the")
+print(f"number does not, because valleys spanning {min(UMI)}-{max(UMI)} inside ONE cohort are not a constant")

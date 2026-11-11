@@ -217,12 +217,12 @@ The two forms are not interchangeable, and the diagram marks the difference.
   the threshold while still being reported as derived.
 - **Per library here, cohort-constant for the floors — and the difference is not arbitrary.** The
   valley is the *same physical boundary* in every library (debris against nuclei), so one constant
-  is a defensible summary of ten estimates of one quantity. Mitochondrial content is not one
-  boundary measured ten times; libraries genuinely differ in it, 4× in Q3 on the calibration
-  cohort, and averaging that produces a number describing no library. The objection to
+  is a defensible summary of one estimate per library of one quantity. Mitochondrial content is
+  not one boundary measured once per library; libraries genuinely differ in it (severalfold in Q3
+  on the calibration cohort), and averaging that produces a number describing no library. The objection to
   per-library thresholds — that they make the filter a technical property varying across the
   design — is real, so it is **measured** rather than argued: `assess_mito_removal` refuses at a
-  3× design differential. On the calibration cohort it came out 1.02–1.10×.
+  3× design differential. On the calibration cohort it came out close to 1×, far under that line.
 - **What stays ADJUDICATED is narrower than it was.** Not the ceiling, but whether a
   mitochondria-high *population* is damage or a mitochondria-rich cell type. That needs an
   identity; the pipeline emits cluster-level medians and stops.

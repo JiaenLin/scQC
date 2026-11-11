@@ -327,7 +327,7 @@ print(f"H. scanpy op call sites checked against declared requirements: {_seam}")
 # compute nodes once the job ends. Where that copy does not work there is no error anywhere: the
 # job reports Exit_status = 0, its real output is correct on disk, and the file simply never
 # appears. It failed only for tasks that landed on a different node from the orchestrator, so
-# seven of ten libraries succeeded and three did not - which reads as a staging delay and is not
+# some libraries succeeded and others did not - which reads as a staging delay and is not
 # one. A 60 s wait was added for it and could not have helped; nothing was on the way.
 #
 # The job now redirects its own output to the log on shared storage. Constructing `{log}.out` as

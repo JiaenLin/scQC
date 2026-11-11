@@ -1270,7 +1270,7 @@ def run_scdblfinder(rscript, mtx_dir, out_csv, dbr, dbr_sd, seed, log, executor,
 
     # The detector ran on another node and this path is on shared storage, so a file written a
     # moment ago is not necessarily visible here yet. Waited for before it is called missing: on
-    # the first clean run two of ten libraries were failed for a CSV that was on disk, complete
+    # the first clean run some libraries were failed for a CSV that was on disk, complete
     # and correct, the entire time.
     if await_visible([out_path]):
         raise TaskFailure(

@@ -8,9 +8,9 @@ Across the libraries of ONE cohort - one sample type, one platform, one operator
 density valley between the debris mode and the nucleus mode moved substantially from library to
 library, on UMI and on detected genes alike (the measurements are that cohort's, in its records).
 
-A fixed pair of floors - a common published choice of a few hundred UMI and a few hundred genes,
-and the obvious one to reach for - sat ABOVE the measured valley in nearly every one of those
-libraries, so it cut into the nucleus mode rather than the debris below it. No fixed floor is
+A fixed floor of 500 UMI and 300 genes - a common published choice (a literature value, not a
+measurement), and the obvious one to reach for - sat ABOVE the measured valley in nearly every
+one of those libraries, so it cut into the nucleus mode rather than the debris below it. No fixed floor is
 right for most libraries even within one study, which is why what ships is the KDE-valley
 PROCEDURE and not the pair of numbers it produced there.
 
@@ -24,7 +24,7 @@ its distribution is unimodal, there is no valley, and every cut is a judgement.
 
 THE VALLEY IS MEASURED PER LIBRARY AND APPLIED AS A COHORT CONSTANT
 
-Ten valleys were measured on the calibration cohort and ONE pair of numbers applied, 350/250.
+One valley per library was measured on the calibration cohort and ONE pair of numbers applied.
 That is deliberate. A per-library threshold makes the filter a technical property that varies
 across the design - the same objection that forces one learning rate for all the libraries at
 step 1, and the same shape the design-differential check exists to catch. The per-library
@@ -41,10 +41,10 @@ the declared floors further down (`FLOOR_METHOD`). For nuclei:
                that is not strictly below the quality floor (its check "step 3: the light floor
                is strictly below the quality floor"; it refuses since harness autodev W043); this
                is the same constraint seen from the other side.
-  above 1000   more than twice the largest valley measured on the calibration cohort (473), and
-               twice the 500 already shown to sit above the valley in every one of its
-               libraries. A KDE returning 1,200 has found something other than the
-               debris/nucleus boundary.
+  above 1000   twice the published fixed floor of 500 UMI, which already sat above the nuclear
+               valley in every library of the calibration cohort, so the bound is more than
+               twice any valley that cohort measured. A KDE returning 1,200 has found
+               something other than the debris/nucleus boundary.
 
 A value inside the bounds is not thereby correct; it is merely not obviously wrong.
 """
@@ -65,8 +65,8 @@ from statistics import median
 # DECLARED by the PI on 2026-10-02 in preference to running unbounded. The first single-cell
 # cohort's valleys are what will say whether it fits, and the report names its source.
 UMI_BOUNDS = {"snrna": (200, 1000), "scrna": (500, 2000)}
-# Genes get their own bounds and NOT the UMI ones. On nuclei the measured gene valleys ran
-# 184-352, so the smallest of them is ALREADY BELOW 200 - applying the UMI lower bound to genes
+# Genes get their own bounds and NOT the UMI ones. On nuclei the calibration cohort's smallest
+# measured gene valley was ALREADY BELOW 200 - applying the UMI lower bound to genes
 # would have refused a real library for being correct. The nuclear upper bound of 600 is well above the
 # largest measured valley, the same headroom the UMI bound leaves.
 GENE_BOUNDS = {"snrna": (100, 600), "scrna": (250, 1500)}
@@ -192,10 +192,10 @@ def derive(valleys, metric, light_floor=None, *, assay) -> Proposal:
     answers "is this minimum a measurement or a judgement?", which is a question about the
     PROVENANCE of the number, not about whether the number is usable.
 
-    On a real ten-library cohort, four had a deep valley stable across kernel bandwidths and six
-    had a shallow saddle whose minimum still landed at 268-378 UMI - squarely inside the bounds,
-    and agreeing with the four to within 100 UMI. Refusing all ten because six were shoulders
-    would have stopped a pipeline that had just measured the right answer.
+    On the calibration cohort a minority of libraries had a deep valley stable across kernel
+    bandwidths and the rest a shallow saddle whose minimum still landed squarely inside the
+    bounds, close to the deep valleys. Refusing every library because most were shoulders would
+    have stopped a pipeline that had just measured the right answer.
 
     It is also not what the field does. Published cardiac and lung atlases choose a bounded floor
     and treat the UMI curve as a CONSIDERATION - "excluded barcodes with less than 200 detected
@@ -204,11 +204,13 @@ def derive(valleys, metric, light_floor=None, *, assay) -> Proposal:
     serious per-cell QC happens after clustering, within cell types.
 
     THE BOUNDS ARE THE GUARD. A valley outside them is still refused, and that is what catches
-    the real failure: on the same cohort, two libraries' minima wandered far above the valley under a
-    narrower kernel, which the upper bound rejects on sight. Depth is not needed to catch those.
+    the real failure: on the same cohort, under a narrower kernel, some libraries' minima wandered
+    past the nuclear upper bound, which the bound rejects on sight; depth is not needed to catch
+    them. That is why the bound sits where it does: at twice the published fixed floor of 500 UMI,
+    above every real valley the cohort measured and below where those spurious minima landed.
 
     So `bimodal` now classifies rather than gates. Nothing is loosened - `min_valley_depth` is
-    unchanged and still splits that cohort at its natural break (0.090 | 0.133) - and the
+    unchanged and still splits that cohort at a natural break in its measured depths - and the
     libraries that failed it are NAMED in the proposal, so a reader is told the constant rests on
     a shoulder rather than a dip in those.
     """
@@ -342,8 +344,8 @@ def mito_ceiling_note(assay: str) -> str:
 #      does occur on another cohort the derivation refuses instead of shipping it.
 #   2. Unlike the valley, there is nothing to hold constant. The valley is the SAME physical
 #      boundary in every library - debris against nuclei - so one number is a defensible summary
-#      of ten estimates of one quantity. Mitochondrial content is not one boundary measured ten
-#      times; libraries genuinely differ in it (severalfold in Q3 on the calibration cohort). Averaging
+#      of one estimate per library of one quantity. Mitochondrial content is not one boundary
+#      measured once per library; libraries genuinely differ in it (severalfold in Q3 on the calibration cohort). Averaging
 #      that produces a number describing no library.
 #
 # WHY A TUKEY FENCE AND NOT A MAD
@@ -438,9 +440,9 @@ MITO_MAD_K = {"snrna": 3, "scrna": None}
 # Why two, and why this one applied. The two estimators do NOT measure the same thing on a skewed
 # distribution: Tukey is anchored at Q3 and grows with the middle-50% width, MAD is anchored at the
 # median and grows with a symmetric spread. Mitochondrial percentage is bounded at 0 and strongly
-# right-skewed, so IQR/(1.4826*MAD) - exactly 1.349 for a normal - ran 1.59 to 2.82 across the
-# calibration cohort. That is why no single MAD_K reproduces Tukey: the k that would match it
-# tracks each library's skew, from 3.44 to 6.56.
+# right-skewed, so IQR/(1.4826*MAD) - exactly 1.349 for a normal - ran well above that in every
+# library of the calibration cohort, and differently in each. That is why no single MAD_K
+# reproduces Tukey: the k that would match it tracks each library's skew.
 #
 # k IS DERIVED, NOT DECLARED. Tukey is the calibration instrument; MAD is the applied estimator.
 #
@@ -450,8 +452,8 @@ MITO_MAD_K = {"snrna": 3, "scrna": None}
 #
 # and take the cohort median, rounded to an integer. This is the same shape as the count floors:
 # measure per library, propose ONE cohort constant. It makes k a property of the data rather than
-# a number someone chose - on the calibration cohort it lands on 4 (per-library 3.44 to 6.56,
-# median 4.26), and on a cohort with different skew it will land elsewhere, which is the point.
+# a number someone chose: on a cohort with different skew it will land elsewhere, which is the
+# point (the calibration cohort's per-library values are in its records, not here).
 #
 # Why not simply apply Tukey, if Tukey selects k. Because the two do different jobs. Tukey adapts
 # without limit to a wide tail - far past the bound on one calibration library - and adapting that far is a
@@ -468,14 +470,17 @@ MITO_MAD_K = {"snrna": 3, "scrna": None}
 # evenness and removal evenness trade off monotonically, across every rule tested.
 #
 #     rule                          ceiling spread   removal differential (interaction arm)
-#     one constant for the cohort   none             the largest
-#     MAD k=3, bound 5-10           moderate         moderate         <- APPLIED (snrna)
-#     MAD k=4, bound 10-25          moderate         moderate         retired 2026-08-13
-#     MAD k=5, bound 10-25          larger           moderate
-#     Tukey,   bound 10-25          larger           smaller
-#     Tukey,   unbounded            the largest      the smallest
+#                                   (each column ranks the six rules on the calibration cohort,
+#                                    1 = the most even)
+#     one constant for the cohort   1 (none)         6
+#     MAD k=3, bound 5-10           2                3      <- APPLIED (snrna)
+#     MAD k=4, bound 10-25          3                5      retired 2026-08-13
+#     MAD k=5, bound 10-25          4                4
+#     Tukey,   bound 10-25          5                2
+#     Tukey,   unbounded            6                1
 #
-# (in that order, on the calibration cohort; its measured values are in that cohort's records)
+# The applied rule is more even than the retired one on BOTH columns; down the other rows one
+# column is bought with the other. Ranks, not values: the measured values are that cohort's.
 #
 # The applied row is measured on the same cohort with the mt<50 derivation cut in place, so it is
 # not exactly comparable with the rows below it; the retired row is what this pipeline shipped
@@ -918,8 +923,9 @@ LINES_SOURCE = {"snrna": "set or measured on the calibration cohort's nuclei",
                 "scrna": "calibrated on nuclei, unmeasured on cells - the same value, lent knowingly "
                          "until a single-cell cohort measures its own"}
 # A threshold written in decimal is not the threshold the machine tests. This is not theoretical
-# here: on the calibration cohort a candidate fixed ceiling produced a diet ratio of EXACTLY
-# 3.00x, which is precisely the value a bare `>= 3.0` can miss by one unit in the last place.
+# here: on the calibration cohort a candidate fixed ceiling produced a design ratio EXACTLY on
+# the 3x refusal line, which is precisely the value a bare `>= 3.0` can miss by one unit in the
+# last place.
 ON_THE_LINE = 1e-9
 
 

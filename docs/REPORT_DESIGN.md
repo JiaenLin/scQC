@@ -88,7 +88,7 @@ the figures.
 (illustrative numbers)
 DELIVERABLE   N of M called cells   (x% removed)
 REFUSE        none
-REVIEW        step 2  one library lost 5.0% of aligner calls to the denoiser
+REVIEW        step 2  one library lost y% of aligner calls to the denoiser
               step 7  n nuclei survive inside a cluster that is mostly doublets
 OPEN          tier-2 tolerance UNMEASURED - run-to-run spread never quantified
 ```
@@ -98,16 +98,17 @@ only record of why the run stopped.
 
 ### 2 · What was decided, and by whom
 
-One row per parameter. **The class column is the point of this report.**
+One row per parameter. **The class column is the point of this report.** (Illustrative rows: a
+report fills the value and the basis from its own run; the bounds and A/B/C are the tool's.)
 
 | parameter | value | class | basis |
 |---|---|---|---|
-| ambient learning rate | 5e-5 | DERIVED | default rejected: cohort assessment halved it |
+| ambient learning rate | the package default, halved | DERIVED | default rejected: the cohort assessment halved it |
 | cell caller | denoiser output | FIXED | pipeline contract |
-| UMI floor | 350 | DERIVED | KDE valley; per-library 274–473, cohort median 346 |
-| gene floor | 250 | DERIVED | KDE valley; bounded to [100, 600] |
-| mito ceiling | 40% | **ADJUDICATED** | *"apply 40% as the pre QC steps"* — operator, 2026-08-09 |
-| doublet `dbr.sd` | 0.06 | DERIVED | sweep; the default was prior-driven |
+| UMI floor | *u* | DERIVED | KDE valley; the per-library range and the cohort median |
+| gene floor | *g* | DERIVED | KDE valley; bounded to [100, 600] (the nuclear gene bounds) |
+| mito ceiling | *m*% | **ADJUDICATED** | the operator's words, quoted, with their date |
+| doublet `dbr.sd` | *s* | DERIVED | sweep; the default was prior-driven |
 | cluster A/B/C | 0.5× / 15% / 50% | **ADJUDICATED** | proposed against the distributions, approved |
 
 - **FIXED** — the pipeline's own contract; changing it is changing the pipeline.

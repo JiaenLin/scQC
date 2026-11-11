@@ -1502,7 +1502,7 @@ def _quality_measure(task, pipeline, log):
     Split out of _quality_stage, which looped over every library inside a single task. Concurrency
     releases TASKS, not iterations, so the libraries were measured one after another whatever
     --jobs said - and the measurement is the expensive half of step 5: reading the object and
-    running calculate_qc_metrics over a 39k x 34k sparse matrix. The KDE that follows is cheap.
+    running calculate_qc_metrics over the library's whole sparse matrix. The KDE that follows is cheap.
     """
     p = task.params
     _require_gene_patterns("05_quality", p)
@@ -2061,8 +2061,8 @@ def _cluster_flags(task, pipeline, log):
     # This globbed `pipeline.work` for `*profile*.csv` while the profiles are written under
     # `pipeline.scratch`, so it matched nothing and the step refused with "no cluster profile was
     # produced" - an honest refusal about something that had in fact been produced. A glob also
-    # cannot tell this run's output from a previous one's, and it silently accepts nine files
-    # where ten libraries were profiled. Each task reported the file it wrote and the orchestrator
+    # cannot tell this run's output from a previous one's, and it silently accepts one file
+    # fewer than the libraries profiled. Each task reported the file it wrote and the orchestrator
     # checked that file exists, so ask it.
     profiles, absent = [], []
     for s in task.params["samples"]:
@@ -2530,8 +2530,8 @@ def _apply(task, pipeline, log):
 
     # Read through step 6's own reader, not csv.DictReader. `preflight` compares pct_doublet
     # against a float and tests FLAG with `is True`; from a raw DictReader every cell is a string,
-    # so the first raised TypeError and the second silently found no flagged cluster in a table
-    # of 126 of them - it reported that none of the deliverable sits in one.
+    # so the first raised TypeError and the second silently found no flagged cluster in a whole
+    # table of them - it reported that none of the deliverable sits in one.
     cf = step_module("cluster_flags")
     rows: list = []
     prof = _tables(pipeline) / "cluster_profile.csv"
