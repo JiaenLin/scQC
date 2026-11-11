@@ -219,6 +219,18 @@ environment is not pinned (section 7).
   lists joined as PATH joins them scanned nothing and printed PASS. It reads every
   `os.pathsep`-separated list and refuses one that is missing or holds no term.
   `tests/test_leak_guard_reads_every_list.py`.
+- **The leak guard read a generated word list as literal text.** A generated list says how each
+  term is matched (`word:`, `exact:`, a trailing `*`), and the guard searched for the prefix as
+  part of the term, read no file of site shapes and opened only sixteen extensions: it printed
+  PASS on a tree where the harness's scan, given the same lists, found every hit. It now reads the
+  lists and `$SCQC_SITE_SHAPES` as `sch conform` does, every file by content, and exempts nothing;
+  the cohort strings and measured numbers it then found are gone from the tool.
+  `tests/test_leak_guard_reads_the_generated_syntax.py`.
+- **The fixture was never told the assay or the design's factor, and nothing checked what it was
+  told.** `fixture-run` wrote `scrna` for every library itself, declared no factor, and a step that
+  ignored the told mitochondrial prefix would still have completed. It now takes `--assay` (no
+  default) and `--design-factors`, and fails, naming the value, when the run's own records show a
+  told value did not reach its step. `tests/test_fixture_run.py`, cases 4-6.
 - **Two local runs whose project folders shared a name shared their scratch** and failed each
   other (`$TMPDIR/scqc_<folder name>`). Local and `SCQC_SCRATCH` scratch is named for the run;
   the PBS scratch path is unchanged. `tests/test_runs_do_not_share_scratch.py`.

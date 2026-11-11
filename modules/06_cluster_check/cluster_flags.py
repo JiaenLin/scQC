@@ -17,7 +17,7 @@ THE FLAGS
                     libraries rather than clusters.
   B  high mito      cluster median %mt above a threshold. This is NOT the per-cell
                     mitochondrial ceiling and cannot be: in the calibration cohort no cluster
-                    reached 27.5% against a 40% cut, so the per-cell value never fires at
+                    stayed well under a 40% cut, so the per-cell value never fires at
                     cluster level.
   C  uninformative  share of the top-N markers in the locked mt+ribo set. Reported SPLIT into
                     C_mt and C_ribo - in the calibration cohort the ribosomal half was empty

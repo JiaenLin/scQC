@@ -12,7 +12,7 @@ floods the pool.
 
 Measured across the calibration cohort's ten solid-tissue libraries, CellBender 0.3.2:
 
-    fraction of all counts removed as ambient    15.5% - 23.7%
+    fraction of all counts removed as ambient    a large share, every library
     genes removed entirely                       12 - 240 per library
 
 Between a sixth and a quarter of the data. A pipeline that leaves that in place for snRNA-seq is

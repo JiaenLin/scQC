@@ -230,8 +230,10 @@ orchestrator's own process:
 ```
 
 No data ships with this repository. The harness's development suite runs the pipeline end to end
-on its synthetic two-shape fixture through `scqc fixture-run` (`DEVPOINTS.yaml`); a real cohort is
-tested by reproducing its promoted run, not by a runner shipped here.
+on its synthetic two-shape fixture through `scqc fixture-run` (`DEVPOINTS.yaml`), which is told the
+assay, the design's factor and the gene patterns and fails when the run's own records show one did
+not reach the step that reads it; a real cohort is tested by reproducing its promoted run, not by a
+runner shipped here.
 
 ## Part of a family
 

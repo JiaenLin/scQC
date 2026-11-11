@@ -5,7 +5,7 @@
 WHY THIS EXISTS INSTEAD OF A SECOND DETECTOR
 
 Scrublet failed on this cohort. The failure was not subtle: its automatic threshold returned ~0%
-in seven of ten libraries, and the silence was CONDITION-ASSOCIATED - a usable rate in 3 of the 5
+in most libraries, and the silence was CONDITION-ASSOCIATED - a usable rate in only some of the
 ctrl libraries and in 0 of the 5 treated ones, which lands a technical collapse squarely on one
 arm of the study's primary readout.
 

@@ -17,8 +17,8 @@ damage a missed answer does.
      The one that matters most and the only one that can silently become a result. If ambient
      removal takes 30% from one arm and 10% from another, a technical property has been
      converted into an apparent biological difference and nothing downstream can undo it. An
-     even run measures close to 1x on every factor; the calibration cohort gives condition
-     1.08x, stratum 1.07x, chemistry 1.07x and batch 1.04x. The refusal line is the
+     even run measures close to 1x on every factor; the calibration cohort gives close to
+     1x on every one of its factors. The refusal line is the
      design-differential threshold, bounded twice so that it cannot fire on a clean run:
 
        ratio >= threshold, worst arm material     REFUSE
@@ -33,7 +33,7 @@ damage a missed answer does.
 
   3 IS ANY GENE BEING GUTTED?
      Ambient removal should shave a gene, not delete it. In the calibration cohort the worst
-     median per-gene removal is 34.6% and no gene exceeds 90%. A gene losing nearly all its
+     median per-gene removal is moderate and no gene exceeds 90%. A gene losing nearly all its
      counts is either genuinely ambient or a marker being destroyed, and the two are
      indistinguishable from the fraction alone - so the auditor reports the LIST, never a
      count. The removal checklist, question 1 (docs/PRINCIPLES.md): print the symbols and read

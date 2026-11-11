@@ -968,7 +968,7 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
     `grid_log10` column beside the grid. Drawn against linear UMI the entire structure this figure
     exists to show, both modes and the cut between them, occupies the first fraction of a percent
     of the axis and the rest is empty: on the calibration cohort the valley sat at 350 and the
-    axis ran to 140,000. The ticks read in ORIGINAL UNITS, so the reader is never asked to
+    axis ran to six figures. The ticks read in ORIGINAL UNITS, so the reader is never asked to
     interpret an exponent.
 
     A density containing a non-positive grid point cannot go on a log axis; that panel is drawn

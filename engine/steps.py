@@ -1500,7 +1500,7 @@ def _quality_measure(task, pipeline, log):
     """Measure ONE library: both count valleys and the mitochondrial quartiles, in one pass.
 
     Split out of _quality_stage, which looped over every library inside a single task. Concurrency
-    releases TASKS, not iterations, so ten libraries were measured one after another whatever
+    releases TASKS, not iterations, so the libraries were measured one after another whatever
     --jobs said - and the measurement is the expensive half of step 5: reading the object and
     running calculate_qc_metrics over a 39k x 34k sparse matrix. The KDE that follows is cheap.
     """
@@ -2232,8 +2232,8 @@ def _cluster_flags(task, pipeline, log):
 #: `mito_ceiling_pct: per_library` in decisions.yml means "apply what step 5 derived for each
 #: library", rather than one number for all ten. It is a word and not a number because that is
 #: what is being approved: a single cohort ceiling and a per-library fence are different
-#: decisions, and on the calibration cohort the difference is a removal that falls 2.35x more
-#: heavily on one arm of the design than the other against 1.23x - the rule-one Q3 quantity.
+#: decisions, and on the calibration cohort the difference is a removal that falls markedly more
+#: heavily on one arm of the design than the other, against close to even - the rule-one Q3 quantity.
 PER_LIBRARY = "per_library"
 
 

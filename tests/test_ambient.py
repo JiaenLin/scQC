@@ -72,5 +72,5 @@ if fails:
         print(" -", f)
     raise SystemExit(1)
 print("proved: every branch behaves as specified, and case 6 is the one that earns the check -")
-print("a mis-declared assay would otherwise SKIP a correction that removed 15.5-23.7% of all")
+print("a mis-declared assay would otherwise SKIP a correction that removed a large share of all")
 print("counts in the calibration cohort, and say nothing about having skipped it")

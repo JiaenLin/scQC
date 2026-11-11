@@ -26,7 +26,7 @@ THE VALLEY IS MEASURED PER LIBRARY AND APPLIED AS A COHORT CONSTANT
 
 Ten valleys were measured on the calibration cohort and ONE pair of numbers applied, 350/250.
 That is deliberate. A per-library threshold makes the filter a technical property that varies
-across the design - the same objection that forces one learning rate for all ten libraries at
+across the design - the same objection that forces one learning rate for all the libraries at
 step 1, and the same shape the design-differential check exists to catch. The per-library
 values decide WHAT the constant should be; they are not themselves applied.
 
@@ -67,7 +67,7 @@ from statistics import median
 UMI_BOUNDS = {"snrna": (200, 1000), "scrna": (500, 2000)}
 # Genes get their own bounds and NOT the UMI ones. On nuclei the measured gene valleys ran
 # 184-352, so the smallest of them is ALREADY BELOW 200 - applying the UMI lower bound to genes
-# would have refused a real library for being correct. The nuclear upper bound of 600 is ~1.7x the
+# would have refused a real library for being correct. The nuclear upper bound of 600 is well above the
 # largest measured valley, the same headroom the UMI bound leaves.
 GENE_BOUNDS = {"snrna": (100, 600), "scrna": (250, 1500)}
 #: Where each assay's count bounds came from, for the report: a measured range and a declared one
@@ -337,13 +337,13 @@ def mito_ceiling_note(assay: str) -> str:
 #
 #   1. The objection is TESTABLE and it is tested. `assess_differential` below measures what
 #      fraction each design arm loses and refuses when they diverge. On the calibration cohort
-#      the per-library fence gave 1.05-1.16x across every design factor, against a 3x refusal
+#      the per-library fence gave close to 1x across every design factor, far under a 3x refusal
 #      line - i.e. the feared technical-property-varying-with-design did not occur, and if it
 #      does occur on another cohort the derivation refuses instead of shipping it.
 #   2. Unlike the valley, there is nothing to hold constant. The valley is the SAME physical
 #      boundary in every library - debris against nuclei - so one number is a defensible summary
 #      of ten estimates of one quantity. Mitochondrial content is not one boundary measured ten
-#      times; libraries genuinely differ in it (4x in Q3 on the calibration cohort). Averaging
+#      times; libraries genuinely differ in it (severalfold in Q3 on the calibration cohort). Averaging
 #      that produces a number describing no library.
 #
 # WHY A TUKEY FENCE AND NOT A MAD
@@ -504,7 +504,7 @@ MAD_K_BOUNDS = (2, 10)
 MAD_K_BOUNDS_BY_ASSAY = {"snrna": MAD_K_BOUNDS, "scrna": (3, 10)}
 # Per-library implied k spreading more than this says no single k fits the cohort - the libraries
 # differ in SHAPE, not just in scale, and a cohort constant is then a compromise rather than a
-# measurement. Reported, because the calibration cohort itself spans 1.90x.
+# measurement. Reported, because the calibration cohort itself spans widely.
 K_SPREAD_REVIEW = 2.0
 # Tukey and the MAD fence differing by more than this on a library the bound did NOT clamp is
 # reported. Only unclamped libraries count: two clamped values agree because the bound made them
