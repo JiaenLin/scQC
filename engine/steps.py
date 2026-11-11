@@ -98,7 +98,7 @@ NOT_FACTORS = frozenset({
 })
 
 
-def _design(samples: list[dict], max_levels: int = 6) -> dict:
+def _design(samples: list[dict], max_levels: int = 6, why: dict | None = None) -> dict:
     """Design factors discovered from the samplesheet. Which of them ARE the design may also be
     declared (`--design-factors`); `_declared_only` then lets only those refuse.
 
@@ -112,6 +112,10 @@ def _design(samples: list[dict], max_levels: int = 6) -> dict:
         with no evidence in it, reported in the same words as a real design differential.
 
     So a factor must leave at least one level holding more than one sample.
+
+    `why`, when a dict is passed, receives the reason each column was left out, so that a DECLARED
+    factor this drops is named with its reason rather than vanishing from every gate in silence
+    (harness autodev W048, fix round 2). What is returned does not change.
     """
     skip = NOT_FACTORS
     out: dict = {}
@@ -121,10 +125,19 @@ def _design(samples: list[dict], max_levels: int = 6) -> dict:
     ceiling = min(max_levels, max(n - 1, 1))
     for col in samples[0]:
         if col in skip:
+            if why is not None:
+                why[col] = "a parameter column, never a factor"
             continue
         vals = {r.get(col) for r in samples if str(r.get(col) or "").strip()}
-        if 2 <= len(vals) <= ceiling:
+        varies = 2 <= len(vals)
+        if varies and len(vals) <= ceiling:
             out[col] = {r["sample"]: r[col] for r in samples if r.get(col)}
+        elif why is not None:
+            why[col] = ("constant: it separates nothing" if not varies else
+                        f"{len(vals)} levels, more than the {max_levels} a factor may have here"
+                        if len(vals) > max_levels else
+                        f"one library per level ({len(vals)} levels over {n} libraries): an "
+                        f"identifier, not a factor")
     return out
 
 
@@ -146,6 +159,40 @@ def _received(assay, declared) -> dict:
     return {"assay_received": str(assay),
             "design_factors_received": ",".join(sorted(str(f) for f in (declared or [])))
             or "none declared"}
+
+
+def _computed_on(findings, design, libraries) -> dict:
+    """THE DESIGN A GATE COMPUTED ON, read off its own findings (harness autodev W048, fix round 2).
+
+    `design_factors_received` says what a gate was TOLD. It kept the declared names when the design
+    the gate computed on had lost the factor - its levels dropped at the graph or at the call, or
+    the factor left out by `_design` as a constant, an identifier or a column with too many levels -
+    and no differential was computed on it. So each gate also records every factor its findings
+    report a differential for (one reported NOT CHECKED is left out), with the number of levels its
+    libraries hold in the design it was handed: JSON, `{factor: levels}`. Recording only.
+    """
+    import json
+
+    named = set()
+    for f in findings:
+        check, message = str(getattr(f, "check", "")), str(getattr(f, "message", ""))
+        for p in _DIFFERENTIAL_CHECKS:
+            if check.startswith(p) and not message.startswith("NOT CHECKED"):
+                named.add(check[len(p):])
+    libs = [str(s) for s in libraries]
+    levels = {}
+    for factor in sorted(named):
+        mapping = (design or {}).get(factor) or {}
+        levels[factor] = len({str(mapping[s]) for s in libs if s in mapping})
+    return {"design_computed_on": json.dumps(levels, sort_keys=True)}
+
+
+def _dropped(params) -> dict:
+    """A declared factor the design left out, with the reason (graph.main_stage), for the record."""
+    import json
+
+    dropped = params.get("design_dropped") or {}
+    return {"design_factors_dropped": json.dumps(dropped, sort_keys=True)} if dropped else {}
 
 
 def _declared_only(findings, declared):
@@ -572,6 +619,8 @@ def _ambient_audit(task, pipeline, log):
     return {"outputs": [str(out)],
             "metrics": {"libraries": len(rows), "no_raw": len(no_raw),
                         **_received(told_assay, told_factors),
+                        **_computed_on(findings, task.params["design"], [r["sample"] for r in rows]),
+                        **_dropped(task.params),
                         "supplied": len(supplied),
                         # Carried on the result so step 2 can read it from the manifest and judge
                         # an outlying fit together with an unusual cell-call loss.
@@ -832,7 +881,9 @@ def _cellcall(task, pipeline, log):
         for s, c in sorted(calls.items()):
             w.writerow([s, c["aligner"], c["cellbender"], c["lost"]])
     return {"outputs": [str(out)],
-            "metrics": {"libraries": len(calls), **_received(told_assay, told_factors)},
+            "metrics": {"libraries": len(calls), **_received(told_assay, told_factors),
+                        **_computed_on(findings, task.params["design"], list(calls)),
+                        **_dropped(task.params)},
             "versions": {}}
 
 
@@ -1308,7 +1359,9 @@ def _doublet_health(task, pipeline, log):
             w.writerow([s, len(calls), n_pos, rates[s]])
     return {"outputs": [str(out)],
             "metrics": {"libraries": len(known), "never_scored": unscored_total,
-                        **_received(told_assay, told_factors)},
+                        **_received(told_assay, told_factors),
+                        **_computed_on(findings, task.params["design"], list(known)),
+                        **_dropped(task.params)},
             "versions": {}}
 
 

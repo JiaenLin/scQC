@@ -63,7 +63,8 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     ("accept" or "run") and the processor that would rebuild it.
     """
     tasks: list[Task] = []
-    design = steps._design(pipeline.samples)
+    why_not: dict = {}
+    design = steps._design(pipeline.samples, why=why_not)
     # THE DESIGN, WHERE IT IS DECLARED (`--design-factors`, B1-104). A declared factor must be a
     # samplesheet column; the differentials then refuse on declared factors only, and a discovered
     # column's differential is a REVIEW (steps._declared_only). Passed to the gating tasks only
@@ -78,6 +79,15 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
                 f"{'is' if len(absent) == 1 else 'are'} not a samplesheet column (columns: "
                 f"{', '.join(sorted(cols))}). A declared factor is a column the design varies.")
     design_declared = {"design_declared": declared} if declared else {}
+    # A DECLARED FACTOR THE DESIGN DROPS IS NAMED, WITH ITS REASON (harness autodev W048, fix round
+    # 2). `_design` leaves out a constant column, an identifier and one with too many levels; a
+    # declared factor among them dropped out of every gate in silence, and the record of what the
+    # gates were told still named it. Each gate now records it, so the report shows it beside the
+    # design the gate computed on. Passed only when there is one, so other runs are as they were.
+    dropped = {f: why_not.get(f, "not a column of the samplesheet's first row") for f in declared
+               if f not in design}
+    if dropped:
+        design_declared["design_dropped"] = dropped
 
     def accepted(step: str) -> dict:
         """The decisions file's `accept` entries for a gate, as a param - so a changed acceptance

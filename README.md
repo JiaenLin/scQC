@@ -232,8 +232,10 @@ orchestrator's own process:
 No data ships with this repository. The harness's development suite runs the pipeline end to end
 on its synthetic two-shape fixture through `scqc fixture-run` (`DEVPOINTS.yaml`), which is told the
 assay, the design's factor and the gene patterns and fails when the records the steps write show
-one did not reach the step that reads it (each gate records the assay it ran under and the factors
-it was given). A limit of the fixture, not of the tool: both of its shapes are cells, so it tells
+one did not reach the step that reads it (each gate records the assay it ran under, the factors it
+was given, and the factors of the design it computed on with their levels; a declared factor the
+design leaves out is named with the reason, in the report's notices too; the report's records are
+checked against the run's work state). A limit of the fixture, not of the tool: both of its shapes are cells, so it tells
 only `scrna`, a step wired to `scrna` cannot be told apart from one that read it, and the nucleus
 value never reaches the pipeline through this check; a real cohort is tested by reproducing its promoted run, not by a
 runner shipped here.

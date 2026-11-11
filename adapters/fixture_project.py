@@ -42,10 +42,16 @@ not arrive: the assay in the run's samplesheet, its report and the record of eve
 writes the assay it ran under (each gate's `assay_received`, step 5's `mito_assay`); each declared
 factor in the run's recorded parameters, samplesheet and design AND in the factors every gate
 recorded it was given (`design_factors_received`, harness autodev W048 fix round 1: the samplesheet
-and the parameters still say what was told when no gate received it); and each gene pattern
-matching genes of the object AND giving a non-zero fraction in every library's per-cell table.
-`fixture-run` fails on any miss. A limit of the fixture, not of the tool: both of the suite's
-shapes are cells, so only `scrna` is told, and a step wired to `scrna` cannot be told apart here.
+and the parameters still say what was told when no gate received it) AND in the design every gate
+recorded it COMPUTED ON (`design_computed_on`: the factors its own findings report a differential
+for, with their levels; fix round 2, because a gate handed a design without the factor's levels still
+received its name), naming the reason when the design left the factor out
+(`design_factors_dropped`); every one of those step records read in the report must also be what
+the run's work state holds; and each gene pattern matching genes of the object AND giving a
+non-zero fraction in every library's per-cell table. `fixture-run` fails on any miss. Limits: both of
+the suite's shapes are cells, so only `scrna` is told, and a step wired to `scrna` cannot be told
+apart here; a recorder rewritten to write what was told, or a report and work state rewritten
+together, are not caught by reading the records.
 """
 from __future__ import annotations
 
@@ -166,6 +172,43 @@ def build_project(observations, out, *, sample_key: str, counts_layer: str, mt_p
             "genes_ribo": sum(1 for g in genes if rx.match(g))}
 
 
+def _json_dict(text) -> dict:
+    """A JSON object recorded as text, or `{}` when it is not one (so a malformed record is a miss)."""
+    import json
+
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _against_state(run_dir: Path, report: dict, labels) -> list:
+    """Misses wherever the report's step records under `labels` differ from the run's work state."""
+    import json
+
+    path = run_dir.parent.parent / "work" / run_dir.name / "state.json"
+    try:
+        tasks = json.loads(path.read_text()).get("tasks") or {}
+    except (OSError, ValueError, AttributeError) as e:
+        return [f"the run's work state cannot be read ({e}), so the report's records of what each "
+                f"step received cannot be checked against it"]
+    held, shown = {}, {}
+    for t in tasks.values():
+        metrics = (t.get("metrics") if isinstance(t, dict) else None) or {}
+        for lab in labels:
+            if lab in metrics:
+                held.setdefault((str(t.get("step")), lab), set()).add(str(metrics[lab]))
+    for st in report.get("steps") or []:
+        for fd in st.get("found") or []:
+            if fd.get("label") in labels:
+                shown.setdefault((str(st.get("key")), fd["label"]), set()).add(str(fd.get("value")))
+    return [f"the report's {lab} for {step} ({'; '.join(sorted(shown.get((step, lab), ()))) or 'nothing'}) "
+            f"is not what the run's work state holds "
+            f"({'; '.join(sorted(held.get((step, lab), ()))) or 'nothing'})"
+            for step, lab in sorted(set(held) | set(shown)) if held.get((step, lab)) != shown.get((step, lab))]
+
+
 def axes_reached(run_dir, *, assay: str, factors, mt_prefix: str, ribo_pattern: str,
                  genes_mt: int, genes_ribo: int) -> tuple:
     """(lines, misses): what the run's own records say each TOLD value reached. A miss names the
@@ -186,13 +229,27 @@ def axes_reached(run_dir, *, assay: str, factors, mt_prefix: str, ribo_pattern: 
     libs = [str(r.get("sample")) for r in rows]
     # WHAT EACH STEP RECORDED IT RECEIVED (engine/steps._received; step 5's `mito_assay`). The
     # samplesheet and the parameter record say what was TOLD; only these say what ARRIVED.
+    # And since W048 fix round 2, what each gate COMPUTED ON: `design_computed_on` holds the factors
+    # its own findings report a differential for, with their levels, and `design_factors_dropped`
+    # a declared factor the design left out, with the reason. A gate handed a design without the
+    # factor still RECEIVED its name; only the first of these shows it was not used.
+    labels = ("assay_received", "mito_assay", "design_factors_received", "design_computed_on",
+              "design_factors_dropped")
     rec = {}
     for st in report.get("steps") or []:
         for fd in st.get("found") or []:
-            if fd.get("label") in ("assay_received", "mito_assay", "design_factors_received"):
+            if fd.get("label") in labels:
                 rec.setdefault(fd["label"], []).append((str(st.get("key")), str(fd.get("value"))))
     ran = rec.get("assay_received", []) + rec.get("mito_assay", [])
     gates = rec.get("design_factors_received", [])
+    computed = [(k, _json_dict(v)) for k, v in rec.get("design_computed_on", [])]
+    dropped: dict = {}
+    for _k, v in rec.get("design_factors_dropped", []):
+        dropped.update(_json_dict(v))
+    # THE REPORT IS CHECKED AGAINST THE RUN'S WORK STATE, where each task's metrics were first
+    # written: a record forged or lost in the report alone differs from it and is named. A run
+    # whose state and report were both rewritten is not caught here (a stated limit).
+    misses += _against_state(run_dir, report, labels)
 
     seen = sorted({str(r.get("assay") or "").strip().lower() for r in rows})
     said = str((report.get("run") or {}).get("assay") or "")
@@ -220,12 +277,19 @@ def axes_reached(run_dir, *, assay: str, factors, mt_prefix: str, ribo_pattern: 
             where.append("every gate's record (no gate recorded the factors it was given)")
         where += [f"the factors the {k} gate received ({v})" for k, v in gates
                   if f not in v.split(",")]
+        if not computed:
+            where.append("every gate's record of the design it computed on (no gate recorded one)")
+        where += [f"the design the {k} gate computed on ({json.dumps(v, sort_keys=True)})"
+                  for k, v in computed if f not in v]
+        if where and f in dropped:
+            where.append(f"the design itself (dropped: {dropped[f]})")
         if where:
             misses.append(f"design factor {f!r} was told and is absent from {', '.join(where)}")
         else:
             lines.append(f"design factor {f!r}: declared in the run's parameters, a column of its "
-                         f"samplesheet, a factor of its design, and received by the gate(s) of "
-                         f"{', '.join(k for k, _ in gates)}")
+                         f"samplesheet, a factor of its design, received by the gate(s) of "
+                         f"{', '.join(k for k, _ in gates)}, and computed on by "
+                         f"{', '.join(f'{k} ({v[f]} levels)' for k, v in computed)}")
 
     for name, told, n_genes, col in (("mitochondrial prefix", mt_prefix, genes_mt, "pct_counts_mt"),
                                      ("ribosomal pattern", ribo_pattern, genes_ribo,

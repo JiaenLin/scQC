@@ -928,6 +928,12 @@ def _one_step(key, title, purpose, removes, figures, entry, payload, verdict_blo
                             f"can open.")
                 found.append({"label": _text(label, ""), "value": _text(value),
                               "source": _text(source, f"source {NOT_STATED}")})
+                if _text(label, "") == "design_factors_dropped":
+                    # A DECLARED FACTOR LEFT OUT OF THE DESIGN is said where a reader looks, not
+                    # only in the step's record (harness autodev W048, fix round 2).
+                    _defect(defects, where, f"a declared design factor was left out of the design "
+                                            f"this gate computed on, so no differential was "
+                                            f"computed on it: {_text(value)}", severity="notice")
             else:
                 found.append({"label": "", "value": str(item),
                               "source": f"source {NOT_STATED}"})

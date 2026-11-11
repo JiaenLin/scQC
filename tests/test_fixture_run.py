@@ -190,7 +190,40 @@ if HAVE:
             other = tampered("other", lambda fd: dict(fd, value="snrna")
                              if fd.get("label") in ("assay_received", "mito_assay") else fd)
             silent = tampered("silent", lambda fd: None if fd.get("label") in recv else fd)
+            # WHAT A GATE COMPUTED ON (W048 fix round 2): a gate that computed on no factor, one whose
+            # factor the design dropped (the reason is named), and a record forged in the report
+            # while the run's work state says otherwise - that copy carries the state beside it.
+            unused = tampered("unused", lambda fd: dict(fd, value="{}")
+                              if fd.get("label") == "design_computed_on" else fd)
+            gone = tampered("gone", lambda fd: dict(fd, value="{}")
+                            if fd.get("label") == "design_computed_on" else fd)
+            rep = json.loads((gone / "reports" / "report.json").read_text())
+            for st in rep.get("steps") or []:
+                if any(fd.get("label") == "design_computed_on" for fd in st.get("found") or []):
+                    st["found"].append({"label": "design_factors_dropped", "source": "-",
+                                        "value": json.dumps({"condition_of": "constant: it separates nothing"})})
+            (gone / "reports" / "report.json").write_text(json.dumps(rep))
+            key = run_a.name
+            forged = td / "forged" / "results" / key
+            for sub in ("reports", "tables"):
+                (forged / sub).mkdir(parents=True, exist_ok=True)
+            (forged / "INPUTS.json").write_text((run_a / "INPUTS.json").read_text())
+            (forged / "reports" / "report.json").write_text((run_a / "reports" / "report.json").read_text())
+            for p in (run_a / "tables").glob("*.percell.csv"):
+                (forged / "tables" / p.name).write_bytes(p.read_bytes())
+            state = json.loads((run_a.parent.parent / "work" / key / "state.json").read_text())
+            for t in state.get("tasks", {}).values():
+                if "design_computed_on" in (t.get("metrics") or {}):
+                    t["metrics"]["design_computed_on"] = "{}"
+            (td / "forged" / "work" / key).mkdir(parents=True, exist_ok=True)
+            (td / "forged" / "work" / key / "state.json").write_text(json.dumps(state))
+            _, m = axes_reached(run_a, **told)
+            if m:
+                fails.append(f"5: the run as told, its report read against its own work state: {m}")
             for case, run, change, says in (
+                    ("a gate that computed on no factor", unused, {}, "the design the 04_doublets gate computed on ({})"),
+                    ("a told factor the design dropped", gone, {}, "dropped: constant: it separates nothing"),
+                    ("a record forged in the report alone", forged, {}, "is not what the run's work state holds"),
                     ("a gate never given the factor", blind, {}, "gate received (none declared)"),
                     ("a step that ran under another assay", other, {}, "ran under 'snrna'"),
                     ("no gate recorded its factors", silent, {}, "no gate recorded the factors"),
