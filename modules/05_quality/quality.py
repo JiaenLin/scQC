@@ -8,8 +8,9 @@ Across the libraries of ONE cohort - one sample type, one platform, one operator
 density valley between the debris mode and the nucleus mode moved substantially from library to
 library, on UMI and on detected genes alike (the measurements are that cohort's, in its records).
 
-Fixed floors of UMI >= 500 and genes >= 300 - a common published choice (a literature value, not
-a measurement), and the obvious one to reach for - sat ABOVE the measured valley in nearly every
+Fixed floors of UMI >= 500 and genes >= 300 - a round fixed pair, not a measurement and
+not a sourced one, and the obvious one to reach for (UMI >= 500 is the floor this tool declares for
+whole cells, the lower end of `UMI_BOUNDS['scrna']`) - sat ABOVE the measured valley in nearly every
 one of those libraries, so they cut into the nucleus mode rather than the debris below it. No fixed floor is
 right for most libraries even within one study, which is why what ships is the KDE-valley
 PROCEDURE and not the pair of numbers it produced there.
@@ -41,7 +42,7 @@ the declared floors further down (`FLOOR_METHOD`). For nuclei:
                that is not strictly below the quality floor (its check "step 3: the light floor
                is strictly below the quality floor"; it refuses since harness autodev W043); this
                is the same constraint seen from the other side.
-  above 1000   twice the published fixed floor (UMI >= 500), which already sat above the nuclear
+  above 1000   twice the fixed floor UMI >= 500 (the floor declared for whole cells), which already sat above the nuclear
                valley in every library of the calibration cohort, so the bound is more than
                twice any valley that cohort measured. A KDE returning 1,200 has found
                something other than the debris/nucleus boundary.
@@ -206,7 +207,7 @@ def derive(valleys, metric, light_floor=None, *, assay) -> Proposal:
     THE BOUNDS ARE THE GUARD. A valley outside them is still refused, and that is what catches
     the real failure: on the same cohort, under a narrower kernel, some libraries' minima wandered
     past the nuclear upper bound, which the bound rejects on sight; depth is not needed to catch
-    them. That is why the bound sits where it does: at twice the published fixed floor (UMI >= 500),
+    them. That is why the bound sits where it does: at twice the fixed floor UMI >= 500 (the floor declared for whole cells),
     above every real valley the cohort measured and below where those spurious minima landed.
 
     So `bimodal` now classifies rather than gates. Nothing is loosened - `min_valley_depth` is

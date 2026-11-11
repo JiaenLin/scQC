@@ -44,8 +44,8 @@ damage a missed answer does.
      removed from the analysis in all but name. Counts and detection can move independently.
 
   5 HOW MANY GENES VANISH ENTIRELY?
-     In the calibration cohort, from a handful to a few hundred per library (its records hold the
-     values). An order of magnitude more is a different kind of run.
+     Read against the cohort's own libraries (the calibration cohort's values are in its records,
+     not here): a library an order of magnitude above its siblings is a different kind of run.
 
 WHAT THIS AUDITOR DOES NOT DO. It does not say the denoising is CORRECT. Every check is either
 cohort-relative or a differential; none can tell a well-removed ambient transcript from a

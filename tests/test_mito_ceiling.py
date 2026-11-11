@@ -92,7 +92,7 @@ check("...and the flat ceiling is the floor itself",
       f"got {sorted({round(m.ceiling, 6) for m in sd['ceilings'].values()})}, floor {_FLOOR}")
 
 # Per-library variation is a property of the ESTIMATOR, so it is tested where the bound is not
-# deciding: with a wide declared bound the same cohort must produce ten different fences.
+# deciding: with a wide declared bound the same cohort must produce fences that differ between libraries.
 free = quality.derive_mito_ceiling(tight, assay="snrna", bounds=(0.5, 60.0),
                                    declared_by="probe: isolate the estimator from the bound")
 check("unbounded, ceilings differ between libraries (not a cohort constant)",

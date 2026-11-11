@@ -1,20 +1,24 @@
 # Derives count-floor proposals from recorded valleys and prints them; it applies no threshold.
-"""Step 5 test: synthetic nuclear density valleys, the bounds around them, and the cases that must refuse."""
+"""Step 5 test: constructed nuclear density valleys, the bounds around them, and the cases that must refuse."""
 import sys
 from pathlib import Path
+from statistics import median
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "modules" / "05_quality"))
 from quality import (Valley, ThresholdRefusal, derive, # noqa: E402
                      mito_ceiling_note, count_bounds, GENE_BOUNDS, UMI_BOUNDS)
 
-S = ["ctrl_01", "ctrl_02", "treat_01", "treat_02", "ctrl_03",
-     "ctrl_04", "ctrl_05", "treat_03", "treat_04", "treat_05"]
-# SYNTHETIC valleys in the shape of a nuclear cohort's, not any cohort's values: every UMI valley
-# inside the nuclear bounds and under the whole-cell floor, one gene valley under the UMI lower
-# bound. The constants they must give are computed below from the rule (median, rounded to 10).
-UMI = [455, 330, 392, 371, 296, 418, 385, 342, 478, 360]
-GENES = [318, 236, 282, 251, 176, 297, 263, 228, 334, 270]
+S = ["ctrl_01", "ctrl_02", "treat_01", "treat_02", "ctrl_03", "ctrl_04", "treat_03", "treat_04"]
+# CONSTRUCTED valleys, not any cohort's: UMI valleys stepped down from the whole-cell floor toward
+# the nuclear lower bound (each one a nuclear valley that a whole-cell rule must refuse), placed off
+# the middle of that range so the constant they give is not its centre; the gene valleys are the
+# same run scaled by GENE_SCALE, the smallest of them under the UMI lower bound. The constants
+# they must give are computed below by the rule: the median, rounded to the nearest ten.
+_LO, _HI = UMI_BOUNDS["snrna"][0], UMI_BOUNDS["scrna"][0]
+UMI = [_HI - (_HI - _LO) * k // 16 for k in (1, 2, 3, 13, 5, 6, 7, 9)]
+GENE_SCALE = 7 / 10
+GENES = [int(u * GENE_SCALE) for u in UMI]
 
 fails = []
 print("Step 5 - quality thresholds\n" + "=" * 74)
@@ -23,15 +27,16 @@ print(f"bounds: UMI {UMI_BOUNDS}, genes {GENE_BOUNDS}\n")
 # 2026-10-02; section I below is what a single-cell cohort gets, and why it is not this.
 SN = "snrna"
 
-print("A. ten nuclear valleys (synthetic)")
+print(f"A. {len(S)} nuclear valleys (constructed)")
 pu = derive([Valley(s, "umi", v, True) for s, v in zip(S, UMI)], "umi", light_floor=200, assay=SN)
 print(pu)
 pg = derive([Valley(s, "genes", v, True) for s, v in zip(S, GENES)], "genes", assay=SN)
 print(pg)
-# median UMI (371 + 385) / 2 = 378 -> 380; median genes (263 + 270) / 2 = 266.5 -> 270
-if pu.constant != 380 or pg.constant != 270:
-    fails.append(f"A: expected 380/270, got {pu.constant}/{pg.constant}")
-print(f" -> one cohort constant from ten per-library valleys: {pu.constant}/{pg.constant}")
+# THE RULE, computed here: the cohort constant is the median valley rounded to the nearest ten.
+want_u, want_g = (int(round(median(x) / 10) * 10) for x in (UMI, GENES))
+if (pu.constant, pg.constant) != (want_u, want_g):
+    fails.append(f"A: the rule gives {want_u}/{want_g}, got {pu.constant}/{pg.constant}")
+print(f" -> one cohort constant from {len(S)} per-library valleys: {pu.constant}/{pg.constant}")
 
 print("\nB. the gene lower bound must NOT be the UMI one")
 print(f" smallest gene valley is {min(GENES)}, below the UMI lower bound "
@@ -153,5 +158,5 @@ print(" " + mito_ceiling_note("snrna")[:300] + "...")
 print("\n" + "=" * 74)
 if fails:
     print("FAILED:"); [print(" -", x) for x in fails]; raise SystemExit(1)
-print(f"proved: A derives {pu.constant} from ten per-library valleys - the procedure ships and the")
+print(f"proved: A derives {pu.constant} from {len(S)} per-library valleys - the procedure ships and the")
 print(f"number does not, because valleys spanning {min(UMI)}-{max(UMI)} inside ONE cohort are not a constant")

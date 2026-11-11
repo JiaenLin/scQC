@@ -1332,7 +1332,7 @@ def _doublet_sweep(task, pipeline, log):
     s = p["sample"]
     # Its OWN export, not the one `_doublets` left in scratch. Depending on another task's
     # intermediate makes this step's correctness depend on when scratch is cleaned, and the
-    # export is cheap beside thirty seconds of xgboost.
+    # export is cheap beside the classifier's training.
     mtx = pipeline.scratch / f"{s}_dbl_sweep_mtx"
     # On a RAW object (no denoiser) a droplet the aligner rejected can still clear the light
     # floor, and scoring it would put non-cells into the doublet simulation and the rate's

@@ -1294,7 +1294,7 @@ def build_removal_breakdown(payload, defects: list) -> dict:
                 "something a reader can open.")
 
     # The widest ratio any single criterion shows across the libraries, computed here rather than
-    # left for a reader to scan sixty cells for. It is the number this table exists to surface.
+    # left for a reader to scan the whole table for. It is the number this table exists to surface.
     worst, worst_crit = None, None
     for c in criteria:
         vals = [r["pct_of_library"] for r in rows

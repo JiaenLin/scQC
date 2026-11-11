@@ -6,7 +6,7 @@ TWO WAYS THEY WERE LOST, BOTH SILENT, BOTH IN THE DIRECTION THAT MAKES A COHORT 
 1. A resumed run skips completed tasks, so no gate re-ran and the in-memory list was empty -
    and an empty gate list means "the gates ran and raised nothing", which reads as a pass. A
    report rebuilt on a finished cohort came out PASS with zero findings over a run that had
-   raised thirteen REVIEWs.
+   raised REVIEWs.
 
 2. A step gates once per LIBRARY and those tasks run concurrently. Two libraries both found
    the step absent from the "already gated this run" set, and the second one's reset discarded

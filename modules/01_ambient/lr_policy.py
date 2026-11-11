@@ -55,7 +55,7 @@ from statistics import median
 # Diagnostics that are cohort-comparable. Each maps to "is this sample unlike its siblings",
 # never to "is this value good", which is a claim none of them can support alone.
 DIAGNOSTICS = ("fraction_removed", "convergence_indicator")
-MAD_K = 3.5 # conventional robust-outlier cut; with n=10 it flags the plainly odd
+MAD_K = 3.5 # conventional robust-outlier cut on the modified z-score; it flags the plainly odd
 HALVE = 0.5
 
 @dataclass

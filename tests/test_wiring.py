@@ -508,7 +508,7 @@ except Exception as e:                                                # noqa: BL
 #         Checked statically, and checked for imports INSIDE FUNCTIONS too - which is the part
 #         that costs. A relative import at module level fails the moment anything touches the
 #         file; one inside `_op_apply_write` fails at step 7, after every other step of a
-#         ten-library cohort has completed. That is exactly where it did fail, and neither
+#         whole cohort has completed. That is exactly where it did fail, and neither
 #         `--help` nor a direct `import adapters.x` would have caught it.
 try:
     _script_adapters = sorted(p for p in Path("adapters").glob("*.py")

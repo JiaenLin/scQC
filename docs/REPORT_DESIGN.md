@@ -69,7 +69,7 @@ asked: a criterion taking 1% of one library and 30% of another (an illustration)
 and that is a technical gradient sitting exactly where the biology is measured. So the table is one
 row per library — `fired` and `alone` per criterion, the cohort as a marked last row — with the
 widest per-criterion ratio across libraries stated beneath it, because that ratio is the finding
-and nobody should have to scan sixty cells for it. `fired` and `alone` are both shown: printing
+and nobody should have to scan the whole table for it. `fired` and `alone` are both shown: printing
 only the first makes every criterion look load-bearing, only the second makes a criterion that
 agrees with its neighbours look inert.
 
@@ -290,7 +290,7 @@ Each of these exists because its absence produced a wrong reading at least once.
 - **Same scale across libraries** in any panel meant for comparison. A per-panel scale makes a
   4× difference look identical to a 4% one.
 - **n on every panel.** A figure with no n reads as universal whether or not that was meant.
-- **A threshold is drawn, never described.** If a cut is at 350, there is a line at 350.
+- **A threshold is drawn, never described.** If a cut is at a value, there is a line at that value.
 - **Colour is not the only encoding.** Every flag also has a shape or a label.
 - **Log axes labelled in original units**, with real ticks.
 

@@ -472,7 +472,7 @@ class PBSExecutor:
                 raise TaskFailure(f"job {job} still running past the deadline; not killed - "
                                   f"check `qstat {job}` and the log at {log}.out")
             # BACK OFF rather than a flat interval. A fixed 30 s poll makes every task cost at
-            # least 30 s however fast it is, so a graph of 37 short tasks spends nineteen minutes
+            # least 30 s however fast it is, so a graph of N short tasks spends N half-minutes
             # asleep. Starting at 2 s and doubling to poll_s costs a handful of extra qstat calls
             # on a long job and returns a short one almost immediately.
             time.sleep(wait)

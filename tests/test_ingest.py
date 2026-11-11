@@ -1,8 +1,8 @@
 # Plans ingestion for a set of inputs and prints each plan; it processes no data.
 """Step 0 test: every decision the ingest planner can make.
 
-Five cases, chosen so each exercises one branch and three of them are real files with a known
-right answer:
+Nine cases, chosen so each exercises one branch, each with a known right answer. The first three
+read synthetic summary statistics in the shape of three artifacts of one library; no file is read:
 
   1 vendor counts_matrix.tar passes P1, FAILS P2 (EmptyDrops-called) -> must REJECT, rebuild
   2 vendor .h5ad fails both -> must REJECT, rebuild
@@ -45,12 +45,12 @@ with tempfile.TemporaryDirectory() as _td:
 # records them (synthetic values): the vendor's delivered matrix, the vendor's delivered analysis
 # object, and the unfiltered droplet matrix reprocessed from FASTQ.
 STATS = {
-    "vendor_tar": dict(n_barcodes=15000, n_genes=30000, min_counts=500.0,
-                       max_counts=20000.0, p98_counts=5000.0, expected_genes=30000),
-    "vendor_h5ad": dict(n_barcodes=14000, n_genes=20000, min_counts=470.0,
-                        max_counts=4999.0, p98_counts=5000.0, expected_genes=30000),
-    "ours_raw": dict(n_barcodes=36000, n_genes=30000, min_counts=1,
-                     max_counts=20000.0, p98_counts=None, expected_genes=30000),
+    "vendor_tar": dict(n_barcodes=15000, n_genes=28000, min_counts=500.0,
+                       max_counts=20000.0, p98_counts=5000.0, expected_genes=28000),
+    "vendor_h5ad": dict(n_barcodes=12000, n_genes=20000, min_counts=450.0,
+                        max_counts=4999.0, p98_counts=5000.0, expected_genes=28000),
+    "ours_raw": dict(n_barcodes=60000, n_genes=28000, min_counts=1,
+                     max_counts=20000.0, p98_counts=None, expected_genes=28000),
 }
 CASES = [
     ("1 vendor counts_matrix.tar (CeleScope outs/filtered)", "vendor_tar", "run"),

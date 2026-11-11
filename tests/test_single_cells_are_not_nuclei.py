@@ -4,7 +4,7 @@
 
 Until 2026-10-02 the assay changed two numbers - the mitochondrial bounds and how k is chosen - and
 nothing else. The first single-cell cohort (single-cell-harness ADR-0027) went down the nuclear
-route whole: CellBender was scheduled for every library, its run failed on all four, and had it
+route whole: CellBender was scheduled for every library, its run failed on every one, and had it
 succeeded the steps after it would have taken "has counts after denoising" as the cell call, bounded
 the count floors by nuclear valleys, counted ribosomal markers against whole cells, and reached step
 6 asking for a `cellbender_cell` column nothing in this tool writes. The PI's ruling: "do not run

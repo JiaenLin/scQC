@@ -373,8 +373,8 @@ def _f2(tables: Path, sheet: list) -> dict:
     # The design panel is the one that can show a technical removal masquerading as biology, so
     # it is built from whatever factors the samplesheet actually carries rather than a fixed list.
     #
-    # It said that before, and then used a fixed list: ("age", "diet", "chemistry", "batch") -
-    # the four factor names of the cohort this pipeline was calibrated on. On that cohort the
+    # It said that before, and then used a fixed list: the factor names of the cohort this
+    # pipeline was calibrated on, spelled out in the code. On that cohort the
     # panel was therefore correct, and on any other it rendered EMPTY while the comment above it
     # claimed otherwise. The gates in steps 1, 2 and 4 had always used the discovered factors, so
     # a run could refuse on a design differential the report then declined to draw.

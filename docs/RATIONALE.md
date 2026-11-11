@@ -73,7 +73,8 @@ rather than by preference.
   computable. After step 7 every cluster is 0% doublet by construction and that flag becomes a
   tautology which passes for the wrong reason. The flags are a conjunction rather than a
   disjunction because a mitochondrial-marker cluster at normal coverage is the signature of a
-  mitochondria-rich cell type, not of damage; that change took 22 flagged clusters to 8.
+  mitochondria-rich cell type, not of damage (what the change did on the calibration cohort is in its
+  records, not here).
 - **7 · apply** — confining every removal to one step is what lets a reviewer establish, quickly,
   that no other step can silently cost them cells. The internal ordering is load-bearing too: an
   object filtered before its ledger was checked would have performed the removal before anything

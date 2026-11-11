@@ -144,7 +144,7 @@ bounds, chosen by the PI to be lenient — "make reasonable QC, do not be too ha
 true signal" — and the report classes them `DECLARED`, never `DERIVED`.
 
 The bounds are the real guard, and the nuclear UMI upper bound of 1,000 sits where it does for a
-reason: it is twice the published fixed floor (UMI ≥ 500), which already sat above every nuclear
+reason: it is twice the fixed floor UMI ≥ 500 (the floor this tool declares for whole cells), which already sat above every nuclear
 valley the calibration cohort measured, so no real valley comes near it, while under a narrower
 kernel some of that cohort's libraries returned minima past it. The bound rejects those on
 sight, and no depth test is needed to catch them.

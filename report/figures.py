@@ -24,7 +24,7 @@ THE RULES EVERY FUNCTION HERE OBEYS, AND THE READING EACH ONE PREVENTS
   one scale              Panels meant for comparison share limits. A per-panel scale makes a 4x
                          difference look identical to a 4% one.
   n on every panel       A panel with no n reads as universal whether or not that was meant.
-  thresholds are drawn   A cut at 350 is a line at 350, not a sentence under the figure.
+  thresholds are drawn   A cut at a value is a line at that value, not a sentence under it.
   labels via label_text  An optional label is read with the unknown predicate, never with
                          `label or default`: a NaN is truthy, so `or` kept it and the axis read
                          literally `nan (log scale, original units)`.
@@ -967,8 +967,8 @@ def fig_f6_quality_density(densities, *, valleys=None, cut=None, bounds=None, me
     finds it by fitting the density in log10 space, which is why the table it writes carries a
     `grid_log10` column beside the grid. Drawn against linear UMI the entire structure this figure
     exists to show, both modes and the cut between them, occupies the first fraction of a percent
-    of the axis and the rest is empty: on the calibration cohort the valley sat at 350 and the
-    axis ran to six figures. The ticks read in ORIGINAL UNITS, so the reader is never asked to
+    of the axis and the rest is empty: a nuclear valley sits inside the nuclear UMI bounds, in the
+    hundreds, while the axis runs to six figures. The ticks read in ORIGINAL UNITS, so the reader is never asked to
     interpret an exponent.
 
     A density containing a non-positive grid point cannot go on a log axis; that panel is drawn

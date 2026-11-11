@@ -12,7 +12,8 @@ chemistry versions within the cohort, intron-inclusive quantification.
 
 It is **unpublished**, so it is not named here, and nothing of it is meant to be carried: its
 study, sample names, species, tissue and design levels are absent, and its MEASURED VALUES are
-kept in its own records, not here. A generated word list catches the names and the numbers it
+kept in its own records, not here; what stays is the kind of dataset it was (above), so a reader
+can judge what the calibration supports. A generated word list catches the names and the numbers it
 holds; a measured number no list holds is caught only by reading, so every number this repository
 keeps should say what it is: a default, a bound with its reason, a published value, or synthetic.
 

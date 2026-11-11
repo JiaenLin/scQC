@@ -232,7 +232,7 @@ class Pipeline:
         # They used to live only here, in memory, for the length of one process. A re-run skips
         # completed tasks, so no gate re-ran, so the list was empty - and an empty gate list
         # means "supplied, nothing raised". A report rebuilt on a finished run therefore came
-        # out PASS with zero findings over a cohort whose original run raised thirteen REVIEWs,
+        # out PASS with zero findings over a cohort whose original run had raised REVIEWs,
         # and it looked exactly like a clean run, which is the only kind of wrong a reader
         # cannot see.
         #

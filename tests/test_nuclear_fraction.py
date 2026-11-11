@@ -164,8 +164,8 @@ check("E: the trigger is the DECLARED lower mitochondrial bound, not a new param
 # THIS EXISTS BECAUSE A SOURCE GREP CANNOT CATCH IT. The floor derivation was first written into
 # `_mito_ceiling_stage`, which holds the bound - while the per-library medians it reads are
 # collected in `_quality_stage`, its caller. Every grep in section E passed, `py_compile` passed,
-# and the run died with `NameError: name 'nf_per' is not defined` eighteen minutes in, after ten
-# libraries had been measured and the doublet sweep had run.
+# and the run died with `NameError: name 'nf_per' is not defined` well into the run, after every
+# library had been measured and the doublet sweep had run.
 #
 # A whole-module linter would catch this, and there is none in this environment. So the check is
 # scoped and dependency-free: every `nf_*` name LOADED inside a function must be STORED in that

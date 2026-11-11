@@ -19,7 +19,7 @@ CellBender 0.3.2 paired with some pyro/torch builds cannot write its checkpoint,
 posterior step declines to run without one. The observable result is a job that trains for its
 full epoch budget, logs nothing that reads as fatal, exits 0, and leaves no output matrix. Every
 scheduler, every wrapper and every resume manifest records that run as a success; the next step
-then fails on a missing file, three hours and one queue wait later, with an error naming the
+then fails on a missing file, hours and one queue wait later, with an error naming the
 wrong thing.
 
 So `run_remove_background()` treats the exit code as necessary and not sufficient. After the

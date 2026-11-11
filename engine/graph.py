@@ -131,7 +131,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
 
     # WHICH ROUTE EACH LIBRARY TAKES IS THE ASSAY'S POLICY, decided by the module and read here
     # BEFORE anything is submitted. This loop used to schedule CellBender for every library not
-    # supplied, whatever its assay - so the first single-cell cohort queued four GPU jobs for
+    # supplied, whatever its assay - so the first single-cell cohort queued a GPU job per library for
     # whole cells and failed inside them (single-cell-harness ADR-0027, Q6). A library whose
     # assay is not denoised takes `_ambient_none`: its raw counts become the object, and the
     # aligner's call - `aligner_cells`, required here rather than discovered missing at step 2 -
