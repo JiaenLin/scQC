@@ -39,9 +39,10 @@ floor - the data does - and they catch a floor that cannot be right. Single cell
 the declared floors further down (`FLOOR_METHOD`). For nuclei:
 
   below 200    the quality floor would sit at or under the doublet-scoring light floor,
-               inverting the pipeline's ordering. Step 3 already refuses a light floor that is
-               not strictly below the quality floor; this is the same constraint seen from the
-               other side.
+               inverting the pipeline's ordering. Step 7's removal audit refuses a light floor
+               that is not strictly below the quality floor (its check "step 3: the light floor
+               is strictly below the quality floor"; it refuses since harness autodev W043); this
+               is the same constraint seen from the other side.
   above 1000   more than twice the largest valley measured on the calibration cohort (473), and
                twice the 500 already shown to sit above the valley in every one of its
                libraries. A KDE returning 1,200 has found something other than the
