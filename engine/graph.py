@@ -84,7 +84,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
     # declared factor among them dropped out of every gate in silence, and the record of what the
     # gates were told still named it. Each gate now records it, so the report shows it beside the
     # design the gate computed on. Passed only when there is one, so other runs are as they were.
-    dropped = {f: why_not.get(f, "not a column of the samplesheet's first row") for f in declared
+    dropped = {f: why_not.get(f, "left out of the design, no reason recorded") for f in declared
                if f not in design}
     if dropped:
         design_declared["design_dropped"] = dropped

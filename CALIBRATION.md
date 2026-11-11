@@ -10,10 +10,13 @@ Single-nuclei RNA-seq libraries of a solid tissue, in a two-factor design with r
 in each arm of the factor used in the differential checks. Droplet-based 3' chemistry, two
 chemistry versions within the cohort, intron-inclusive quantification.
 
-It is **unpublished**, so it is not named here, and nothing of it is meant to be carried: its
-study, sample names, species, tissue and design levels are absent, and its MEASURED VALUES are
-kept in its own records, not here; what stays is the kind of dataset it was (above), so a reader
-can judge what the calibration supports. A generated word list catches the names and the numbers it
+It is **unpublished**, so it is not named here: its study, sample names, species, tissue and design
+levels are absent. Its measurements are that cohort's own and are recorded in the cohort's project
+records (its stage decisions and run logs), outside this repository. The tool's rules - the
+procedures, bounds and lines - do not depend on them, and the tool reads none of them when it runs.
+Some sentences here and in the code still say, in words or as a rounded illustration, what those
+measurements showed, to explain why a rule has its shape; none changes a computed value. A
+generated word list catches the names and the numbers it
 holds; a measured number no list holds is caught only by reading, so every number this repository
 keeps should say what it is: a default, a bound with its reason, a published value, or synthetic.
 

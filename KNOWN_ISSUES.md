@@ -232,7 +232,11 @@ environment is not pinned (section 7).
   default) and `--design-factors`, and fails, naming the value, when the records the steps write show
   a told value did not reach its step: each gate of steps 1, 2 and 4 records the assay it ran
   under and the factors it was given, step 5 its `mito_assay` (W048 fix round 1; before it the
-  check read the samplesheet and the CLI's parameters, and stayed green with every gate blind).
+  check read the samplesheet and the CLI's parameters, and stayed green with every gate blind);
+  since fix round 2 each gate also records the factors of the design it COMPUTED ON, with their
+  levels, and the told factor must be there (a gate handed a design without the factor's levels
+  still received its name); a declared factor the design leaves out is named with its reason, in
+  the report's notices too; and the report's step records are checked against the run's work state.
   `tests/test_fixture_run.py`, cases 4-6. **Still open, a limit of the fixture:** both shapes are
   cells, so only `scrna` is ever told; a step wired to `scrna` passes, and the nucleus value does
   not reach the pipeline through this check.
