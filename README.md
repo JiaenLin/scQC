@@ -93,7 +93,7 @@ threshold afterwards and they no longer apply.
 | 4 | doublets | score per sample, before quality filtering; flag only | — |
 | 5 | quality | derive count floors and the per-library mitochondrial ceiling | — |
 | 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet fraction | — |
-| 7 | **apply** | measure, write the ledger, then write the filtered objects | **yes — only here** |
+| 7 | **apply** | measure, write the ledger, audit the removal (a failed check refuses), then write the filtered objects | **yes — only here** |
 
 Single nuclei and single cells take different routes, decided by the declared `assay`.
 Nuclei are denoised by CellBender (mandatory, unless a skip is declared in the samplesheet with

@@ -31,6 +31,15 @@ criterion is applied every cluster is 0% doublet by construction and the cluster
 test becomes a tautology that passes for the wrong reason. That object is a STRICT SUPERSET of
 the deliverable and differs from it by doublets ALONE. Both halves are checked: a superset that
 differs by anything else is not the sanctioned exception, it is a second, unaudited filter.
+
+A FAILED CHECK STOPS THE RUN (harness autodev W043, GAP-119)
+
+Every check that finds the removal is not what the pipeline recorded is a REFUSE, the word every
+other gate writes, and step 7 hands `verdict()` to `Pipeline.gate`, which stops the run there -
+after the ledger, before any matrix is written. This module wrote FAIL, and the gate stops on
+REFUSE only, so a failed audit was recorded, read by the report as an unrecognised severity, and
+the deliverable was written anyway. A refusal here is lifted the way every refusal is: an
+`accept` entry in decisions.yml naming this step, the check, who accepted it and their words.
 """
 
 from __future__ import annotations
@@ -45,7 +54,7 @@ class AuditFailure(RuntimeError):
 @dataclass
 class Finding:
     check: str
-    severity: str          # "ok" | "REVIEW" | "FAIL"
+    severity: str          # "ok" | "REVIEW" | "REFUSE"
     message: str
     detail: list = field(default_factory=list)
 
@@ -90,7 +99,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
     both = [i for i in range(n) if keep[i] and removed[i]]
     neither = [i for i in range(n) if not keep[i] and not removed[i]]
     out.append(Finding(
-        "keep and removed are complementary", "FAIL" if (both or neither) else "ok",
+        "keep and removed are complementary", "REFUSE" if (both or neither) else "ok",
         (f"{len(both)} row(s) are BOTH kept and removed and {len(neither)} are neither - the two "
          f"columns disagree, so at least one of them is not what the object contains"
          if (both or neither) else
@@ -106,7 +115,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
         unexplained = [i for i in range(n)
                        if removed[i] and cell[i] and not any(crit[c][i] for c in crit)]
         out.append(Finding(
-            "removal decomposes into the recorded criteria", "FAIL" if mismatch else "ok",
+            "removal decomposes into the recorded criteria", "REFUSE" if mismatch else "ok",
             (f"{len(mismatch):,} row(s) differ between the recorded `removed` and the join of "
              f"{len(crit)} criteria. Of those, {len(unexplained):,} are called cells removed with "
              f"NO criterion set - a removal that happened outside step 7 looks exactly like this"
@@ -117,7 +126,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
     # --- C. step 2 did not contaminate: no non-cell survives -------------------------------------
     leak = [i for i in range(n) if keep[i] and not cell[i]]
     out.append(Finding(
-        "step 2: no uncalled droplet reaches the deliverable", "FAIL" if leak else "ok",
+        "step 2: no uncalled droplet reaches the deliverable", "REFUSE" if leak else "ok",
         (f"{len(leak):,} droplet(s) not called a cell are in the deliverable"
          if leak else
          f"all {sum(keep):,} kept observations were called cells; the {sum(1 for c in cell if not c):,} "
@@ -134,7 +143,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
         # floor and unexamined nuclei enter the deliverable wearing a verdict nobody computed.
         out.append(Finding(
             "step 3: no unexamined nucleus reaches the deliverable",
-            "FAIL" if kept_unscored else "ok",
+            "REFUSE" if kept_unscored else "ok",
             (f"{len(kept_unscored):,} nuclei in the deliverable were never scored for doublets. "
              f"They carry 'not a doublet' because nothing looked, which is not the same claim"
              if kept_unscored else
@@ -145,7 +154,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
             bad = light_floor >= quality_floor
             out.append(Finding(
                 "step 3: the light floor is strictly below the quality floor",
-                "FAIL" if bad else "ok",
+                "REFUSE" if bad else "ok",
                 (f"light floor {light_floor} is NOT below quality floor {quality_floor}. The "
                  f"previous check may pass today and stop passing on the next cohort: this "
                  f"inequality is the only reason unexamined nuclei cannot survive"
@@ -171,7 +180,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
             outside = [i for i in range(n) if d[i] and not scored[i]]
             out.append(Finding(
                 "step 4: no doublet call outside the examined set",
-                "FAIL" if outside else "ok",
+                "REFUSE" if outside else "ok",
                 (f"{len(outside):,} nuclei are called doublets but were never scored - the join "
                  f"assigned a call to a barcode the detector never saw"
                  if outside else "every doublet call belongs to a nucleus that was examined")))
@@ -183,7 +192,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
         extra = [i for i in range(n) if pre[i] and not keep[i]]
         out.append(Finding(
             "step 6 object is a superset of the deliverable",
-            "FAIL" if not_superset else "ok",
+            "REFUSE" if not_superset else "ok",
             (f"{len(not_superset):,} nuclei are in the deliverable but NOT in the cluster-check "
              f"object - it is not a superset, so it is a second filter nobody audited"
              if not_superset else
@@ -193,7 +202,7 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
             wrong = [i for i in extra if not d[i]]
             out.append(Finding(
                 "step 6 object differs from the deliverable by doublets ALONE",
-                "FAIL" if wrong else "ok",
+                "REFUSE" if wrong else "ok",
                 (f"{len(wrong):,} of its {len(extra):,} extra nuclei are not doublet-flagged. The "
                  f"sanctioned exception is 'doublets retained'; anything else retained is an "
                  f"unaudited difference between the two objects"
@@ -225,14 +234,23 @@ def audit(rows, *, cell_col="cellbender_cell", keep_col="keep", removed_col="rem
 
 
 def verdict(findings) -> str:
-    if any(f.severity == "FAIL" for f in findings):
-        return "FAIL"
-    return "REVIEW" if any(f.severity == "REVIEW" for f in findings) else "ok"
+    """"REFUSE", "REVIEW" or "PASS" - the closed vocabulary `Pipeline.gate` acts on.
+
+    It returned "FAIL" and "ok", words the gate does not stop on, so a failed audit stopped
+    nothing (harness autodev W043, GAP-119).
+    """
+    if any(f.severity == "REFUSE" for f in findings):
+        return "REFUSE"
+    return "REVIEW" if any(f.severity == "REVIEW" for f in findings) else "PASS"
 
 
 def enforce(findings) -> None:
-    """Raise on any FAIL. REVIEW findings are printed by the caller and do not stop a run."""
-    bad = [f for f in findings if f.severity == "FAIL"]
+    """Raise on any REFUSE, outside the pipeline. REVIEW findings do not stop a run.
+
+    Step 7 does not call this: it passes `verdict()` to `Pipeline.gate`, which stops the run and
+    honours an accept entry, as every gate does. This is for a caller with no pipeline.
+    """
+    bad = [f for f in findings if f.severity == "REFUSE"]
     if bad:
         raise AuditFailure(
             "the removal is not what the pipeline recorded:\n"

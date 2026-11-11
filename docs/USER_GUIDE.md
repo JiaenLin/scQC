@@ -101,7 +101,8 @@ the only mode that removes anything. Before it writes, it:
    barcode naming the criteria that removed it;
 2. runs an audit over the completed decision (does each criterion remove anything uniquely? does
    `removed` decompose exactly into the recorded criteria? is anything unexamined reaching the
-   deliverable?);
+   deliverable?). A check that fails REFUSES: the run stops there, no object is written, and the
+   ledger says what would have been removed;
 3. writes one object per library, then builds the cohort object by **reading those files back**.
 
 The per-library objects are primary; the cohort object is derived from them. Each library is

@@ -2634,7 +2634,10 @@ def _apply(task, pipeline, log):
     except ap.ApplyRefusal as e:
         raise Refusal(f"07_apply: {e}") from None
 
-    # --- the audit, on the completed decision and still before anything is written.
+    # --- the audit, on the completed decision and still before any matrix is written. A check it
+    # fails is a REFUSE, and the gate below stops the run on it, as steps 1, 2 and 4 stop: the
+    # audit wrote FAIL, a word the gate does not act on, so a failed audit used to be recorded and
+    # the objects written anyway (harness autodev W043, GAP-119). An accept entry lifts it by name.
     au = step_module("audit_removal")
     table = {c: [flag(r, c) for r in percell] for c in criteria}
     table.update({

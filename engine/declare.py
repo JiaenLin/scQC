@@ -54,8 +54,9 @@ PROVIDES = [f"mask/{c}" for c in CRITERIA] + [
 GATES = {
     # `verdicts` is what each gate can return, in the closed vocabulary; `as_written` is the word
     # the module itself uses, so a reader can grep for it. Two gates refuse by raising rather than
-    # by returning a word, and one writes FAIL where the vocabulary says REFUSE — declared, not
-    # papered over: the test asserts the words are in the modules.
+    # by returning a word. Step 7's audit wrote FAIL where the vocabulary says REFUSE, and the gate
+    # stops on REFUSE only, so it stopped nothing; it writes REFUSE now (harness autodev W043). The
+    # test asserts the words are in the modules.
     "00_ingest": {"module": "modules/00_ingest/ingest.py", "probe": "scqc verify",
                   "verdicts": ["PASS", "REFUSE"], "as_written": ["REFUSES"]},
     "01_ambient": {"module": "modules/01_ambient/audit_ambient.py", "probe": None,
@@ -69,8 +70,7 @@ GATES = {
     "06_cluster_check": {"module": "modules/06_cluster_check/cluster_flags.py", "probe": "scqc cluster-preflight",
                          "verdicts": ["PASS", "REFUSE"], "as_written": ["ClusterRefusal"]},
     "07_apply": {"module": "modules/07_apply/audit_removal.py", "probe": None,
-                 "verdicts": ["PASS", "REVIEW", "REFUSE"], "as_written": ["FAIL", "REVIEW", "ok"],
-                 "note": "the module writes FAIL for REFUSE"},
+                 "verdicts": ["PASS", "REVIEW", "REFUSE"], "as_written": ["REFUSE", "REVIEW", "ok"]},
 }
 VERDICTS = ["PASS", "REVIEW", "REFUSE"]
 

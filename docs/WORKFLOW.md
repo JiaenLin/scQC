@@ -91,10 +91,13 @@ flowchart TD
     subgraph S7["Step 7 — Apply"]
         Y1["Pre-flight: contradictions<br/>step 6 already found"]
         Y2{"Approval words given<br/>for an ADJUDICATED override:<br/>do they name THIS action?"}
+        Y3{"Removal audit: is the removal<br/>exactly the recorded criteria,<br/>nothing unexamined kept?"}
     end
     Y1 --> Y2
     Y2 -- "no" --> X7["REFUSE · raises<br/>words given for another action"]
-    Y2 -- "yes, or no override:<br/>DERIVED / DECLARED applied" --> OUT["The removal is applied —<br/>the only step that removes —<br/>and every removed observation is<br/>written out with the criteria<br/>that fired on it"]
+    Y2 -- "yes, or no override:<br/>DERIVED / DECLARED applied" --> Y3
+    Y3 -- "a check fails" --> X7A["REFUSE<br/>no object is written; the ledger<br/>says what would have left"]
+    Y3 -- "every check holds" --> OUT["The removal is applied —<br/>the only step that removes —<br/>and every removed observation is<br/>written out with the criteria<br/>that fired on it"]
 
     style X0 fill:#8B2635,color:#fff
     style XG1 fill:#8B2635,color:#fff
@@ -106,6 +109,7 @@ flowchart TD
     style X4 fill:#8B2635,color:#fff
     style Q3 fill:#B8860B,color:#fff
     style X7 fill:#8B2635,color:#fff
+    style X7A fill:#8B2635,color:#fff
     style R1 fill:#B8860B,color:#fff
     style R2 fill:#B8860B,color:#fff
     style R2D fill:#B8860B,color:#fff
@@ -125,7 +129,14 @@ The two forms are not interchangeable, and the diagram marks the difference.
   `DoubletRefusal`, `ThresholdRefusal`, `ClusterRefusal`, `ApplyRefusal`). The call does not return
   a usable value, so the refusal cannot be ignored by a caller that reads only the value.
 - **everything else** — the module builds findings and `verdict()` reduces them to `REFUSE`,
-  `REVIEW` or `PASS`. Returning `"REFUSE"` reports; the **caller** is what stops the run.
+  `REVIEW` or `PASS`. Returning `"REFUSE"` reports; the **caller** is what stops the run:
+  `Pipeline.gate` raises on `REFUSE`, before the next step runs. Step 7's removal audit is one of
+  these, and stops the run before any object is written. Until harness autodev W043 it wrote
+  `FAIL`, a word the gate does not act on, so a failed audit was recorded and the objects were
+  written anyway.
+- **any refusal** can be accepted in `decisions.yml` (apply mode): `accept: [{step, check,
+  approved_by, verbatim}]` turns that one refusal into an accepted REVIEW, recorded in
+  STATUS.json's `escapes` and in the report. Half an approval accepts nothing.
 
 ### Branches worth reading twice
 
