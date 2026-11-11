@@ -229,8 +229,13 @@ environment is not pinned (section 7).
 - **The fixture was never told the assay or the design's factor, and nothing checked what it was
   told.** `fixture-run` wrote `scrna` for every library itself, declared no factor, and a step that
   ignored the told mitochondrial prefix would still have completed. It now takes `--assay` (no
-  default) and `--design-factors`, and fails, naming the value, when the run's own records show a
-  told value did not reach its step. `tests/test_fixture_run.py`, cases 4-6.
+  default) and `--design-factors`, and fails, naming the value, when the records the steps write show
+  a told value did not reach its step: each gate of steps 1, 2 and 4 records the assay it ran
+  under and the factors it was given, step 5 its `mito_assay` (W048 fix round 1; before it the
+  check read the samplesheet and the CLI's parameters, and stayed green with every gate blind).
+  `tests/test_fixture_run.py`, cases 4-6. **Still open, a limit of the fixture:** both shapes are
+  cells, so only `scrna` is ever told; a step wired to `scrna` passes, and the nucleus value does
+  not reach the pipeline through this check.
 - **Two local runs whose project folders shared a name shared their scratch** and failed each
   other (`$TMPDIR/scqc_<folder name>`). Local and `SCQC_SCRATCH` scratch is named for the run;
   the PBS scratch path is unchanged. `tests/test_runs_do_not_share_scratch.py`.

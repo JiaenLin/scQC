@@ -38,9 +38,14 @@ shows that the pipeline carried the fixture; it does not show that what the call
 assay, the design's factors, the mitochondrial prefix, the ribosomal pattern - is what the steps
 read. A step that ignored the told prefix would still complete, with no mitochondrial fraction at
 all. So `axes_reached` reads the run's own records after it and names every told value that did
-not arrive: the assay in the run's samplesheet and its report, each declared factor in the run's
-recorded parameters, samplesheet and design, and each gene pattern matching genes of the object
-AND giving a non-zero fraction in every library's per-cell table. `fixture-run` fails on any miss.
+not arrive: the assay in the run's samplesheet, its report and the record of every step that
+writes the assay it ran under (each gate's `assay_received`, step 5's `mito_assay`); each declared
+factor in the run's recorded parameters, samplesheet and design AND in the factors every gate
+recorded it was given (`design_factors_received`, harness autodev W048 fix round 1: the samplesheet
+and the parameters still say what was told when no gate received it); and each gene pattern
+matching genes of the object AND giving a non-zero fraction in every library's per-cell table.
+`fixture-run` fails on any miss. A limit of the fixture, not of the tool: both of the suite's
+shapes are cells, so only `scrna` is told, and a step wired to `scrna` cannot be told apart here.
 """
 from __future__ import annotations
 

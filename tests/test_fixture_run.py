@@ -168,7 +168,33 @@ if HAVE:
                 if p.name.startswith("L2."):
                     t["pct_counts_mt"] = 0.0
                 t.to_csv(zeroed / "tables" / p.name, index=False)
+            # THE RECORDS THE STEPS WRITE, tampered one way each (harness autodev W048 fix round 1):
+            # a gate never given the factor, a step that ran under another assay, and a run whose
+            # steps recorded nothing. Each must be named, because the samplesheet and the CLI's
+            # parameter record still say what was told in all three.
+            def tampered(name, edit):
+                d = td / name
+                for sub in ("reports", "tables"):
+                    (d / sub).mkdir(parents=True, exist_ok=True)
+                (d / "INPUTS.json").write_text((run_a / "INPUTS.json").read_text())
+                rep = json.loads((run_a / "reports" / "report.json").read_text())
+                for st in rep.get("steps") or []:
+                    st["found"] = [x for x in (edit(dict(fd)) for fd in st.get("found") or []) if x]
+                (d / "reports" / "report.json").write_text(json.dumps(rep))
+                for p in (run_a / "tables").glob("*.percell.csv"):
+                    (d / "tables" / p.name).write_bytes(p.read_bytes())
+                return d
+            recv = ("assay_received", "mito_assay", "design_factors_received")
+            blind = tampered("blind", lambda fd: dict(fd, value="none declared")
+                             if fd.get("label") == "design_factors_received" else fd)
+            other = tampered("other", lambda fd: dict(fd, value="snrna")
+                             if fd.get("label") in ("assay_received", "mito_assay") else fd)
+            silent = tampered("silent", lambda fd: None if fd.get("label") in recv else fd)
             for case, run, change, says in (
+                    ("a gate never given the factor", blind, {}, "gate received (none declared)"),
+                    ("a step that ran under another assay", other, {}, "ran under 'snrna'"),
+                    ("no gate recorded its factors", silent, {}, "no gate recorded the factors"),
+                    ("no step recorded its assay", silent, {}, "no step recorded the assay"),
                     ("another assay", run_a, {"assay": "snrna"}, "assay 'snrna' was told"),
                     ("another factor", run_a, {"factors": ["arm_of"]},
                      "design factor 'arm_of' was told"),
