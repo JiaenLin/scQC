@@ -203,7 +203,8 @@ if HAVE:
             if R is not None and (R / "objects" / "cohort.deliverable.h5ad").exists():
                 fails.append(f"3: the refused run wrote a deliverable that holds LIB_B_{r1['barcode']}, "
                              f"which its ledger lists as removed")
-            print("3. an edited table is refused whatever the decisions file accepts; nothing is delivered")
+            print("3. a table edited to contradict itself is refused whatever the decisions file accepts; "
+                  "nothing is delivered")
 
             t.unlink()
             rc, log, R = run(td, sheet)

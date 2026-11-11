@@ -162,7 +162,9 @@ The two forms are not interchangeable, and the diagram marks the difference.
   an entry written while "keep and removed are complementary" held lifted it once one library's table
   had been edited, and the deliverable held a cell its own ledger lists as removed. Their remedy is
   never blocked: remove the changed `tables/<library>.percell.csv`, so that 07_measure measures that
-  library again (or run with `--force`).
+  library again (or run with `--force`). They see only a table that contradicts itself: the per-cell
+  table is not pinned to what 07_measure wrote, so an edit that keeps it consistent (one doublet's
+  call moved onto a clean cell, `keep`, `removed` and the ledger to match) is delivered.
 
 ### Branches worth reading twice
 
