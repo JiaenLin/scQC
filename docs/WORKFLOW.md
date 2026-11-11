@@ -96,7 +96,8 @@ flowchart TD
     Y1 --> Y2
     Y2 -- "no" --> X7["REFUSE · raises<br/>words given for another action"]
     Y2 -- "yes, or no override:<br/>DERIVED / DECLARED applied" --> Y3
-    Y3 -- "a check fails" --> X7A["REFUSE<br/>no object is written; the ledger<br/>says what would have left"]
+    Y3 -- "an integrity check fails" --> X7B["REFUSE · raises<br/>never accepted: the tables<br/>contradict their own ledger"]
+    Y3 -- "the floor ordering fails" --> X7A["REFUSE<br/>no object is written;<br/>acceptable by name"]
     Y3 -- "every check holds" --> OUT["The removal is applied —<br/>the only step that removes —<br/>and every removed observation is<br/>written out with the criteria<br/>that fired on it"]
 
     style X0 fill:#8B2635,color:#fff
@@ -110,6 +111,7 @@ flowchart TD
     style Q3 fill:#B8860B,color:#fff
     style X7 fill:#8B2635,color:#fff
     style X7A fill:#8B2635,color:#fff
+    style X7B fill:#8B2635,color:#fff
     style R1 fill:#B8860B,color:#fff
     style R2 fill:#B8860B,color:#fff
     style R2D fill:#B8860B,color:#fff
@@ -126,19 +128,41 @@ that **the default outcome of an ambiguous situation is a stop, not a guess.**
 The two forms are not interchangeable, and the diagram marks the difference.
 
 - **· raises** — the module raises its own exception (`AmbientRefusal`, `FloorRefusal`,
-  `DoubletRefusal`, `ThresholdRefusal`, `ClusterRefusal`, `ApplyRefusal`). The call does not return
-  a usable value, so the refusal cannot be ignored by a caller that reads only the value.
+  `DoubletRefusal`, `ThresholdRefusal`, `ClusterRefusal`, `ApplyRefusal`, and the removal audit's
+  `AuditFailure` for an integrity check). The call does not return a usable value, so the refusal
+  cannot be ignored by a caller that reads only the value.
 - **everything else** — the module builds findings and `verdict()` reduces them to `REFUSE`,
   `REVIEW` or `PASS`. Returning `"REFUSE"` reports; the **caller** is what stops the run:
-  `Pipeline.gate` raises on `REFUSE`, before the next step runs. Step 7's removal audit is one of
-  these, and stops the run before any object is written. Until harness autodev W043 it wrote
-  `FAIL`, a word the gate does not act on, so a failed audit was recorded and the objects were
-  written anyway.
+  `Pipeline.gate` raises on `REFUSE`, before the next step runs. Until harness autodev W043, step 7's
+  removal audit wrote `FAIL`, a word the gate does not act on, so a failed audit was recorded and the
+  objects were written anyway. Now it stops the run before any object is written, in both forms.
 - **a refusal of the second form** can be accepted in `decisions.yml` (apply mode): `accept: [{step,
   check, approved_by, verbatim}]` turns that check's refusal at that step into an accepted REVIEW,
   recorded in STATUS.json's `escapes` and in the report. It matches by step and check name only, so
   it lifts that check in every library and in every run that reads the file. Half an approval
   accepts nothing. A refusal of the first form (a module raises) is not lifted by an accept entry.
+- **which refusals can be accepted, and which never.** The accept entry exists because a gate that
+  can fire on a correct run gets switched off (PRINCIPLES.md section 3). A design differential at
+  04_doublets is such a gate. So is step 7's floor ordering, "step 3: the light floor is strictly below
+  the quality floor" (`audit_removal.ACCEPTABLE`). It compares two parameters, so it fires on a correct
+  run (a floor adjudicated under the light floor, with every called cell above both). What it protects
+  is checked row by row. A check that compares the run's own records with each other cannot fire on a
+  correct run, and accepting one would deliver an object that contradicts its own ledger. Such a check
+  is never accepted:
+  - the ledger count (`ApplyRefusal`);
+  - the count of the object written;
+  - the removal audit's seven integrity checks (`audit_removal.INTEGRITY`): keep and removed are
+    complementary; the removal decomposes into the recorded criteria; no uncalled droplet and no
+    unexamined cell reaches the deliverable; no doublet call falls outside the examined set; and the
+    two step-6 object checks.
+
+  Step 7 raises the integrity checks before the gate (`audit_removal.integrity`), and the refusal
+  prints no entry to paste. An accept entry naming one is refused by name: in the refusal when the
+  check fails, and as a REVIEW when it held. Until fix round 1 of W043 the gate lifted them by name:
+  an entry written while "keep and removed are complementary" held lifted it once one library's table
+  had been edited, and the deliverable held a cell its own ledger lists as removed. Their remedy is
+  never blocked: remove the changed `tables/<library>.percell.csv`, so that 07_measure measures that
+  library again (or run with `--force`).
 
 ### Branches worth reading twice
 

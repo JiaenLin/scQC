@@ -2637,7 +2637,8 @@ def _apply(task, pipeline, log):
     # --- the audit, on the completed decision and still before any matrix is written. A check it
     # fails is a REFUSE, and the gate below stops the run on it, as steps 1, 2 and 4 stop: the
     # audit wrote FAIL, a word the gate does not act on, so a failed audit used to be recorded and
-    # the objects written anyway (harness autodev W043, GAP-119). An accept entry lifts it by name.
+    # the objects written anyway (harness autodev W043, GAP-119). An accept entry lifts only the
+    # floor ordering by name; the integrity checks below refuse whatever the decisions file says.
     au = step_module("audit_removal")
     table = {c: [flag(r, c) for r in percell] for c in criteria}
     table.update({
@@ -2653,6 +2654,17 @@ def _apply(task, pipeline, log):
                         light_floor=task.params["light_floor"],
                         quality_floor=float(resolved["quality.umi_floor"]),
                         doublet_criterion="fail_doublet")
+    # THE TABLES' OWN INVARIANTS ARE NOT A GATE (W043, fix round 1). Every check but the floor
+    # ordering compares the per-cell tables with themselves, and the gate lifted any of them by
+    # name: an entry accepting "keep and removed are complementary", written while it held, let an
+    # edited table deliver a cell its ledger lists as removed, exit 0. They refuse here, as the
+    # ledger count above and the count after the write do; no accept entry lifts them, and an
+    # entry naming one is refused by name (a REVIEW when they held).
+    try:
+        findings += au.integrity(findings, (getattr(pipeline, "decisions", None) or {}).get("accept"))
+    except au.AuditFailure as e:
+        pipeline.record_findings("07_apply", findings)
+        raise Refusal(f"07_apply: {e}") from None
     pipeline.gate("07_apply", findings, au.verdict(findings))
 
     # --- and only now is a matrix touched.

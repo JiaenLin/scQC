@@ -101,10 +101,20 @@ forms that bound takes:
   refusal over one trains the operator to route around the gate. The words must still be the
   operator's own — but whitespace is not consent.
 
-A gate with no escape hatch gets disabled wholesale. Every deliberate bypass in this pipeline is
-therefore *possible and logged*, never silent and never impossible: a refusal is lifted only by an
-`accept` entry in `decisions.yml` naming the gate's check, the person, and their own words, and the
-acceptance is recorded in the report and in STATUS.json.
+A gate with no escape hatch gets disabled wholesale. Every deliberate bypass of a gate in this
+pipeline is therefore *possible and logged*, never silent and never impossible: a gate's refusal is
+lifted only by an `accept` entry in `decisions.yml` naming the gate's check, the person, and their
+own words, and the acceptance is recorded in the report and in STATUS.json.
+
+A check that compares the run's own records with each other is not a gate in this sense. It cannot
+fire on a correct run, so the reason for the escape does not apply to it, and an escape would let
+the pipeline deliver an object that contradicts its own ledger. Such a check is never accepted:
+step 7's ledger count, the count of the object written, and seven of the removal audit's eight
+checks (`modules/07_apply/audit_removal.py`, `INTEGRITY`; only the floor ordering, which compares
+two parameters, is a gate). A module raises it, so no accept entry lifts it (an entry naming one
+of the audit's checks is refused by name), and its remedy is never blocked: for the audit, measuring
+the library again. The list of what can and cannot be
+accepted is in [WORKFLOW.md](WORKFLOW.md), "How a refusal is delivered".
 
 ---
 

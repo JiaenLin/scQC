@@ -149,7 +149,14 @@ accept:
 turns that one REFUSE into a REVIEW whose message names who accepted it and their words, and the
 acceptance is recorded in STATUS.json's `escapes`. `step` and `check` are the ones the refusal
 names (it prints the entry to copy). Half an approval accepts nothing: without `approved_by`, or
-with `verbatim` empty, a bare "ok" or under three words, the refusal stands and says why. A library
+with `verbatim` empty, a bare "ok" or under three words, the refusal stands and says why. Not every
+refusal can be accepted. A check that compares the run's own records with each other is never
+lifted: step 7's ledger count, the count of the object written, and the removal audit's integrity
+checks (keep and removed complementary, the removal decomposed into the recorded criteria, no
+uncalled droplet or unexamined cell kept, no doublet call outside the examined set). None of these
+can fire on a correct run. An accept entry naming an integrity check is refused by name, and that
+refusal says how to measure the library again. Of the removal audit, only "step 3: the light floor is strictly below
+the quality floor" can be accepted (docs/WORKFLOW.md, "How a refusal is delivered"). A library
 under the doublet "silent" line is refused only where its own declared rate predicted doublets -
 too few cells scored to expect one, or a rate declared under the line, is a REVIEW.
 

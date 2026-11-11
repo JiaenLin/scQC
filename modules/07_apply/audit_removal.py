@@ -38,8 +38,17 @@ Every check that finds the removal is not what the pipeline recorded is a REFUSE
 other gate writes, and step 7 hands `verdict()` to `Pipeline.gate`, which stops the run there -
 after the ledger, before any matrix is written. This module wrote FAIL, and the gate stops on
 REFUSE only, so a failed audit was recorded, read by the report as an unrecognised severity, and
-the deliverable was written anyway. A refusal here is lifted the way every refusal is: an
-`accept` entry in decisions.yml naming this step, the check, who accepted it and their words.
+the deliverable was written anyway.
+
+ONE OF THESE REFUSALS CAN BE ACCEPTED, AND THE REST NEVER (W043, fix round 1)
+
+Only the floor ordering (ACCEPTABLE) is a gate in docs/PRINCIPLES.md's sense: it compares two
+parameters, so it can fire on a correct run, and an `accept` entry naming this step, the check,
+who accepted it and their words lifts it. Every other REFUSE (INTEGRITY) compares the per-cell
+table with itself. A table 07_measure writes cannot fail one, and accepting one would deliver an
+object that contradicts its own ledger, so `integrity()` raises them before the gate and no
+accept entry lifts them. They were lifted by name: a check accepted while it held lifted it
+later, when an edited table made the deliverable hold a cell its ledger lists as removed.
 """
 
 from __future__ import annotations
@@ -49,6 +58,32 @@ from dataclasses import dataclass, field
 
 class AuditFailure(RuntimeError):
     """Raised when the removal is not what the pipeline recorded."""
+
+
+STEP = "07_apply"
+# THE ONE REFUSAL HERE AN ACCEPT ENTRY MAY LIFT. It compares two parameters, so it fires on a run
+# whose floor was adjudicated under the light floor with every called cell above both, and what it
+# protects is checked row by row: by "step 3: no unexamined nucleus reaches the deliverable" here,
+# and by 07_measure's own stop on a kept cell nothing scored.
+ACCEPTABLE = ("step 3: the light floor is strictly below the quality floor",)
+# THE INTEGRITY CHECKS: each compares the per-cell table with itself, and none can fire on a table
+# 07_measure wrote (keep is the complement of removed, removed the OR of every criterion column).
+# `integrity()` fails closed: a REFUSE check added later and not named in ACCEPTABLE is one of these.
+INTEGRITY = (
+    "keep and removed are complementary",
+    "removal decomposes into the recorded criteria",
+    "step 2: no uncalled droplet reaches the deliverable",
+    "step 3: no unexamined nucleus reaches the deliverable",
+    "step 4: no doublet call outside the examined set",
+    "step 6 object is a superset of the deliverable",
+    "step 6 object differs from the deliverable by doublets ALONE",
+)
+
+
+def _norm(x) -> str:
+    # The comparison Pipeline._apply_accepts makes, so an entry is refused exactly where the gate
+    # would have matched it.
+    return " ".join(str(x or "").split()).lower()
 
 
 @dataclass
@@ -247,11 +282,53 @@ def verdict(findings) -> str:
 def enforce(findings) -> None:
     """Raise on any REFUSE, outside the pipeline. REVIEW findings do not stop a run.
 
-    Step 7 does not call this: it passes `verdict()` to `Pipeline.gate`, which stops the run and
-    honours an accept entry, as every gate does. This is for a caller with no pipeline.
+    Step 7 does not call this: it calls `integrity()`, then passes `verdict()` to `Pipeline.gate`,
+    which stops the run and can lift only the floor ordering. This is for a caller with no pipeline.
     """
     bad = [f for f in findings if f.severity == "REFUSE"]
     if bad:
         raise AuditFailure(
             "the removal is not what the pipeline recorded:\n"
             + "\n".join(str(f) for f in bad))
+
+
+def integrity(findings, accept=()) -> list:
+    """Raise on a failed integrity check, whatever decisions.yml accepts; report an entry naming one.
+
+    `accept` is decisions.yml's `accept` list; entries of other steps are not read. Any REFUSE
+    finding whose check is not in ACCEPTABLE raises `AuditFailure`, naming the check, refusing by
+    name each accept entry of this step that names an integrity check, and saying how to fix the
+    cause. It prints no entry to paste, because no entry would count. When every integrity check
+    held, returns one REVIEW finding per entry of this step that names one: the entry lifted nothing
+    and would lift nothing when the check fails, and the report says so.
+    """
+    liftable = {_norm(c) for c in ACCEPTABLE}
+    mine = [e for e in (accept or []) if isinstance(e, dict) and _norm(e.get("step")) == _norm(STEP)]
+    failed = [f for f in findings if f.severity == "REFUSE" and _norm(f.check) not in liftable]
+    named = {_norm(c) for c in INTEGRITY} | {_norm(f.check) for f in failed}
+    refused = [e for e in mine if _norm(e.get("check")) in named]
+
+    def entry(e) -> str:
+        who = str(e.get("approved_by") or "").strip() or "no one named"
+        return f"the accept entry for {str(e.get('check'))!r} (approved by {who}) is refused"
+
+    if failed:
+        also = [f.check for f in findings if f.severity == "REFUSE" and _norm(f.check) in liftable]
+        raise AuditFailure(
+            "the per-cell tables contradict themselves, so a deliverable written from them would "
+            "not be the population its own ledger records:\n"
+            + "\n".join(f"  {f}" for f in failed)
+            + "".join(f"\n  ({entry(e)}: an integrity check is never accepted)" for e in refused)
+            + "\n\nNo object was written. These are integrity checks, not gates: a table 07_measure "
+              "writes cannot fail one, so a failure means a per-cell table was changed or stitched "
+              "after 07_measure wrote it, and an accept entry does not lift one - accepting it would "
+              "deliver an object that contradicts its own ledger. Fix the cause: remove each changed "
+              "tables/<library>.percell.csv so that 07_measure measures the library again (or run "
+              "with --force), and run again."
+            + "".join(f"\n  Also refused, and acceptable by name once the tables hold: {c!r}."
+                      for c in also))
+    return [Finding(
+        "an accept entry names an integrity check", "REVIEW",
+        f"{entry(e)}: that check is an integrity check, which is never accepted - the entry "
+        f"lifted nothing on this run, and would lift nothing if the check failed. Remove it "
+        f"from the decisions file.") for e in refused]
