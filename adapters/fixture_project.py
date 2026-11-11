@@ -18,8 +18,10 @@ This splits the object into the project scQC is built to read, and nothing more:
   * that library's own barcodes as its called cells (`aligner_cells`): the object is an object of
     cells - a cell somebody called is what each row is - and saying so is the honest cell call. Its
     rows are not droplets, and the pipeline is never asked to treat them as droplets;
-  * a samplesheet: `assay` is `scrna` (the object holds cells, not nuclei), `platform` is
-    `synthetic` (no aligner made it, and none is needed - a verified matrix from any platform is
+  * a samplesheet: `assay` is what the caller DECLARES (`--assay`, required, no default: the
+    suite's object holds cells, so its declaration says `scrna`; a nucleus declaration is refused
+    by ingest, which requires the raw droplets nuclei need and an object of cells does not hold),
+    `platform` is `synthetic` (no aligner made it, and none is needed - a verified matrix from any platform is
     accepted), the mitochondrial and ribosomal patterns the caller gives, the doublet rate the
     caller declares, and every column of the caller's design table, under its own name;
   * a registry naming the synthetic reference.
@@ -30,6 +32,15 @@ samplesheet and the two shapes' samplesheets differ by construction.
 
 Library names are the sample column's values; cell names are the object's own `obs_names`. A design
 row with no cells in the object is left out and said to be. Nothing here is any cohort's data.
+
+THE VALUES MUST REACH THE STEPS THAT READ THEM (harness autodev W048, GAP-023). A run that completes
+shows that the pipeline carried the fixture; it does not show that what the caller TOLD it - the
+assay, the design's factors, the mitochondrial prefix, the ribosomal pattern - is what the steps
+read. A step that ignored the told prefix would still complete, with no mitochondrial fraction at
+all. So `axes_reached` reads the run's own records after it and names every told value that did
+not arrive: the assay in the run's samplesheet and its report, each declared factor in the run's
+recorded parameters, samplesheet and design, and each gene pattern matching genes of the object
+AND giving a non-zero fraction in every library's per-cell table. `fixture-run` fails on any miss.
 """
 from __future__ import annotations
 
@@ -77,10 +88,19 @@ def _write_mtx(d: Path, X, barcodes, genes) -> None:
         fh.write("".join(f"{g}\t{g}\tGene Expression\n" for g in genes))
 
 
+#: The assays a samplesheet may declare. No default: the caller says which (rule: no silent assay).
+ASSAYS = ("scrna", "snrna")
+
+
 def build_project(observations, out, *, sample_key: str, counts_layer: str, mt_prefix: str,
-                  ribo_pattern: str, dbr: float, design=None) -> dict:
-    """Write the project under `out`. Returns the paths and what was written and left out."""
+                  ribo_pattern: str, dbr: float, assay: str, design=None) -> dict:
+    """Write the project under `out`. Returns the paths, what was written and left out, and how
+    many genes of the object the told mitochondrial prefix and ribosomal pattern match."""
     import anndata as ad
+
+    if assay not in ASSAYS:
+        raise TaskFailure(f"assay {assay!r} is not one of {', '.join(ASSAYS)}; it is declared, never "
+                          f"defaulted")
 
     out = Path(out)
     A = ad.read_h5ad(str(observations))
@@ -120,7 +140,7 @@ def build_project(observations, out, *, sample_key: str, counts_layer: str, mt_p
         with gzip.open(called / "barcodes.tsv.gz", "wt") as fh:
             fh.write("".join(f"{b}\n" for b in names))
         row = {"sample": s, "platform": PLATFORM, "species": SPECIES,
-               "reference": f"{SPECIES}/{BUILD}", "assay": "scrna",
+               "reference": f"{SPECIES}/{BUILD}", "assay": assay,
                "matrix": str(lib / "matrix"), "aligner_cells": str(called),
                "mt_prefix": mt_prefix, "ribo_pattern": ribo_pattern,
                "dbr": f"{float(dbr):g}", "dbr_sd": f"{float(dbr):g}"}
@@ -134,5 +154,80 @@ def build_project(observations, out, *, sample_key: str, counts_layer: str, mt_p
         "\t".join(str(r.get(c, "")) for c in cols) + "\n" for r in rows), encoding="utf-8")
     reg = out / "registry.tsv"
     reg.write_text(f"species\tbuild\tpath\n{SPECIES}\t{BUILD}\t-\n", encoding="utf-8")
+    rx = re.compile(ribo_pattern)
     return {"samplesheet": sheet, "registry": reg, "libraries": levels,
-            "cells": int(A.n_obs), "design_rows_without_cells": left_out}
+            "cells": int(A.n_obs), "design_rows_without_cells": left_out,
+            "genes_mt": sum(1 for g in genes if g.startswith(mt_prefix)),
+            "genes_ribo": sum(1 for g in genes if rx.match(g))}
+
+
+def axes_reached(run_dir, *, assay: str, factors, mt_prefix: str, ribo_pattern: str,
+                 genes_mt: int, genes_ribo: int) -> tuple:
+    """(lines, misses): what the run's own records say each TOLD value reached. A miss names the
+    value and where it did not arrive; an empty `misses` is the only pass."""
+    import ast
+    import json
+
+    import pandas as pd
+
+    run_dir = Path(run_dir)
+    lines, misses = [], []
+    try:
+        described = json.loads((run_dir / "INPUTS.json").read_text())["described"]
+        report = json.loads((run_dir / "reports" / "report.json").read_text())
+    except (OSError, ValueError, KeyError) as e:
+        return lines, [f"the run's records cannot be read ({e}), so no value can be shown to arrive"]
+    rows = described.get("samplesheet") or []
+    libs = [str(r.get("sample")) for r in rows]
+
+    seen = sorted({str(r.get("assay") or "").strip().lower() for r in rows})
+    said = str((report.get("run") or {}).get("assay") or "")
+    if seen == [assay] and said == assay:
+        lines.append(f"assay {assay!r}: every library of the run's samplesheet and its report say it")
+    else:
+        misses.append(f"assay {assay!r} was told; the run's samplesheet says {seen} and its report "
+                      f"{said!r}")
+
+    raw = str((described.get("parameters") or {}).get("design_factors") or "")
+    try:
+        declared = [str(x) for x in (ast.literal_eval(raw) if raw.startswith("[") else [])]
+    except (ValueError, SyntaxError):
+        declared = []
+    found = [str(x) for x in ((report.get("confounding") or {}).get("factors") or [])]
+    for f in factors:
+        where = [w for w, ok in (("the run's parameters", f in declared),
+                                 ("its samplesheet", bool(rows) and all(f in r for r in rows)),
+                                 ("its design", f in found)) if not ok]
+        if where:
+            misses.append(f"design factor {f!r} was told and is absent from {', '.join(where)}")
+        else:
+            lines.append(f"design factor {f!r}: declared in the run's parameters, a column of its "
+                         f"samplesheet, a factor of its design")
+
+    for name, told, n_genes, col in (("mitochondrial prefix", mt_prefix, genes_mt, "pct_counts_mt"),
+                                     ("ribosomal pattern", ribo_pattern, genes_ribo,
+                                      "pct_counts_ribo")):
+        if not n_genes:
+            misses.append(f"{name} {told!r} was told and matches no gene of the object")
+            continue
+        zero, absent = [], []
+        for s in libs:
+            p = run_dir / "tables" / f"{_safe(s)}.percell.csv"
+            if not p.is_file():
+                p = run_dir / "tables" / f"{s}.percell.csv"
+            try:
+                v = pd.read_csv(p, usecols=[col])[col]
+            except (OSError, ValueError):
+                absent.append(s)
+                continue
+            if not (v.fillna(0) > 0).any():
+                zero.append(s)
+        if zero or absent:
+            misses.append(f"{name} {told!r} matches {n_genes} gene(s) of the object, and the per-cell "
+                          f"{col} is " + "; ".join(x for x in (
+                              f"zero in every cell of {', '.join(zero)}" if zero else "",
+                              f"absent for {', '.join(absent)}" if absent else "") if x))
+        else:
+            lines.append(f"{name} {told!r}: {n_genes} gene(s) of the object, a non-zero {col} in "
+                         f"each of {len(libs)} libraries")
+    return lines, misses

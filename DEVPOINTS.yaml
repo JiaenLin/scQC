@@ -16,8 +16,13 @@ tests:
 # own names - and runs the real pipeline on it: apply mode, local executor, the stand-in doublet
 # detector (tests/fixtures/fake_rscript.py). Both shapes are told their own names and spellings, so
 # a step that assumed one would fail the other. It copies the run's STATUS.json to {out}.
+# THE VALUES ARE TOLD AND THEN CHECKED (harness autodev W048, GAP-023): the assay (the suite's
+# object holds cells, so `scrna`; the suite fills no assay placeholder), the design's factor
+# ({role_condition}), the mitochondrial prefix and the ribosomal pattern. After the run,
+# fixture-run reads the run's own records and exits 1, naming the value, when one did not reach
+# the step that reads it - so a step that ignored a told value turns this tier red.
 fixture:
-  command: ["{python}", "scqc_cli.py", "fixture-run", "--observations", "{observations}", "--design", "{design}", "--sample-key", "{role_sample}", "--counts-layer", "{role_counts}", "--mt-prefix", "{mt_prefix}", "--ribo-pattern", "{ribo_pattern}", "--dbr", "0.05", "--jobs", "{jobs}", "--out", "{out}"]
+  command: ["{python}", "scqc_cli.py", "fixture-run", "--observations", "{observations}", "--design", "{design}", "--sample-key", "{role_sample}", "--counts-layer", "{role_counts}", "--mt-prefix", "{mt_prefix}", "--ribo-pattern", "{ribo_pattern}", "--assay", "scrna", "--design-factors", "{role_condition}", "--dbr", "0.05", "--jobs", "{jobs}", "--out", "{out}"]
   products: [reports/report.json, STATUS.json]
   # What the run records about its OWN execution, reported by `agree` and never judged: the two
   # shapes are two executions. Everything else the two shapes write is compared.

@@ -834,7 +834,9 @@ def cmd_fixture_run(a) -> int:
     project.mkdir(parents=True, exist_ok=True)
     made = fp.build_project(a.observations, project, sample_key=a.sample_key,
                             counts_layer=a.counts_layer, mt_prefix=a.mt_prefix,
-                            ribo_pattern=a.ribo_pattern, dbr=a.dbr, design=a.design)
+                            ribo_pattern=a.ribo_pattern, dbr=a.dbr, assay=a.assay,
+                            design=a.design)
+    factors = [x.strip() for x in str(a.design_factors or "").split(",") if x.strip()]
     print(f"fixture project: {len(made['libraries'])} libraries, {made['cells']:,} cells -> "
           f"{project}; products -> {out}")
     if made["design_rows_without_cells"]:
@@ -845,6 +847,8 @@ def cmd_fixture_run(a) -> int:
            "--samplesheet", str(made["samplesheet"]), "--registry", str(made["registry"]),
            "--mode", "apply", "--executor", "local", "--python", sys.executable,
            "--rscript", rscript, "--jobs", str(a.jobs), "--seed", "0"]
+    if factors:
+        cmd += ["--design-factors", ",".join(factors)]
     rc = subprocess.run(cmd).returncode
     latest = project / "results" / "latest"
     run_dir = latest.resolve() if latest.exists() else None
@@ -866,6 +870,21 @@ def cmd_fixture_run(a) -> int:
         if (run_dir / "STATUS.json").is_file():
             _sh.copyfile(run_dir / "STATUS.json", out / "STATUS.json")
         (out / "PROJECT.txt").write_text(f"{project}\n{run_dir}\n", encoding="utf-8")
+    # WHAT WAS TOLD MUST BE WHAT WAS READ (harness autodev W048, GAP-023): a completed run is checked
+    # against its own records, value by value, and a value that did not reach its step fails here.
+    if rc == 0:
+        if run_dir is None:
+            print("AXIS NOT REACHED: the run completed and left no run directory to read")
+            return 1
+        lines, misses = fp.axes_reached(run_dir, assay=a.assay, factors=factors,
+                                        mt_prefix=a.mt_prefix, ribo_pattern=a.ribo_pattern,
+                                        genes_mt=made["genes_mt"], genes_ribo=made["genes_ribo"])
+        for ln in lines:
+            print(f"AXIS {ln}")
+        for m in misses:
+            print(f"AXIS NOT REACHED: {m}")
+        if misses:
+            return 1
     return rc
 
 
@@ -1051,6 +1070,11 @@ def build_parser() -> argparse.ArgumentParser:
     fx.add_argument("--ribo-pattern", dest="ribo_pattern", required=True)
     fx.add_argument("--dbr", type=float, required=True,
                     help="the doublet rate DECLARED for the synthetic libraries")
+    fx.add_argument("--assay", required=True, choices=["scrna", "snrna"],
+                    help="the assay every library of the fixture DECLARES; required, no default")
+    fx.add_argument("--design-factors", dest="design_factors",
+                    help="comma-separated design-table columns that ARE the design; passed to "
+                         "`scqc run --design-factors`, and each must reach the run's design")
     fx.add_argument("--design", help="a design table joined on the sample column; its columns "
                                      "become samplesheet columns under their own names")
     fx.add_argument("--rscript", help="the doublet detector; default the repository's stand-in")

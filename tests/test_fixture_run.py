@@ -13,7 +13,13 @@ the object into a project from the names it is TOLD and runs `scqc run --mode ap
      saying ok;
   2  the two shapes - the same numbers under other names - keep the same cells: a step that read a
      column, a layer or a gene spelling by name would make them differ;
-  3  a name the object does not carry is refused by name, not guessed.
+  3  a name the object does not carry is refused by name, not guessed;
+  4  every value it is TOLD reaches the step that reads it, by the run's own records (harness
+     autodev W048, GAP-023): the assay, the design's factor, the mitochondrial prefix and the
+     ribosomal pattern each print an AXIS line, and none is NOT REACHED;
+  5  a value that did not arrive is named: the same run's records read against another assay,
+     another factor, a prefix matching no gene, and a per-cell fraction that is zero in a library;
+  6  the assay has no default: a fixture run that does not declare one is refused by the parser.
 
 The object is this file's own synthetic one, not the harness's (which the suite builds where it
 runs); the doublet detector is the stand-in, so nothing here says a call is right.
@@ -78,13 +84,15 @@ def write_object(td: Path, shape: str) -> tuple:
 
 def fixture_run(td: Path, shape: str, h5: Path, design: Path, **override):
     key, layer, mt, ribo = SHAPES[shape]
-    args = {"--sample-key": key, "--counts-layer": layer, "--mt-prefix": mt, "--ribo-pattern": ribo}
+    args = {"--sample-key": key, "--counts-layer": layer, "--mt-prefix": mt, "--ribo-pattern": ribo,
+            "--assay": "scrna", "--design-factors": "condition_of"}
     args.update(override)
     out = td / f"run_{shape}"
     cmd = [sys.executable, str(ROOT / "scqc_cli.py"), "fixture-run", "--observations", str(h5),
            "--design", str(design), "--dbr", "0.05", "--jobs", "4", "--out", str(out)]
     for k, v in args.items():
-        cmd += [k, v]
+        if v is not None:
+            cmd += [k, v]
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     return p.returncode, p.stdout + p.stderr, out
 
@@ -93,6 +101,7 @@ if HAVE:
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         kept = {}
+        run_a = None
         for shape in SHAPES:
             h5, design = write_object(td, shape)
             rc, log, out = fixture_run(td, shape, h5, design)
@@ -112,6 +121,15 @@ if HAVE:
             kept[shape] = int(d.n_obs)
             d.file.close()
             print(f"  shape {shape}: completed, {kept[shape]} cells kept")
+            axes = [ln for ln in log.splitlines() if ln.startswith("AXIS ")]
+            want = ("AXIS assay 'scrna'", "AXIS design factor 'condition_of'",
+                    f"AXIS mitochondrial prefix '{SHAPES[shape][2]}'",
+                    f"AXIS ribosomal pattern '{SHAPES[shape][3]}'")
+            if any(ln.startswith("AXIS NOT REACHED") for ln in axes) or \
+                    not all(any(ln.startswith(w) for ln in axes) for w in want):
+                fails.append(f"4 shape {shape}: the told values did not all reach their steps: {axes}")
+            if shape == "a":
+                run_a = (project / "results" / "latest").resolve()
         if len(kept) == 2 and kept["a"] != kept["b"]:
             fails.append(f"2: the two shapes kept different numbers of cells {kept} - a step read "
                          f"a name rather than the role it was told")
@@ -123,6 +141,50 @@ if HAVE:
             fails.append(f"3: a counts layer the object does not carry was not refused by name "
                          f"(exit {rc}): {log[-300:]}")
         print("3. a name the object does not carry is refused by name")
+        print("4. every told value reaches the step that reads it, in both shapes")
+
+        sys.path.insert(0, str(ROOT))
+        try:
+            from adapters.fixture_project import axes_reached
+        except ImportError as e:
+            fails.append(f"5: nothing reads the told values back from the run's records ({e})")
+            run_a = None
+        if run_a is None:
+            fails.append("5: no completed shape-a run to read the told values back from")
+        told = dict(assay="scrna", factors=["condition_of"], mt_prefix="MT-",
+                    ribo_pattern="^RP[SL]", genes_mt=3, genes_ribo=2)
+        if run_a is not None:
+            lines, misses = axes_reached(run_a, **told)
+            if misses or len(lines) != 4:
+                fails.append(f"5: the run as told must show every value arriving: {lines} {misses}")
+            zeroed = td / "zeroed"
+            for sub in ("reports", "tables"):
+                (zeroed / sub).mkdir(parents=True, exist_ok=True)
+            (zeroed / "INPUTS.json").write_text((run_a / "INPUTS.json").read_text())
+            (zeroed / "reports" / "report.json").write_text(
+                (run_a / "reports" / "report.json").read_text())
+            for p in (run_a / "tables").glob("*.percell.csv"):
+                t = pd.read_csv(p)
+                if p.name.startswith("L2."):
+                    t["pct_counts_mt"] = 0.0
+                t.to_csv(zeroed / "tables" / p.name, index=False)
+            for case, run, change, says in (
+                    ("another assay", run_a, {"assay": "snrna"}, "assay 'snrna' was told"),
+                    ("another factor", run_a, {"factors": ["arm_of"]},
+                     "design factor 'arm_of' was told"),
+                    ("a prefix matching no gene", run_a, {"mt_prefix": "mt-", "genes_mt": 0},
+                     "matches no gene of the object"),
+                    ("a fraction that is zero in one library", zeroed, {}, "zero in every cell of L2")):
+                _, m = axes_reached(run, **dict(told, **change))
+                if not any(says in x for x in m):
+                    fails.append(f"5 {case}: not named as a value that did not arrive: {m}")
+        print("5. a told value that did not arrive is named, axis by axis")
+
+        rc, log, _ = fixture_run(td, "a", *write_object(td, "a"), **{"--assay": None})
+        if rc == 0 or "--assay" not in log:
+            fails.append(f"6: a fixture run that declares no assay must be refused (exit {rc}): "
+                         f"{log[-300:]}")
+        print("6. the assay is declared, never defaulted")
 
 print("=" * 74)
 if fails:
