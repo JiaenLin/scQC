@@ -298,7 +298,7 @@ class Pipeline:
         #
         # Without the lock two libraries of the same step both find the step absent from
         # `_gated_this_run`, and the second one's reset discards what the first had just
-        # recorded. It cost five of thirty-five findings on the first run after this store was
+        # recorded. It cost several findings on the first run after this store was
         # added - a silent partial loss, in the direction that makes a cohort look cleaner.
         findings, verdict, half = self._apply_accepts(step, list(findings), verdict)
         self.record_findings(step, findings)
@@ -508,7 +508,7 @@ class Pipeline:
                     results[k] = (r, note)
                     # RECORDED AS IT LANDS, not when the wave ends. Holding a wave's results until
                     # every task in it finished meant a run killed mid-wave lost work that had
-                    # completed minutes earlier, and `state.json` showed nothing while ten tasks
+                    # completed minutes earlier, and `state.json` showed nothing while a cohort's tasks
                     # were plainly running. Durability and visible progress both want the write
                     # here; the ORDER a reader sees is restored below.
                     with lock:
@@ -644,7 +644,7 @@ class Pipeline:
             # payload builder, both callers.
             "per_sample": self._per_sample_block(),
             # HOW MANY EACH CRITERION REMOVED, PER LIBRARY. F9 draws the cohort; the cohort is not
-            # where the question lives. A criterion taking 2% of one library and 42% of another is
+            # where the question lives. A criterion taking 1% of one library and 30% of another is
             # a technical gradient sitting exactly where the biology is measured, and one bar
             # cannot show it. Read from the file step 7 wrote, never recomputed here.
             "removal_breakdown": self._removal_breakdown_block(),
@@ -1001,7 +1001,7 @@ class Pipeline:
         report because only the orchestrator knows which tasks belong to which step.
 
         A step's status is the worst of its tasks, so one refused library cannot be averaged away
-        by nine that passed.
+        by the others that passed.
         """
         from report.units import cohort_assay
 

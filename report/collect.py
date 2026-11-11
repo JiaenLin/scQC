@@ -601,8 +601,8 @@ def _relation(a_map: dict, b_map: dict) -> tuple:
     implication runs one way only. Anything else is crossed and can be estimated separately.
 
     Restricted to the libraries that carry BOTH values, and the count is returned in the detail:
-    a pair compared over three of ten libraries is a different claim from one compared over all
-    ten, and the figure prints which.
+    a pair compared over some libraries is a different claim from one compared over all of
+    them, and the figure prints which.
     """
     shared = sorted(set(a_map) & set(b_map))
     pairs = [(str(a_map[s]), str(b_map[s])) for s in shared
@@ -978,7 +978,7 @@ def collect(tables, *, samplesheet_rows=None, samplesheet=None,
         _try("F14", src + " + tables/thresholds_per_sample.csv",
              lambda: _f7(percell, gene_cut, scale="log", fig_id="F14", column="n_genes",
                          metric_label="genes detected per {one}", assay=cohort_assay))
-        # PER LIBRARY, and passed as a mapping so the figure draws ten segments rather than
+        # PER LIBRARY, and passed as a mapping so the figure draws one segment per library rather than
         # asserting a cohort constant that was never applied. Restricted to the barcodes above
         # the light floor, which is the population the ceiling was DERIVED over.
         _try("F15", src + " + tables/thresholds_per_sample.csv",

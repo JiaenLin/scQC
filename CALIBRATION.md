@@ -48,7 +48,7 @@ fixture that has no arms.
 | mito ceiling | **per library**, inside a declared bound | **severalfold in Q3** | **DERIVED per library**; bound and, on snRNA, `k` both DECLARED |
 | doublet `dbr.sd` | the sweep | the default was prior-driven | DERIVED per dataset |
 | cluster A / B / C | 0.5x / 15% / 50% | proposed against distributions | **ADJUDICATED** |
-| cell-call REVIEW / REFUSE | 5% / 10% | one library on the REVIEW line | DECLARED |
+| cell-call REVIEW / REFUSE | 5% / 10% | a library on the REVIEW line | DECLARED |
 | design differential refusal | 3x | observed far below it | DECLARED |
 
 The column that matters is the last one. **Only the DECLARED rows are safe to carry to another
@@ -59,7 +59,7 @@ being a constant across cohorts.
 ### The mitochondrial ceiling changed class, and it is worth saying why
 
 It was **ADJUDICATED - "not derivable, no valley"** until the calibration cohort was measured
-against its own delivered object. The fixed 40% ceiling in use there removed **no** nuclei: the
+against its own delivered object. The fixed ceiling in use there removed **no** nuclei: the
 count floors had already taken every nucleus it would have taken. A ceiling that removes nothing
 is not permissive, it is absent, and it had been reported as protection.
 

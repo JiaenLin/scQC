@@ -10,12 +10,12 @@ absolute background is therefore a far larger fraction of a nuclear transcriptom
 cell's, and where the dominant cell type is large, RNA-rich and mitochondria-dense, lysing it
 floods the pool.
 
-Measured across the calibration cohort's ten solid-tissue libraries, CellBender 0.3.2:
+Measured across the calibration cohort's solid-tissue libraries, CellBender 0.3.2:
 
     fraction of all counts removed as ambient    a large share, every library
-    genes removed entirely                       12 - 240 per library
+    genes removed entirely                       from a handful to hundreds per library
 
-Between a sixth and a quarter of the data. A pipeline that leaves that in place for snRNA-seq is
+A large share of the data (the values are that cohort's, in its records). A pipeline that leaves that in place for snRNA-seq is
 not applying a lighter touch; it is analysing a mixture and calling it a cell.
 
 For scRNA-seq the cell retains its cytoplasm and the ambient fraction is ordinarily much lower.

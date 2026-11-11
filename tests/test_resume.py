@@ -6,9 +6,9 @@ record and re-ran the task - and the run after that re-ran everything. A run cou
 exactly ONCE; the second resume silently became a full re-execution.
 
 Silent is the operative word. It exits 0, it produces the same deliverable, and the only visible
-difference is RUN where SKIP should be - in a log of seventy lines that all look alike. On the
-cohort that found it, the second resume re-copied 2.5 GB of matrices, re-scored every library for
-doublets, re-clustered all ten, and hit a concurrency race that failed one library, all to rebuild
+difference is RUN where SKIP should be - in a log of dozens of lines that all look alike. On the
+cohort that found it, the second resume re-copied gigabytes of matrices, re-scored every library for
+doublets, re-clustered every library, and hit a concurrency race that failed one library, all to rebuild
 one report.
 
 Run: python tests/test_resume.py

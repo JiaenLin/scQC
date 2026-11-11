@@ -21,7 +21,7 @@ indistinguishable, downstream, from a biological finding that the signal was abs
 2. **Does the removed signal exist anywhere else in the data?** If yes, removal is cheap. If no,
    removal is a decision not to look.
 3. **Is the removal differential across the design?** Compute it per group. A filter that removes
-   53% of one group and 6% of another has converted a technical property into an apparent
+   50% of one group and 5% of another (an illustration) has converted a technical property into an apparent
    biological difference, and no downstream analysis can undo that.
 4. **Is there a reversible version?** Excluding a gene from variable-gene selection changes only
    the embedding and leaves it testable; excluding it from differential testing does not. Prefer
@@ -125,7 +125,7 @@ recognisable shapes, and all three have been found in this pipeline:
 
 - a blank marker percentage compared with `>=` evaluated to `False` and quietly meant "clean";
 - an unknown doublet fraction read through `or 0` counted every cell in the cluster as surviving;
-- a robust scale of zero, guarded with `or 1e-12`, turned a 0.07% difference into ~10¹² standard
+- a robust scale of zero, guarded with `or 1e-12`, turned a difference of a fraction of a percent into ~10¹² standard
   deviations.
 
 Each looked exactly like a correct result. The pipeline now reports never-examined as its own

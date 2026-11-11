@@ -31,7 +31,7 @@ uses it three ways:
 
 WHAT THE PRE-FLIGHT CANNOT DO
 
-It cannot say the flagged nuclei are bad. Eight of the calibration cohort's nine flags are B&C -
+It cannot say the flagged nuclei are bad. Most of the calibration cohort's flags are B&C -
 high mitochondrial content with mitochondrial markers - and that is as consistent with a
 mitochondria-rich cell type as with damage. Step 6 becomes useful by making the contradiction
 visible and actionable, not by resolving it. Resolving it needs an identity, which is

@@ -2186,7 +2186,7 @@ def run_scanpy_op(op, h5ad_in, out_prefix, params, log, executor, python_exe=Non
     #
     # The path is unique per (prefix, op), so no two jobs can meet in it. The cost is that numba
     # recompiles each time instead of reusing a warm cache; the alternative is a race that fails
-    # one library in ten, and a failed library is a different cohort.
+    # a library at random, and a failed library is a different cohort.
     cache = Path(str(out_prefix) + f".{op}.numba")
     cache.mkdir(parents=True, exist_ok=True)
     executor.shell(cmd, log=Path(log), env={"NUMBA_CACHE_DIR": str(cache)}, timeout_s=timeout_s)
@@ -3566,8 +3566,8 @@ def _op_apply_write(adata, params, out_prefix) -> tuple:
                      for b in sub.obs_names], c)
 
         # ONE NAME PER CELL ACROSS THE COHORT. Libraries from one aligner share one barcode
-        # whitelist, so the same barcode recurs between libraries - about thirty times per pair of
-        # 15,000-cell 10x libraries - and the combined object below refuses duplicates. Objects a
+        # whitelist, so the same barcode recurs between libraries - the more often the larger
+        # they are - and the combined object below refuses duplicates. Objects a
         # converter had already named `<sample>_<barcode>` (the calibration cohort's) never met
         # this; objects this tool converts from the aligner's raw matrix always will. So a library
         # whose names do not carry its prefix gets it here, after step 6's annotations - keyed by

@@ -265,7 +265,7 @@ class PBSExecutor:
         self.cpus, self.memory_gb, self.walltime_h, self.gpu = cpus, memory_gb, walltime_h, gpu
         self._limits_by_queue: dict = {}
         # Resolved ONCE, here, so a host without PBS is refused before any task runs rather than
-        # failing identically ten times with a bare FileNotFoundError that names neither the
+        # failing identically for every library with a bare FileNotFoundError that names neither the
         # command nor the reason.
         self._limits: dict | None = None
         self.qsub = _find_pbs("qsub")
@@ -358,8 +358,8 @@ class PBSExecutor:
     def check_resources(self, tasks) -> list:
         """Which declared resources exceed the queue, reported BEFORE anything is submitted.
 
-        The graph declares 64 GB on two tasks; a queue capping memory at 50 GB rejects them - at
-        task thirty of thirty-seven, after half an hour of work that then has to be repeated. The
+        The graph declares 64 GB on two tasks; a queue capping memory below that rejects them - late
+        in the run, after most of the work, which then has to be repeated. The
         cheap moment to find that is now.
         """
         out = []

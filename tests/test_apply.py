@@ -42,7 +42,7 @@ N_ABOVE_LINE = sum(c["n"] for c in PROF if c["pct_doublet"] > 70.0)
 CONDITION = {"ctrl_01": "ctrl", "ctrl_02": "ctrl", "treat_01": "treat", "treat_02": "treat",
         "ctrl_03": "ctrl", "ctrl_04": "ctrl", "ctrl_05": "ctrl", "treat_03": "treat",
         "treat_04": "treat", "treat_05": "treat"}
-ACTION = "a run's filter: UMI>=300, genes>=200, mito<=40%, scDblFinder dbr.sd=0.05"
+ACTION = "a run's filter: UMI>=400, genes>=250, mito<=20%, scDblFinder dbr.sd=0.04"  # synthetic
 
 fails = []
 print("Step 7 - apply\n" + "=" * 74)

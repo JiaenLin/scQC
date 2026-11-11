@@ -10,7 +10,7 @@ TWO WAYS THEY WERE LOST, BOTH SILENT, BOTH IN THE DIRECTION THAT MAKES A COHORT 
 
 2. A step gates once per LIBRARY and those tasks run concurrently. Two libraries both found
    the step absent from the "already gated this run" set, and the second one's reset discarded
-   what the first had recorded. Five of thirty-five findings went that way.
+   what the first had recorded. Several findings went that way.
 
 Neither failure raises anything. The run succeeds, the report renders, and the only symptom is
 a number nobody has another copy of.

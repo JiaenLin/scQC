@@ -279,7 +279,7 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
         # arrives without the raw counts the removal fraction is measured against. That is true
         # of a bare object and false of this samplesheet: `matrix` names the raw counts for every
         # row, supplied or not, so `raw_of` is populated for all of them. The audit was declining
-        # to measure something it had. On a cohort where all ten were supplied it covered NOTHING
+        # to measure something it had. On a cohort where every library was supplied it covered NOTHING
         # and said "0 libraries" - honest about a fact it did not have to accept.
         #
         # A library with genuinely no raw is still excluded and still named, below: unmeasurable
@@ -436,9 +436,9 @@ def main_stage(pipeline, python_exe: str, tools: dict, ingest: dict) -> list[Tas
 
     # --- step 5: thresholds, derived per library and applied as one cohort constant.
     # Step 5 measures each library independently and then proposes ONE cohort constant from the
-    # ten results. The measurement was a serial loop inside the single 05_quality task, which no
+    # per-library results. The measurement was a serial loop inside the single 05_quality task, which no
     # amount of --jobs could parallelise - concurrency releases tasks, not iterations. It is now
-    # ten tasks and a barrier, the same shape as step 4.
+    # one task per library and a barrier, the same shape as step 4.
     for s in by_sample:
         tasks.append(Task(
             key=f"05_quality/{s}", step="05_quality", sample=s, fn=steps._quality_measure,

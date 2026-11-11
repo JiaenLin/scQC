@@ -57,7 +57,7 @@ from statistics import median
 # PER ASSAY, because the bounds above were read off NUCLEI and a whole cell is not one.
 #
 # Until 2026-10-02 there was one pair, and every single-cell cohort would have been bounded by
-# the valleys of ten nuclear libraries - a cell carries roughly an order of magnitude more RNA,
+# the valleys of one cohort's nuclear libraries - a cell carries roughly an order of magnitude more RNA,
 # so its debris/cell boundary has no reason to sit where a nucleus's does. The single-cell pair is
 # NOT a measurement: no single-cell cohort had been run when it was set. It is the common
 # published range for whole cells (a UMI floor of 500 and a gene floor of 200-300 are the usual
@@ -394,7 +394,7 @@ def mito_ceiling_note(assay: str) -> str:
 # then and was raised to 10.0 on this argument: at 5.0 a library's ceiling fell close to the bound,
 # the nuclei that cut removed had nearly the median depth of retained nuclei in most of the
 # affected libraries - ordinary cells, not debris - and where a tissue's dominant cell type is
-# also its most mitochondria-rich, a 6% ceiling preferentially removes the cell type the study is
+# also its most mitochondria-rich, a ceiling just above 5% preferentially removes the cell type the study is
 # about.
 #
 # Every measurement in that paragraph still holds. What changed is what it MEANS. Those nuclei
@@ -943,7 +943,7 @@ def assess_mito_removal(per_library, ceilings, design=None, *, assay) -> dict:
     and that is reported rather than passed over.
 
     Refuses when one design arm loses at least design_refuse times the fraction another does.
-    That is rule one Q3: a filter removing 53% of one arm and 6% of another has converted a
+    That is rule one Q3: a filter removing 50% of one arm and 5% of another (an illustration) has converted a
     technical property into an apparent biological difference, and nothing downstream can undo it.
     """
     design_refuse = per_assay(DESIGN_REFUSE, assay, "DESIGN_REFUSE")

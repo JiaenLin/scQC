@@ -1297,13 +1297,13 @@ def _doublet_sweep(task, pipeline, log):
     THIS DOES NOT CHANGE THE DELIVERABLE. The applied calls are the ones `_doublets` wrote at the
     declared setting; these go to scratch and exist so figure F5 can show whether the rate the
     pipeline applied moved with the data or with the prior. A flat rate across libraries that
-    differ 2.5-fold in size is the prior's flatness, and one point cannot reveal it.
+    differ widely in size is the prior's flatness, and one point cannot reveal it.
 
     PER LIBRARY, NOT PER COHORT, AND THE ADAPTER IS STILL CALLED ONCE PER SAMPLE. `db.sweep()`
-    loops over samples internally; handing it all ten would run thirty scDblFinder invocations in
-    a single task, serially, on a machine with a scheduler outside it. One sample at a time keeps
+    loops over samples internally; handing it every library would run all of their scDblFinder
+    invocations in a single task, serially, on a machine with a scheduler outside it. One sample at a time keeps
     every cross-setting check the adapter makes - same seed, one version of the tool, no label
-    reused - and lets the ten run at once.
+    reused - and lets the libraries run at once.
     """
     from adapters import doublets as db
 
@@ -1336,7 +1336,7 @@ def _doublet_sweep(task, pipeline, log):
                    unscored={s: export.unscored},
                    # The deepest-decile alarm needs the per-barcode depth, and the export has just
                    # measured it. Computed per library here; whether the COHORT figure can be
-                   # assembled from ten of them is settled at the barrier, which refuses to.
+                   # assembled from one per library is settled at the barrier, which refuses to.
                    umi_by_barcode={s: export.umi_by_barcode})
     per_setting = (res.get("metrics") or {}).get("per_setting") or {}
 
@@ -1381,7 +1381,7 @@ def _doublet_sweep_stage(task, pipeline, log):
     THE DEEP-DECILE ARM IS NOT EVALUATED HERE, AND THAT IS RECORDED RATHER THAN PAPERED OVER.
 
     `doublet.recommend()` rejects the fully-free setting when it calls half of the deepest UMI
-    decile - a cohort quantity, over every library's barcodes pooled. Ten per-library deciles are
+    decile - a cohort quantity, over every library's barcodes pooled. Per-library deciles are
     not that number and no combination of them is: the worst of them is a different statistic, and
     the mean of them is a different statistic again. Both would print. So `deep_decile_rate` is
     left None, which `recommend()` is documented to read as NO EVIDENCE rather than as
@@ -1395,7 +1395,7 @@ def _doublet_sweep_stage(task, pipeline, log):
     absent = []
     # FROM THE FILES THE TASKS DECLARED, taken out of the manifest rather than found by a glob -
     # the rule `_cluster_flags` states and for the same two reasons: a glob cannot tell this run's
-    # output from an earlier one's, and it silently accepts nine files where ten were swept.
+    # output from an earlier one's, and it silently accepts one file fewer than were swept.
     for s in samples:
         r = pipeline.results_by_key.get(f"04_doublet_sweep/{s}")
         paths = [o for o in (getattr(r, "outputs", None) or [])
@@ -1636,7 +1636,7 @@ def _floors_applied_to(call_by, samples) -> str:
 def _quality_stage(task, pipeline, log):
     """The barrier: one cohort constant per count axis, plus the per-library mito ceilings.
 
-    Reads what the ten `05_quality/<sample>` tasks measured. Nothing is measured here, so this is
+    Reads what the per-library `05_quality/<sample>` tasks measured. Nothing is measured here, so this is
     cheap and runs once - which is the point of splitting it out.
     """
     valleys = {m: [] for m in VALLEY_METRICS}
@@ -2230,7 +2230,7 @@ def _cluster_flags(task, pipeline, log):
 
 
 #: `mito_ceiling_pct: per_library` in decisions.yml means "apply what step 5 derived for each
-#: library", rather than one number for all ten. It is a word and not a number because that is
+#: library", rather than one number for every library. It is a word and not a number because that is
 #: what is being approved: a single cohort ceiling and a per-library fence are different
 #: decisions, and on the calibration cohort the difference is a removal that falls markedly more
 #: heavily on one arm of the design than the other, against close to even - the rule-one Q3 quantity.
@@ -2560,7 +2560,7 @@ def _apply(task, pipeline, log):
         raise Refusal(
             f"07_apply: no per-cell criteria table was recorded for {', '.join(absent)}. A "
             f"library whose criteria were never measured cannot be filtered, and delivering the "
-            f"other nine as though it had been is a cohort missing a library that says so "
+            f"others as though it had been is a cohort missing a library that says so "
             f"nowhere.")
 
     def flag(row, col):
@@ -2600,8 +2600,8 @@ def _apply(task, pipeline, log):
     ap.write_removal_record(record, ledger)
 
     # --- and the same removal counted, PER LIBRARY AND PER CRITERION. F9 draws this for the
-    # cohort; the cohort is not where the question lives. A criterion that removes 2% of one
-    # library and 42% of another has put a technical gradient exactly where the biology is
+    # cohort; the cohort is not where the question lives. A criterion that removes 1% of one
+    # library and 30% of another has put a technical gradient exactly where the biology is
     # measured, and a single bar cannot show it. Built from `masks` - the same booleans the
     # ledger and the gate were built from - so the table and the removal cannot disagree.
     breakdown = _removal_breakdown(percell, criteria, masks, removed_mask)

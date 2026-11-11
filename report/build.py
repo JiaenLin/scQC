@@ -402,9 +402,9 @@ def group_defects(defects: list) -> list:
     WHY THE COUNT CHANGED, AND WHY IT IS NOT A WEAKENING
 
     Every rule here fires per occurrence, and several occurrences are per library. One structural
-    fact - "this task declares no output file" - therefore arrived as thirty defects on a
-    ten-library cohort, one per (metric x library). A reader seeing 44 assumes 44 problems; there
-    were 17, and the three largest were one cause each. A count nobody can act on is a count nobody
+    fact - "this task declares no output file" - therefore arrived as one defect per (metric x
+    library), dozens on an ordinary cohort. A reader seeing dozens assumes dozens of problems; there
+    were far fewer, and the largest were one cause each. A count nobody can act on is a count nobody
     reads, and this document's whole claim is that its own gaps are legible.
 
     NOTHING IS HIDDEN. Each group keeps every instance, so the per-library detail is still in
@@ -1246,7 +1246,7 @@ def build_removal_breakdown(payload, defects: list) -> dict:
     """How many observations each criterion removed, per library. The numbers behind F9.
 
     F9 draws the cohort, and the cohort is the wrong unit for the only question this section is
-    asked: did a criterion fall evenly across the libraries? A criterion taking 2% of one and 42%
+    asked: did a criterion fall evenly across the libraries? A criterion taking 1% of one and 30%
     of another has put a technical gradient exactly where the biology is measured, and a single
     bar cannot show it - nor can a bar be read off to a number, which is what a methods section
     needs.
@@ -1523,7 +1523,7 @@ def assemble(payload, *, now=None) -> dict:
         "open_items": open_items,
         "figures": {},
         # GROUPED BY CAUSE. `defects` is the raw emission order; what the document carries
-        # is one entry per cause with its count, because a per-library rule fired ten times
+        # is one entry per cause with its count, because a per-library rule fired once per library
         # is one thing to fix. Every instance is kept inside the group.
         "defects": group_defects(defects),
     }
@@ -2486,8 +2486,8 @@ def render_html(doc: dict, figure_uris: dict) -> str:
     if doc.get("defects"):
         def _row(x):
             n = int(x.get("count", 1) or 1)
-            # The libraries are named where they fit. A cause that fired on three of ten is a
-            # different problem from one that fired on all ten, and the count alone cannot say
+            # The libraries are named where they fit. A cause that fired on a few libraries is a
+            # different problem from one that fired on every library, and the count alone cannot say
             # which - so the names are printed while they are short enough to read.
             who = [str(i) for i in (x.get("instances") or []) if i]
             where = _e(str(x.get("where", "")))

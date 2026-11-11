@@ -16,12 +16,13 @@ THE FLAGS
                     median depth differs across libraries; an absolute floor flags whole
                     libraries rather than clusters.
   B  high mito      cluster median %mt above a threshold. This is NOT the per-cell
-                    mitochondrial ceiling and cannot be: in the calibration cohort no cluster
-                    stayed well under a 40% cut, so the per-cell value never fires at
+                    mitochondrial ceiling and cannot be: in the calibration cohort every
+                    cluster's median stayed well under the per-cell cut in use there, so the
+                    per-cell value never fires at
                     cluster level.
   C  uninformative  share of the top-N markers in the locked mt+ribo set. Reported SPLIT into
-                    C_mt and C_ribo - in the calibration cohort the ribosomal half was empty
-                    (max 10%), which is expected for nuclei, where cytoplasmic ribosomal
+                    C_mt and C_ribo - in the calibration cohort the ribosomal half was all
+                    but empty, which is expected for nuclei, where cytoplasmic ribosomal
                     transcripts are depleted, and folding the two together would have hidden
                     which one fired.
   D  doublet        cluster doublet frequency above a threshold. The default of 70% is the

@@ -856,7 +856,7 @@ def read_matrix(path, tmp_dir=None, *, backed: Optional[str] = None,
 
     Whatever goes wrong underneath surfaces as a TaskFailure naming the file and the format it
     was read as. A reader raising an OSError about an HDF5 object header, from three frames inside
-    a library, does not tell the operator which of ten inputs it was.
+    a library, does not tell the operator which of its inputs it was.
     """
     p = Path(path)
     kind = detect_format(p)

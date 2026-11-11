@@ -92,7 +92,7 @@ Libraries embedding at once raced, and one died with `OSError: [Errno 116] Stale
 inside `numba/core/caching.py`. The traceback names numba, so it reads as an environment fault; it
 is concurrency over a shared cache nothing was serialising, and it arrived with the embedding
 (figures F10/F11). Each scanpy op now gets a `NUMBA_CACHE_DIR` unique to its prefix and op. The
-cost is recompilation per job; the alternative fails one library in ten, and a cohort missing a
+cost is recompilation per job; the alternative fails a library at random, and a cohort missing a
 library is a different cohort.
 
 **The second is why the first matters.** A full re-execution nobody asked for is not just slow —

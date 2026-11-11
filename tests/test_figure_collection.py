@@ -64,7 +64,7 @@ def build_tables(tables: Path) -> None:
 
     # The mitochondrial ceiling DIFFERS between the libraries, deliberately: it is the one
     # threshold this pipeline derives per library, and a fixture giving both the same value would
-    # pass whether or not F15 collapsed ten rules into one cohort line.
+    # pass whether or not F15 collapsed the per-library rules into one cohort line.
     write(tables / "thresholds_per_sample.csv",
           ["sample", "light_floor_umi", "umi_valley", "umi_floor_proposed",
            "gene_valley", "gene_floor_proposed", "mito_ceiling_pct"],

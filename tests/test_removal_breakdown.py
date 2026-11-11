@@ -5,7 +5,7 @@ WHY THIS TEST EXISTS
 
 F9 has drawn the per-criterion removal since the report existed, and it draws the COHORT. The
 cohort is the wrong unit for the only question the section is asked - did this criterion fall
-evenly across the libraries? - because a criterion taking 2% of one library and 42% of another
+evenly across the libraries? - because a criterion taking 1% of one library and 30% of another
 sums to an unremarkable cohort bar. That is a technical gradient sitting exactly where the biology
 is measured, and it is invisible in the figure by construction.
 

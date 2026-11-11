@@ -65,7 +65,7 @@ the report's own defects.
 
 **What each criterion removed carries F9 and a table, and the table is not a caption for the
 figure.** F9 draws the cohort, and the cohort is the wrong unit for the question the section is
-asked: a criterion taking 2% of one library and 42% of another sums to an unremarkable cohort bar,
+asked: a criterion taking 1% of one library and 30% of another (an illustration) sums to an unremarkable cohort bar,
 and that is a technical gradient sitting exactly where the biology is measured. So the table is one
 row per library — `fired` and `alone` per criterion, the cohort as a marked last row — with the
 widest per-criterion ratio across libraries stated beneath it, because that ratio is the finding
@@ -263,7 +263,7 @@ pipeline itself introduces.
 **A design with no aliased pair produces a stated absence.** F16 is still drawn; F17 and F18 report
 that there is no arm to compare, rather than constructing a contrast the design does not support.
 
-**A per-library threshold is never drawn as one line.** F15's ceiling is ten different rules,
+**A per-library threshold is never drawn as one line.** F15's ceiling is one rule per library,
 and a single line across the panel would assert a cohort constant that was never applied -
 with nothing on the page to say it is not one. Each library carries its own segment, and the
 panel states that the value is per library and gives its range.

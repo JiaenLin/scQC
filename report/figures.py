@@ -1051,7 +1051,7 @@ def _violin_row(ax, distributions, names, *, log, cut, cap, metric_name, cut_wor
     `cut` IS EITHER ONE NUMBER OR ONE PER LIBRARY, and the drawing differs because the claim
     differs. A cohort constant is a single rule and is drawn as a line crossing every library, so
     a library it fits badly is visible as a line in the wrong place. A per-library threshold is
-    ten different rules and CANNOT honestly be drawn that way: one line across all of them would
+    one rule per library and CANNOT honestly be drawn that way: one line across all of them would
     assert a cohort constant that was never applied, and the reader has no way to see it is not
     one. It is drawn as a segment over each library's own pair instead.
 
@@ -2105,7 +2105,7 @@ FIGURE_FUNCTIONS = {
     # The gene axis gets its own id for the same reason F12 does. Step 5 derives TWO count floors
     # from two densities and applies both, and one F6 can carry only one metric: `cut` is a single
     # cohort constant drawn on every panel, and the UMI floor drawn over a gene density would be a
-    # line in the wrong units on ten panels. Folding both into one figure under one id would also
+    # line in the wrong units on every panel. Folding both into one figure under one id would also
     # make "the density figure" ambiguous in a report whose whole point is that a reader can name
     # what they looked at.
     "F13": fig_f6_quality_density,
