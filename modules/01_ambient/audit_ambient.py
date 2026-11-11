@@ -44,8 +44,8 @@ damage a missed answer does.
      removed from the analysis in all but name. Counts and detection can move independently.
 
   5 HOW MANY GENES VANISH ENTIRELY?
-     In the calibration cohort, 12-240 per library. An order of magnitude more is a different
-     kind of run.
+     In the calibration cohort, from a handful to a few hundred per library (its records hold the
+     values). An order of magnitude more is a different kind of run.
 
 WHAT THIS AUDITOR DOES NOT DO. It does not say the denoising is CORRECT. Every check is either
 cohort-relative or a differential; none can tell a well-removed ambient transcript from a
@@ -131,7 +131,7 @@ def _mad_out(values: dict, k: float = MAD_K) -> dict:
     mad = median([abs(v - med) for v in vals])
     if mad <= 0:
         # More than half the values are identical, so the robust scale is zero and `or 1e-12`
-        # turned ANY deviation into ~1e12 robust SD - a 0.07% difference read as a degenerate
+        # turned ANY deviation into ~1e12 robust SD - a difference of a fraction of a percent read as a degenerate
         # fit. With no spread to measure against there is no outlier to report.
         return {}
     return {s: (v, med, abs(v - med) / (1.4826 * mad))

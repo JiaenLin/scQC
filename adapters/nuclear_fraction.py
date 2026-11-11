@@ -105,9 +105,9 @@ def read_cellreads(path, target_barcodes, *, sample=None, antisense=False) -> tu
     same way, so the caller never handles two spellings.
 
     STREAMED AND FILTERED ON READ, and that is the whole performance argument. The file holds one
-    row per DROPLET — on a typical run 1.7 million of them, 131 MB — while an object holds tens of
-    thousands of called cells. Building a dict of every row and then selecting from it costs ~45x
-    the memory for the same answer. Each line is split ONCE to look at the barcode, and split the
+    row per DROPLET — millions of them on an ordinary run — while an object holds tens of
+    thousands of called cells. Building a dict of every row and then selecting from it costs the
+    memory of every droplet for an answer about the cells. Each line is split ONCE to look at the barcode, and split the
     rest of the way only for the ~2% that are wanted.
     """
     p = Path(path)

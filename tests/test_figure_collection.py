@@ -70,7 +70,7 @@ def build_tables(tables: Path) -> None:
            "gene_valley", "gene_floor_proposed", "mito_ceiling_pct"],
           [["scope", "cohort constant", "per library", "cohort constant",
             "per library", "cohort constant", "per library"]]
-          + [[s, 200, 340, 350, 250, 260, ceil]
+          + [[s, 200, 370, 380, 265, 270, ceil]
              for s, ceil in zip(SAMPLES, (12.5, 19.75, 15.25))])
 
     write(tables / "ambient_summary.csv", ["sample", "fraction_removed_overall"],

@@ -50,7 +50,7 @@ def fake(decisions=None, tools=None, samples=None, project=None):
         samples=samples or [],
         project=Path(project) if project else Path("."),
         results_by_key={
-            "05_quality": SimpleNamespace(metrics={"umi_proposed": 350, "genes_proposed": 260}),
+            "05_quality": SimpleNamespace(metrics={"umi_proposed": 380, "genes_proposed": 270}),
             "07_apply": SimpleNamespace(metrics={"ceilings": "5.00-9.50% across 6 libraries"}),
         })
 
@@ -90,7 +90,7 @@ for label, dec in (("no verbatim", HALF), ("no attestation at all", BARE)):
     r = rows_by_name(Pipeline._parameters_block(fake(decisions=dec)))["UMI floor"]
     check(f"a decision with {label} is DERIVED, as step 7 treats it",
           r["class"] == "DERIVED", str(r))
-    check(f"...and shows the DERIVED value ({label})", r["value"] == 350, str(r["value"]))
+    check(f"...and shows the DERIVED value ({label})", r["value"] == 380, str(r["value"]))
 
 print("\nthe report's own validator accepts what the pipeline emits")
 defects = []

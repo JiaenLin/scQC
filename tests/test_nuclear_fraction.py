@@ -94,7 +94,7 @@ with tempfile.TemporaryDirectory() as tmp:
           not any(k.endswith("CBnotInPasslist") for k in vals))
     check("rows the caller did not ask for are not returned", "S1_DDD" not in vals
           and "DDD" not in vals,
-          "the file holds one row per DROPLET; building all of them costs ~45x the memory")
+          "the file holds one row per DROPLET; building all of them costs tens of times the memory")
     check("sense-only by default", st["antisense"] is False)
     check("the columns summed are recorded beside the values", "intronic" in st["columns"])
     check("the join rate is reported", st["n_target"] == 3 and st["n_joined"] == 3)

@@ -85,7 +85,7 @@ print(f" 9 identical + 1 differing by 0.0001 -> action {v.action}, "
       f"{len(v.outliers)} outlier(s)")
 if v.outliers:
     found.append("H5 CONFIRMED: with MAD = 0 the guard `or 1e-12` makes any deviation "
-                 "~1e12 robust SD, so a 0.07% difference is flagged as a degenerate fit.")
+                 "~1e12 robust SD, so a difference of a fraction of a percent is flagged as a degenerate fit.")
     print(" ^ BUG: a trivial difference becomes an extreme outlier")
 
 print("\n" + "=" * 74)

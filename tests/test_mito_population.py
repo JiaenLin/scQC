@@ -56,7 +56,7 @@ def fence(stats, k=4):
 # ambient tail is deliberately LARGE - a quarter of the barcodes - because a restriction that
 # only matters for a handful is one whose absence nobody would notice.
 healthy = [1.0, 1.5, 2.0, 2.5, 3.0, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 8.0]
-ambient = [55.0, 62.0, 71.0, 88.0, 99.5]
+ambient = [55.0, 62.0, 71.0, 88.0, 97.0]
 shallow = [40.0, 45.0, 30.0]  # real percentages, but on 30-UMI droplets
 
 pct = healthy + ambient + shallow

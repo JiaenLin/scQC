@@ -30,7 +30,7 @@ def expect_refusal(label, **kw):
 print("Step 1 - ambient correction policy\n" + "=" * 74)
 
 expect_ok("1 snrna, default", sample="cohort_ctrl_01", assay="snrna",
-          intronic_fraction=0.52)
+          intronic_fraction=0.55)
 print()
 # Single cells are NOT denoised here - the PI's ruling of 2026-10-02, and DENOISE in the module.
 # Case 2 read "scrna, default runs" until then, and case 5 refused a single-cell skip given no
@@ -61,7 +61,7 @@ expect_ok("5 scrna, skip with no reason: the policy is the reason", sample="pbmc
           assay="scrna", skip=True, intronic_fraction=0.20)
 print()
 expect_refusal("6 declared scrna, nuclear intronic fraction", sample="mislabelled",
-               assay="scrna", intronic_fraction=0.61)
+               assay="scrna", intronic_fraction=0.65)
 print()
 expect_refusal("7 assay not declared", sample="nodecl", assay="")
 

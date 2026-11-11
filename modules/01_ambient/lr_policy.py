@@ -82,8 +82,8 @@ def _mad_outliers(values: dict) -> dict:
     mad = median([abs(v - med) for v in vals])
     if mad <= 0:
         # More than half the values are identical, so the robust scale is zero. Guarding that
-        # with `or 1e-12` would turn ANY deviation into ~1e12 robust SD - a 0.07% difference
-        # read as a degenerate fit. With no spread to measure against there is no outlier.
+        # with `or 1e-12` would turn ANY deviation into ~1e12 robust SD - a difference of a
+        # fraction of a percent read as a degenerate fit. With no spread to measure against there is no outlier.
         return {}
     out = {}
     for s, v in values.items():
