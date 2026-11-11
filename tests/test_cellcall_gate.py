@@ -7,19 +7,20 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "modules" / "02_cells"))
 from cellcall_gate import gate, verdict # noqa: E402
 
-# Measured from results/objects/cellbender_h5ad/*.h5ad, obs celescope_cell vs
-# cellbender_cell. `lost` is aligner cells NOT called by CellBender.
+# Synthetic calls in the shape of an accepted nuclei cohort's: CellBender calls more cells than the
+# aligner everywhere, one library loses just over 5% of the aligner's cells, and every loss falls
+# on one arm. `lost` is aligner cells NOT called by CellBender.
 COHORT = {
-    "ctrl_03": dict(aligner=21901, cellbender=38285, lost=0),
-    "ctrl_04": dict(aligner=16364, cellbender=30103, lost=0),
-    "ctrl_05": dict(aligner=13140, cellbender=22067, lost=0),
-    "treat_03": dict(aligner=10438, cellbender=14229, lost=527),
-    "treat_04": dict(aligner=14210, cellbender=21620, lost=10),
-    "treat_05": dict(aligner=10615, cellbender=14074, lost=4),
-    "ctrl_01": dict(aligner=17685, cellbender=32220, lost=0),
-    "ctrl_02": dict(aligner=12999, cellbender=20995, lost=0),
-    "treat_01": dict(aligner=17692, cellbender=29870, lost=0),
-    "treat_02": dict(aligner=17609, cellbender=21505, lost=76),
+    "ctrl_03": dict(aligner=20000, cellbender=36000, lost=0),
+    "ctrl_04": dict(aligner=16000, cellbender=29000, lost=0),
+    "ctrl_05": dict(aligner=13000, cellbender=22000, lost=0),
+    "treat_03": dict(aligner=10000, cellbender=14000, lost=505),
+    "treat_04": dict(aligner=14000, cellbender=21000, lost=10),
+    "treat_05": dict(aligner=10500, cellbender=14000, lost=4),
+    "ctrl_01": dict(aligner=17500, cellbender=32000, lost=0),
+    "ctrl_02": dict(aligner=13000, cellbender=21000, lost=0),
+    "treat_01": dict(aligner=17500, cellbender=29500, lost=0),
+    "treat_02": dict(aligner=17500, cellbender=21500, lost=76),
 }
 CONDITION = {s: ("treat" if "treat" in s else "ctrl") for s in COHORT}
 # A SECOND design factor. Its levels used to be readable off the sample names; now they are
@@ -31,7 +32,7 @@ DESIGN = {"condition": CONDITION, "batch": BATCH}
 
 fails = []
 print("Step 2 - cell-call gate\n" + "=" * 74)
-print("A. the calibration cohort's calls, as accepted")
+print("A. a nuclei cohort's calls (synthetic), as accepted")
 f = gate(COHORT, DESIGN, assay="snrna")
 for x in f:
     print(x)
@@ -47,7 +48,7 @@ print("B. injected: CellBender stricter than the aligner")
 # STRICTER IS A FILTER WHEN IT COSTS CELLS (harness autodev W020, B1-103): a ratio below 1.0 with
 # under REVIEW_LOST of the aligner's cells lost is REVIEW; with REVIEW_LOST or more it is REFUSED.
 b = {k: dict(v) for k, v in COHORT.items()}
-b["ctrl_05"]["cellbender"] = 11000 # below the aligner's 13,140
+b["ctrl_05"]["cellbender"] = 11000 # below the aligner's 13,000
 f2 = gate(b, DESIGN, assay="snrna")
 hit = [x for x in f2 if "stricter" in x.check]
 print(hit[0])
@@ -74,4 +75,4 @@ if fails:
     print("FAILED:"); [print(" -", x) for x in fails]; raise SystemExit(1)
 print("proved: the accepted cohort clears the REFUSE lines and is REVIEWed where it should be -")
 print(" treat_03 sits exactly on the 5% review line, so the boundary is inclusive")
-print(" all 617 lost cells fall on treat and none on ctrl, which no per-sample % can see")
+print(" every lost cell falls on treat and none on ctrl, which no per-sample % can see")

@@ -176,7 +176,7 @@ class _P:
 def _row(s, **extra):
     return {"sample": s, "platform": "singleron", "species": "mus_musculus",
             "reference": "mus_musculus/ensembl_112_filtered", "assay": "snrna",
-            "matrix": f"/d/{s}", "diet": "chow" if s.endswith("1") else "hfd", **extra}
+            "matrix": f"/d/{s}", "diet": "std" if s.endswith("1") else "alt", **extra}
 
 
 _AMB = {"ambient_h5": "/cb/x.h5", "ambient_tool": "CellBender", "ambient_version": "0.3.2",
@@ -450,7 +450,7 @@ else:
 #
 # `findings` builds a new list on every access, so `pipeline.findings.append(...)` appends to a
 # throwaway and is discarded without an error anywhere. Two call sites did that and lost four
-# findings between them - one of which was the statement that 21,395 delivered nuclei sat inside
+# findings between them - one of which was the statement of how many delivered nuclei sat inside
 # a cluster the run had flagged. The report was complete, well-formed, and quietly missing the
 # finding a reader most needed.
 _mutators = []

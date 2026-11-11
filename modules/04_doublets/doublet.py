@@ -5,24 +5,24 @@
 ONE TOOL, NOT A VOTE - AND THE REASON IS MEASURED
 
 A consensus - two of three detectors must agree before a nucleus is called - is the obvious
-design. Four detectors were measured on the calibration cohort's ten libraries, and the numbers
-rule it out:
+design. Four detectors were measured on the calibration cohort's libraries, and the measurements
+(that cohort's, kept in its records) rule it out:
 
-    scds               6.00% in ALL TEN libraries, spread 1.00x - its call is
+    scds               the same rate in every library, no spread at all - its call is
                        `top_frac(hybrid, 0.06)`, a quantile fixed in advance
-    scDblFinder        10.04-10.79%, spread 1.07x
-    DoubletDetection   1.82-20.90%, spread 11.48x - "PhenoGraph does not support
+    scDblFinder        a narrow range across libraries
+    DoubletDetection   a range wider by an order of magnitude - "PhenoGraph does not support
                        random seeds", by its own documentation
-    pairwise Jaccard   0.21-0.28
+    pairwise Jaccard   low between every pair
 
-Two of the three voters carried no rate information, and the consensus inherited its 3.21x
+Two of the three voters carried no rate information, and the consensus inherited its
 per-sample spread from the one member that cannot be reproduced. A vote does not protect against
 a bad detector; it averages one in. So this module runs scDblFinder alone.
 
 THE PROTECTION IS A DIAGNOSTIC, NOT A SECOND OPINION
 
-Scrublet failed on this cohort and the failure was plainly visible - 0% in seven of ten
-libraries, and the silence fell on one arm of the design. No vote was needed to see that, only a
+Scrublet failed on this cohort and the failure was plainly visible - no doublet at all in
+most libraries, and the silence fell on one arm of the design. No vote was needed to see that, only a
 look at the per-sample rates. So one detector runs and `doublet_health.py` checks its calls for
 exactly those signatures. A supplied detector gets the same check with no exemption.
 
@@ -30,21 +30,21 @@ WHAT IS DECLARED, AND WHY THERE IS NO DEFAULT FOR IT
 
 `dbr`, the expected doublet rate. scDblFinder's default is the 10x Chromium loading formula,
 ~(cells/1000)*0.01, and its own vignette says "different protocols may create considerably more
-doublets, and that this should be updated accordingly". Applied to a Singleron run it tracked
-library size at r = 0.872 and, because the ctrl libraries were larger, imported a condition
-differential of 19.65% vs 14.98% onto half the study's primary readout. So `dbr` comes from the
+doublets, and that this should be updated accordingly". Applied to a non-10x run it tracked
+library size closely and, because one arm's libraries were larger, imported a spurious
+condition differential onto half the study's primary readout. So `dbr` comes from the
 platform and the module refuses rather than falling back to a formula belonging to another one.
 
 TUNING IS `dbr.sd`, AND A FLAT RATE IS SUSPECT RATHER THAN REASSURING
 
-At the package default, scDblFinder returned 10.04-10.79% across libraries differing 2.5-fold in
-size - a 0.75 percentage-point spread. That flatness was the prior's, not the data's: at
-`dbr.sd = 1`, which the documentation describes as disabling any expectation of the number of
-doublets, the same tool spans 12.81-31.69%.
+At the package default, scDblFinder returned nearly the same rate across libraries differing
+severalfold in size. That flatness was the prior's, not the data's: at `dbr.sd = 1`, which the
+documentation describes as disabling any expectation of the number of doublets, the same tool
+spans a range several times wider.
 
 This is the argument against a per-sample MAD5 mitochondrial rule - a method that equalises the
 fraction removed cannot reveal a library that genuinely differs - applied to a doublet caller.
-But fully freeing the prior is not the answer either: at `dbr.sd = 1` the tool calls 63.7% of the
+But fully freeing the prior is not the answer either: at `dbr.sd = 1` the tool calls most of the
 deepest UMI decile, and where the deepest nuclei are a large, RNA-rich majority population, that
 is as consistent with eating that population as with finding doublets.
 """
@@ -138,7 +138,7 @@ def check_detector(det, dbr=None, light_floor=None) -> list:
         raise DoubletRefusal(
             f"{det.name} imports a rate prior and no dbr was DECLARED. There is no default: "
             f"scDblFinder's is the 10x loading formula, which on a non-10x cohort tracked library "
-            f"size at r = 0.872 and imported a 19.65% vs 14.98% condition differential.")
+            f"size closely and imported a spurious condition differential.")
     if det.min_umi_floor is not None:
         if light_floor is None:
             raise DoubletRefusal(f"{det.name} requires a floor of {det.min_umi_floor} UMI and "

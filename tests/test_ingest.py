@@ -41,16 +41,16 @@ with tempfile.TemporaryDirectory() as _td:
                          encoding="utf-8")
     REG = read_registry(_reg_file)
 
-# Summary statistics for three real artifacts of one library, as recorded by the prior-filtering
-# audit: the vendor's delivered matrix, the vendor's delivered analysis object, and the
-# unfiltered droplet matrix reprocessed from FASTQ.
+# Summary statistics in the shape of three artifacts of one library, as a prior-filtering audit
+# records them (synthetic values): the vendor's delivered matrix, the vendor's delivered analysis
+# object, and the unfiltered droplet matrix reprocessed from FASTQ.
 STATS = {
-    "vendor_tar": dict(n_barcodes=17685, n_genes=34290, min_counts=500.0,
-                       max_counts=21238.0, p98_counts=5421.0, expected_genes=34290),
-    "vendor_h5ad": dict(n_barcodes=16564, n_genes=20000, min_counts=498.0,
-                        max_counts=5420.0, p98_counts=5421.0, expected_genes=34290),
-    "ours_raw": dict(n_barcodes=35915, n_genes=34290, min_counts=1,
-                     max_counts=21238.0, p98_counts=None, expected_genes=34290),
+    "vendor_tar": dict(n_barcodes=15000, n_genes=30000, min_counts=500.0,
+                       max_counts=20000.0, p98_counts=5000.0, expected_genes=30000),
+    "vendor_h5ad": dict(n_barcodes=14000, n_genes=20000, min_counts=498.0,
+                        max_counts=4999.0, p98_counts=5000.0, expected_genes=30000),
+    "ours_raw": dict(n_barcodes=36000, n_genes=30000, min_counts=1,
+                     max_counts=20000.0, p98_counts=None, expected_genes=30000),
 }
 CASES = [
     ("1 vendor counts_matrix.tar (CeleScope outs/filtered)", "vendor_tar", "run"),

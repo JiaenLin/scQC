@@ -42,9 +42,9 @@ if p2 is not None and (p2.run or p2.state != "SKIP" or "NOT RUN" not in p2.reaso
                  f"is that this pipeline never denoises one")
 print()
 p = expect_ok("3 scrna, a reason given anyway is kept", sample="pbmc_donor2", assay="scrna",
-              skip=True, skip_reason="ambient fraction measured at 1.2% in a pilot",
+              skip=True, skip_reason="ambient fraction measured at 3.4% in a pilot",
               intronic_fraction=0.16)
-if p is not None and (p.run or "1.2%" not in p.reason):
+if p is not None and (p.run or "3.4%" not in p.reason):
     fails.append("3: the reason given beside the policy was dropped")
 print()
 p3 = expect_ok("3b scrna, SUPPLIED is still accepted", sample="pbmc_donor4", assay="scrna",

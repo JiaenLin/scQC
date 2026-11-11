@@ -105,11 +105,11 @@ if HAVE:
         for side in ("left", "right"):
             base = td / side
             rows = []
-            for i, s in enumerate(("WT_1", "MUT_1")):
+            for i, s in enumerate(("REF_1", "ALT_1")):
                 raw, filt, _ = C.cellranger_library(base / "data", s, 20 + i, C.HUMAN)
                 rows.append({"sample": s, "platform": "10x", "species": "homo_sapiens",
                              "reference": "homo_sapiens/ref", "assay": "scrna", "matrix": raw,
-                             "aligner_cells": filt, "genotype": "WT" if i == 0 else "Mut",
+                             "aligner_cells": filt, "genotype": "REF" if i == 0 else "ALT",
                              "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]", "dbr": 0.05,
                              "dbr_sd": 0.05})
             sheet = base / "samplesheet.tsv"

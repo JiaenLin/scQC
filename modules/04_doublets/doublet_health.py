@@ -20,8 +20,8 @@ WHAT EACH CHECK CATCHES, AND WHAT IT CANNOT
                  not evidence of absence, and a threshold that collapses returns silence.
   design         the removal rate per level of every design factor, which is the check that can
                  silently become a result. Bound by materiality: a ratio between two near-zero
-                 rates is dominated by single libraries, and 541 cells against 76 is arithmetic
-                 rather than evidence.
+                 rates is dominated by single libraries, and a ratio of two small counts is
+                 arithmetic rather than evidence.
   spread         per-sample variation, read in BOTH directions - too little means the rate is
                  imposed rather than measured, too much means the threshold is unstable.
   imposed        rate variance across libraries at or near zero. scds returned exactly 6.00%

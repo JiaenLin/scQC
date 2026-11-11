@@ -17,8 +17,8 @@ decides what they mean.
 
 THE VALLEY, WHICH IS THE PART TO READ CAREFULLY
 
-`quality.py` records the measurement that motivates the whole procedure: across ten libraries of
-one cohort the density valley ranged 274-473 UMI and 184-352 genes. The PROCEDURE transfers; the
+`quality.py` records the observation that motivates the whole procedure: across the libraries
+of one cohort the density valley moved substantially from library to library. The PROCEDURE transfers; the
 number does not. `find_valley()` is that procedure.
 
 A density minimum exists in any smooth curve. Returning the minimum of a unimodal density means
@@ -2339,12 +2339,12 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     #   a valley is a boundary BETWEEN TWO MODES, so it needs both modes present. Pre-cutting at
     #   a count floor deletes most of the debris mode, and the minimum then lands inside the
     #   nucleus mode or disappears - measured on the calibration cohort: one library's UMI valley
-    #   moves from 279 to 1,018 and another's stops existing.
+    #   moved severalfold and another's stopped existing.
     #
     #   a PERCENTAGE needs a denominator big enough to mean something. A 30-UMI droplet with 10
     #   mitochondrial counts reads 33%, and a fence built on Q3 is set by exactly those. Over
-    #   every called barcode the calibration cohort's ceilings come out 1.14x-1.71x higher than
-    #   over the floored population, in 7 of 10 libraries, and always higher.
+    #   every called barcode the calibration cohort's ceilings came out higher than over the
+    #   floored population, in most libraries markedly, and never lower.
     #
     # This ran without the floor until 2026-08-10 and produced ceilings for a population the
     # ceiling is never applied to: every barcode it added is removed by the count floor first.
@@ -2361,9 +2361,8 @@ def _op_valley(adata, params, out_prefix) -> tuple:
     #   distribution being described - they are a different distribution, and letting them set the
     #   MAD widens the fence that decides which real cells survive.
     #
-    # Measured on the calibration cohort, over its 2,462 such droplets: median 88-122 genes
-    # against a population median of 339-734, median 248-351 UMI, and NOT ONE of them survived the
-    # full filter. They could not influence the deliverable through any route except this one.
+    # Measured on the calibration cohort, over its such droplets: a small fraction of the population's
+    # median genes and UMI, and NOT ONE of them survived the full filter. They could not influence the deliverable through any route except this one.
     #
     # THE ASYMMETRY WITH THE VALLEYS IS THE SAME ASYMMETRY, AND IT IS WHY THIS IS NOT GENERAL.
     # A derivation population may exclude what is definitionally not the thing being estimated. It
@@ -2717,9 +2716,9 @@ def _op_cluster(adata, params, out_prefix) -> tuple:
     # `cluster_flags.py` requires "the step-5 object: quality-filtered, with the doublet flags
     # ATTACHED and NOT applied". The object this op reads is the DENOISED FULL DROPLET MATRIX, so
     # without this mask the clustering runs over empty droplets. Measured on the calibration
-    # cohort, that cost: 1,398 of 1,531 clusters held no cell that reached the deliverable; leiden
+    # cohort, that cost: nearly every cluster held no cell that reached the deliverable; leiden
     # spends a fixed resolution over what it is given, so the real cells were left UNDER-RESOLVED
-    # at 245 clusters for a library with 8 real ones; and because every criterion is a cluster
+    # a few clusters of real cells among hundreds of empty ones; and because every criterion is a cluster
     # MEDIAN, the libraries with the most droplet noise raised the FEWEST flags - backwards, and
     # on that cohort the bias ran along a design factor.
     #

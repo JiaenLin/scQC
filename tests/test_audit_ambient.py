@@ -138,5 +138,5 @@ if fails:
     print("FAILED:"); [print(" -", x) for x in fails]; raise SystemExit(1)
 print("proved: a real run passes and all three injected faults are caught")
 print("note WHICH check found B: the total removal is the number the denoiser reports and the")
-print("LEAST informative of the five - the calibration cohort's degenerate library sat at 8.3%,")
+print("LEAST informative of the five - the calibration cohort's degenerate library sat")
 print("LOW rather than high, comfortably inside a plausible-looking range")

@@ -764,8 +764,8 @@ def _f17(percell: dict, relations: dict, sheet: list, assay=None) -> dict:
             counts, genes = _num(r.get("total_counts")), _num(r.get("n_genes"))
             for key, _lab, _log in CONFOUNDING_METRICS:
                 if key == "complexity":
-                    # log10 genes / log10 UMI - the standard novelty score. Undefined at or
-                    # below 10 UMI, where the denominator approaches 1 and the ratio explodes;
+                    # log10 genes / log10 UMI - the standard novelty score. Undefined below
+                    # ten counts, where the denominator approaches 1 and the ratio explodes;
                     # such a nucleus contributes nothing rather than a large invented number.
                     v = (None if counts is None or genes is None or counts < 10 or genes < 1
                          else math.log10(genes) / math.log10(counts))

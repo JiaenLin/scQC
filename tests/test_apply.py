@@ -18,36 +18,36 @@ from apply import (ApplyRefusal, annotate_kept, apply_removal, # noqa: E402
 #   - that cluster on ONE design level only, so the one-sided-removal warning fires;
 #   - the rest below the line, so they are counted as flagged-but-retained rather than removed.
 PROF = [
-    dict(sample="ctrl_01", cluster=4, n=1840, median_umi=1210, median_pct_mt=19.40,
-         pct_doublet=6.80, FLAG=True, WATCH=False),
-    dict(sample="ctrl_01", cluster=7, n=402, median_umi=1088, median_pct_mt=22.15,
-         pct_doublet=14.90, FLAG=True, WATCH=False),
-    dict(sample="treat_01", cluster=18, n=190, median_umi=1035, median_pct_mt=18.70,
-         pct_doublet=7.40, FLAG=True, WATCH=False),
+    dict(sample="ctrl_01", cluster=4, n=1800, median_umi=1200, median_pct_mt=19.0,
+         pct_doublet=7.0, FLAG=True, WATCH=False),
+    dict(sample="ctrl_01", cluster=7, n=400, median_umi=1100, median_pct_mt=22.0,
+         pct_doublet=15.0, FLAG=True, WATCH=False),
+    dict(sample="treat_01", cluster=18, n=190, median_umi=1000, median_pct_mt=18.5,
+         pct_doublet=7.5, FLAG=True, WATCH=False),
     # the one above the line, and the only one
     dict(sample="treat_02", cluster=11, n=200, median_umi=2980, median_pct_mt=2.90,
          pct_doublet=72.50, FLAG=True, WATCH=False),
-    dict(sample="ctrl_03", cluster=6, n=1975, median_umi=960, median_pct_mt=21.80,
-         pct_doublet=5.10, FLAG=True, WATCH=False),
-    dict(sample="ctrl_04", cluster=9, n=620, median_umi=845, median_pct_mt=20.60,
-         pct_doublet=8.30, FLAG=True, WATCH=False),
-    dict(sample="ctrl_05", cluster=5, n=265, median_umi=910, median_pct_mt=23.05,
-         pct_doublet=10.40, FLAG=True, WATCH=False),
-    dict(sample="ctrl_05", cluster=8, n=1010, median_umi=805, median_pct_mt=18.95,
-         pct_doublet=4.70, FLAG=True, WATCH=False),
-    dict(sample="treat_04", cluster=12, n=930, median_umi=730, median_pct_mt=12.40,
-         pct_doublet=2.20, FLAG=True, WATCH=False),
+    dict(sample="ctrl_03", cluster=6, n=2000, median_umi=950, median_pct_mt=21.5,
+         pct_doublet=5.0, FLAG=True, WATCH=False),
+    dict(sample="ctrl_04", cluster=9, n=600, median_umi=850, median_pct_mt=20.5,
+         pct_doublet=8.0, FLAG=True, WATCH=False),
+    dict(sample="ctrl_05", cluster=5, n=250, median_umi=900, median_pct_mt=23.0,
+         pct_doublet=10.0, FLAG=True, WATCH=False),
+    dict(sample="ctrl_05", cluster=8, n=1000, median_umi=800, median_pct_mt=19.0,
+         pct_doublet=4.5, FLAG=True, WATCH=False),
+    dict(sample="treat_04", cluster=12, n=900, median_umi=750, median_pct_mt=12.5,
+         pct_doublet=2.0, FLAG=True, WATCH=False),
 ]
 N_ABOVE_LINE = sum(c["n"] for c in PROF if c["pct_doublet"] > 70.0)
 CONDITION = {"ctrl_01": "ctrl", "ctrl_02": "ctrl", "treat_01": "treat", "treat_02": "treat",
         "ctrl_03": "ctrl", "ctrl_04": "ctrl", "ctrl_05": "ctrl", "treat_03": "treat",
         "treat_04": "treat", "treat_05": "treat"}
-ACTION = "reference-run filter: UMI>=350, genes>=250, mito<=40%, scDblFinder dbr.sd=0.06"
+ACTION = "a run's filter: UMI>=300, genes>=200, mito<=40%, scDblFinder dbr.sd=0.05"
 
 fails = []
 print("Step 7 - apply\n" + "=" * 74)
-print("A. pre-flight against a deliverable of 127,050 kept nuclei")
-pf = preflight(PROF, kept_total=127050)
+print("A. pre-flight against a deliverable of 110,000 kept nuclei")
+pf = preflight(PROF, kept_total=110000)
 for x in pf:
     print(x)
 resid = [x for x in pf if "residual" in x.check]
@@ -82,10 +82,10 @@ if obs[0]["cluster_FLAG"] is not True or obs[1]["cluster_FLAG"] is not None:
 print("\n" + "-" * 74)
 print("D. the approval gate")
 approvals = {ACTION: "CONFIRM"}
-n = apply_removal(244968, 117918, ACTION, "CONFIRM", approvals)
+n = apply_removal(200000, 90000, ACTION, "CONFIRM", approvals)
 print(f" approved: {n:,} kept")
-if n != 127050:
-    fails.append("D: 244,968 - 117,918 must be 127,050")
+if n != 110000:
+    fails.append("D: 200,000 - 90,000 must be 110,000")
 
 for label, kw in (
         ("no verbatim words", dict(action=ACTION, user_verbatim="", approvals=approvals)),
@@ -94,7 +94,7 @@ for label, kw in (
         ("words from another decision", dict(action=ACTION, user_verbatim="approve this filter.",
                                              approvals=approvals))):
     try:
-        apply_removal(244968, 117918, **kw)
+        apply_removal(200000, 90000, **kw)
         fails.append(f"D: {label} must refuse")
     except ApplyRefusal as e:
         print(f" [REFUSED] {label}: {str(e)[:110]}...")

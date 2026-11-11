@@ -11,8 +11,8 @@ the reader is looking at a directory it last read before the file was there.
 What that produces is the worst-shaped failure this pipeline has: a task that ran correctly, exited
 0 and wrote its output is reported as having written nothing. It is indistinguishable from a real
 failure, and it only happens when the file did not ALREADY exist from an earlier attempt - so it
-survived every resumed run and appeared on the first genuinely clean one, where two of ten
-libraries failed with their 22,284 and 23,584 line outputs sitting correctly on disk.
+survived every resumed run and appeared on the first genuinely clean one, where two
+libraries failed with their complete outputs sitting correctly on disk.
 
 Listing the parent is what gives the client the chance to notice; a bare `stat()` of the same
 name can keep answering from a cached negative lookup. Neither forces anything before the

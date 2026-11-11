@@ -5,9 +5,9 @@
 
 WHAT AN ABNORMAL REMOVAL LOOKS LIKE, AND WHY THE TOTAL WILL NOT SHOW IT
 
-CellBender reports a fraction removed. That number is almost useless on its own: the calibration
-cohort's ten libraries span 15.5-23.7% and all ten are fine, while the one library that WAS
-degenerate sat at 8.3% - inside a plausible-looking range, low rather than high. A denoiser that
+CellBender reports a fraction removed. That number is almost useless on its own: across one
+cohort's libraries the healthy fits spread widely, while the one library that WAS degenerate
+sat inside a plausible-looking range, low rather than high. A denoiser that
 has failed does not announce it; it returns a matrix, a report and a believable cell count.
 
 So the auditor asks five questions the total cannot answer, in descending order of how much

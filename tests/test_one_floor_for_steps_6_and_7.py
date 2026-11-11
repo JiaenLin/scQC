@@ -47,7 +47,7 @@ def _row(s):
     return {"sample": s, "platform": "10x", "species": "homo_sapiens",
             "reference": "homo_sapiens/GRCh38", "assay": "scrna", "matrix": f"/d/{s}/raw",
             "aligner_cells": f"/d/{s}/filtered", "mt_prefix": "MT-", "ribo_pattern": "^RP[SL]",
-            "genotype": "WT" if s.endswith("1") else "Mut"}
+            "genotype": "REF" if s.endswith("1") else "ALT"}
 
 
 ROWS = [_row("A1"), _row("B2")]
@@ -163,11 +163,11 @@ if HAVE:
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         lines = []
-        for i, s in enumerate(("WT_1", "MUT_1")):
+        for i, s in enumerate(("REF_1", "ALT_1")):
             raw, filt, _ = C.cellranger_library(td / "data", s, 30 + i, C.HUMAN)
             lines.append("\t".join(str(v) for v in (
                 s, "10x", "homo_sapiens", "homo_sapiens/ref", "scrna", raw, filt,
-                "WT" if i == 0 else "Mut", "MT-", "^RP[SL]", 0.05, 0.05)))
+                "REF" if i == 0 else "ALT", "MT-", "^RP[SL]", 0.05, 0.05)))
         sheet = td / "samplesheet.tsv"
         sheet.write_text("\t".join(COLS) + "\n" + "\n".join(lines) + "\n")
         reg = td / "registry.tsv"
@@ -191,7 +191,7 @@ if HAVE:
                          + (p.stdout + p.stderr)[-1500:])
         else:
             T = res[0] / "tables"
-            for s in ("WT_1", "MUT_1"):
+            for s in ("REF_1", "ALT_1"):
                 with open(T / f"{s}.percell.csv", encoding="utf-8") as fh:
                     depth = {r["barcode"]: float(r["total_counts"]) for r in csv.DictReader(fh)}
                 with open(T / f"{s}.embedding.csv", encoding="utf-8") as fh:

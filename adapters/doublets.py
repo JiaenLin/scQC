@@ -16,8 +16,8 @@ THE ONE THING THIS ADAPTER MUST NOT LOSE
 
 A barcode below the light floor was never handed to the detector. Its doublet status is UNKNOWN.
 It is not a singlet, and the difference is not cosmetic: in the calibration cohort the
-never-scored set was 59,322 nuclei, 24% of the total, and folding it into the negatives moves
-the reported rate from 7.52% of nuclei scored to 5.70% of all cells. Both numbers are true and
+never-scored set was a large share of the total, and folding it into the negatives moved the
+reported rate down by that share. Both numbers are true and
 only one of them answers any given question.
 
 So the calls are not a plain dict. `DoubletCalls` holds the scored barcodes as
@@ -128,7 +128,7 @@ __all__ = [
 UNKNOWN = "UNKNOWN"
 
 #: scDblFinder's own documented minimum coverage: "it might be necessary to remove cells with a
-#: very low coverage (e.g. <200 reads) to avoid errors." Recorded so this adapter's declared
+#: very low coverage [...] to avoid errors" (its example is two hundred reads). Recorded so this adapter's declared
 #: contract matches modules/03_light_floor and modules/04_doublets. It is applied as a default
 #: nowhere in this file; the floor arrives as an argument or not at all.
 SCDBLFINDER_MIN_UMI = 200
@@ -1399,7 +1399,7 @@ def sweep(dbr_sd_values, rscript, mtx_dirs, out_dir, dbr, seed, log_dir, executo
     """Run the dbr.sd sweep across every sample and return the numbers step 4 judges.
 
     The sweep exists because a flat rate is suspect rather than reassuring: at the package
-    default scDblFinder returned 10.04-10.79% across libraries differing 2.5-fold in size, and
+    default scDblFinder returned nearly the same rate across libraries differing severalfold in size, and
     that flatness belonged to the prior rather than to the data. Only a sweep separates the two,
     which is why `dbr.sd` is DERIVED and not a command-line argument.
 
@@ -1411,8 +1411,8 @@ def sweep(dbr_sd_values, rscript, mtx_dirs, out_dir, dbr, seed, log_dir, executo
                     per_sample_rate=s["per_sample_rate_over_scored"],
                     deep_decile_rate=s["deep_decile"]["rate_over_scored"])
 
-    `per_sample_rate_over_scored` names its denominator because the same calls give 7.52% of
-    nuclei scored and 5.70% of all cells, and a rate compared against a published band without
+    `per_sample_rate_over_scored` names its denominator because the same calls give one rate over
+    the nuclei scored and a lower one over all cells, and a rate compared against a published band without
     saying which it is, is not a comparison. `deep_decile` is None unless `umi_by_barcode` was
     supplied, rather than 0.0: not computed is not the same as computed and small, and
     `recommend()` reads a missing decile as no evidence rather than as reassurance.
@@ -1550,7 +1550,7 @@ class ScDblFinderDetector:
       min_umi_floor               200, "to avoid errors" - the only one of the four common tools
                                   to put a number on it
       imports_rate_prior          yes, and its default is the 10x loading formula, which on a
-                                  non-10x cohort tracked library size at r = 0.872
+                                  non-10x cohort tracked library size closely
 
     `score()` applies no floor of its own. The protocol forbids subsetting the input, so a
     scoring set that still contains empty droplets is refused rather than quietly trimmed:

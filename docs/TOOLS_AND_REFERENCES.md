@@ -26,7 +26,7 @@ filtered by `celescope utils mkgtf` with its **default attributes, which retain 
 release from `SPECIES`, `ASSEMBLY` and `ENSEMBL_RELEASE`, and refuses to start without all three: none
 has a default.
 
-That row records **34,290 genes**, and the count is the point of recording it. A gene count is the
+That row records **the index's gene count**, and the count is the point of recording it. A gene count is the
 cheapest available check that an index is the one the registry claims: rebuild from the same
 release with the same `mkgtf` attributes and it must come out identical. A different count means
 the release, the filter attributes or the annotation differs from what was declared, and every

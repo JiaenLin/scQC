@@ -72,7 +72,7 @@
 #     out_csv   destination; written atomically via a .partial file and renamed
 #     dbr       expected doublet rate. DECLARED by the platform; there is no default here and
 #               there is no fallback to scDblFinder's 10x loading formula, which on a Singleron
-#               cohort tracked library size at r = 0.872
+#               cohort tracked library size closely
 #     dbr.sd    the uncertainty on that rate, or the literal token `default` to omit the
 #               argument entirely and let the installed package apply its own
 #     seed       integer; set.seed() is called with it immediately before scDblFinder

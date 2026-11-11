@@ -957,7 +957,7 @@ def _var_column(var, candidates: Sequence[str]) -> list | None:
     identifiers from var_names, or missing symbols from ids - produces a gene axis that is
     labelled as one kind of key while holding the other, and nothing downstream can detect
     it: the audit compared Ensembl accessions against gene symbols for exactly this reason
-    and reported 33,824 of 34,290 genes as absent from the file they came from.
+    and reported nearly every gene as absent from the file it came from.
     """
     for name in candidates:
         if name in var.columns:
@@ -1498,7 +1498,7 @@ def parse_metrics(h5_path: str | Path,
     # compared against each other. Which is what happened: a MatrixMarket triple carries Ensembl
     # identifiers in the first column of features.tsv, while a converted .h5ad carrying no
     # `gene_ids` has its identifiers filled in from `var_names`, which are symbols. Unique on both
-    # sides, both chosen, and 33,824 of 34,290 genes reported "missing" - a claim that the two
+    # sides, both chosen, and nearly every gene reported "missing" - a claim that the two
     # files are unrelated, produced by comparing accession numbers against gene symbols.
     #
     # So candidates are tried as PAIRS and the first that both indexes and contains the denoised
@@ -1825,7 +1825,7 @@ def _read_metrics_csv(path: Path) -> dict:
     a column that happened to be in the right place is indistinguishable from a measured one.
 
     THE TWO-COLUMN CASE IS THE ONE THAT WAS WRONG. The wide-form test required more than two
-    columns, so `fraction_counts_removed,n_cells` over `0.09,4218` - a perfectly ordinary
+    columns, so `fraction_counts_removed,n_cells` over `0.10,5000` - a perfectly ordinary
     header-plus-one-row table with two columns - fell through to the long-form branch and was
     read as `{"fraction_counts_removed": "n_cells", "0.09": "4218"}`. The removal fraction then
     appeared to be the string `n_cells`, which `parse_learning_curve` reports as a field that

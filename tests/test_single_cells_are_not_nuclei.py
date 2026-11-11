@@ -49,7 +49,7 @@ class _P:
 def _row(s, assay, **extra):
     return {"sample": s, "platform": "10x", "species": "homo_sapiens",
             "reference": "homo_sapiens/GRCh38", "assay": assay, "matrix": f"/d/{s}/raw",
-            "genotype": "WT" if s.endswith("1") else "Mut", **extra}
+            "genotype": "REF" if s.endswith("1") else "ALT", **extra}
 
 
 def _build(rows, mode="evidence"):
@@ -474,7 +474,7 @@ if HAVE:
         cols = ["sample", "platform", "species", "reference", "assay", "matrix", "aligner_cells",
                 "genotype", "mt_prefix", "ribo_pattern", "dbr", "dbr_sd"]
         rows = []
-        for i, s in enumerate(("WT_1", "MUT_1")):
+        for i, s in enumerate(("REF_1", "ALT_1")):
             X, bcs, called = _cohort_counts(10 + i)
             _write_10x(td / s / "raw", X, bcs)
             _write_10x(td / s / "filtered", X[[bcs.index(b) for b in called]], called)
@@ -483,7 +483,7 @@ if HAVE:
             rows.append([s, "10x", "homo_sapiens", "homo_sapiens/GRCh38",
                          " scrna" if i == 0 else "SCRNA",
                          str(td / s / "raw"), str(td / s / "filtered"),
-                         "WT" if s.startswith("WT") else "Mut", "MT-", "^RP[SL]", "0.05", "0.05"])
+                         "REF" if s.startswith("REF") else "ALT", "MT-", "^RP[SL]", "0.05", "0.05"])
         sheet.write_text("\t".join(cols) + "\n" + "".join("\t".join(r) + "\n" for r in rows))
         reg = td / "registry.tsv"
         reg.write_text("species\tbuild\tpath\nhomo_sapiens\tGRCh38\t-\n")
@@ -511,7 +511,7 @@ if HAVE:
             fails.append(f"D: no results directory; the run stopped before step 1:\n{log[-1500:]}")
         else:
             R = res[0]
-            for s in ("WT_1", "MUT_1"):
+            for s in ("REF_1", "ALT_1"):
                 h5 = R / "objects" / f"{s}_ambient.h5"
                 if not h5.exists():
                     fails.append(f"D2: {h5.name} was not written:\n{log[-1500:]}")
@@ -526,7 +526,7 @@ if HAVE:
             else:
                 with open(cc, encoding="utf-8") as fh:
                     got = {r["sample"]: r for r in csv.DictReader(fh)}
-                for s in ("WT_1", "MUT_1"):
+                for s in ("REF_1", "ALT_1"):
                     r = got.get(s) or {}
                     if r.get("aligner") != "160" or r.get("denoiser") != "" or r.get("lost") != "":
                         fails.append(f"D3: {s} cell_calls row {r}; the aligner's 160 with the "

@@ -228,9 +228,9 @@ else:
     payload = {
         "run": {"project": "regression", "mode": "evidence",
                 "started": "2026-08-09T10:00:00+00:00"},
-        "deliverable": {"n_kept": 127050, "n_in": 244968, "unit": "nuclei"},
+        "deliverable": {"n_kept": 110000, "n_in": 200000, "unit": "nuclei"},
         "gates": [{"step": "05_quality", "check": "floor in bounds", "severity": "ok",
-                   "message": "350 UMI", "detail": ["derived from the valley"]}],
+                   "message": "a floor of 350", "detail": ["derived from the valley"]}],
         "figures": {
             "F7": {"data": {"distributions": {"s1": {"before": [1, 5, 20, 100],
                                                      "after": [20, 100, 300]}},

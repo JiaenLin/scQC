@@ -20,7 +20,7 @@ input would otherwise turn into a silent clearance.
 
 | Filter | Step | Threshold is | Scope |
 |---|---|---|---|
-| [Light floor](#light-floor) | 3 | declared, defaults to 200 UMI | cohort |
+| [Light floor](#light-floor) | 3 | declared, default 200 (counts) | cohort |
 | [UMI floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley | one cohort constant |
 | [Gene floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley | one cohort constant |
 | [Mitochondrial ceiling](#mitochondrial-ceiling) | 5 | derived per library, bounded | per library |
@@ -143,7 +143,7 @@ called cells - the aligner's, or the denoiser's on a library supplied already de
 bounds, chosen by the PI to be lenient — "make reasonable QC, do not be too harsh, avoid removing
 true signal" — and the report classes them `DECLARED`, never `DERIVED`.
 
-The bounds are the real guard. On one cohort, two libraries' minima wandered to ~1,040 UMI under a
+The bounds are the real guard. On one cohort, two libraries' minima wandered far above the valley under a
 narrower kernel; the upper bound rejects that on sight, and no depth test is needed to catch it.
 Where per-library valleys differ by more than **2.0×**, the spread is reported for review: a
 single constant fits some libraries better than others and the poorest-fit library should be
@@ -234,9 +234,9 @@ step read two keys nothing wrote, and the assay it bounded by was always `snrna`
 > because the earlier reasoning was not wrong about its own evidence.
 >
 > It was 5–25% until 2026-08-11, when the floor was raised to 10%: at 5% a cohort's applied ceiling
-> varied **4.08×** (6.12% to 25.00%), and the nuclei a 6% cut removed had a median depth 0.88–0.96×
-> that of retained nuclei in three of the four affected libraries — ordinary cells, not debris.
-> Where the dominant cell type of a tissue is also its most mitochondria-rich, a 6% ceiling
+> varied **severalfold**, and the nuclei a cut just above 5% removed had nearly the median depth of
+> retained nuclei in most of the affected libraries — ordinary cells, not debris.
+> Where the dominant cell type of a tissue is also its most mitochondria-rich, a ceiling just above 5%
 > preferentially removes the cell type such a study is about.
 >
 > On **2026-08-13** it became 5–10% on the argument at the head of this section. Every measurement
@@ -272,9 +272,9 @@ fires hardest when an analyst has deliberately narrowed the bound, which is legi
 **The spread of the applied ceiling is reported, and reviewed above `CEILING_SPREAD_REVIEW`
 (3.0×).** This is not implied by the design differential: the differential asks whether removal
 falls evenly across the arms of the design, the spread asks whether one filter is treating samples
-of one experiment alike at all. A cohort can pass the first while its ceiling varies fourfold —
-which is exactly how a 6.12% library and a 25.00% library came to sit in one deliverable with
-neither check objecting.
+of one experiment alike at all. A cohort can pass the first while its ceiling varies severalfold —
+which is exactly how a library with a low ceiling and one with a ceiling several times higher came
+to sit in one deliverable with neither check objecting.
 
 ### Which population the quartiles are taken over
 
@@ -293,9 +293,8 @@ below 3, `MAD_K_BOUNDS_BY_ASSAY`) and **below
   a droplet that is more than half mitochondrial by count is not a cell with high mitochondrial
   content. On a nuclear preparation it cannot be: the mitochondrial genome is not in the nucleus.
   Those droplets are a different distribution, and letting them set the MAD widens the fence that
-  decides which real cells survive. On the calibration cohort's 2,462 such droplets: median
-  88–122 genes against a population median of 339–734, median 248–351 UMI, and **not one of them
-  survived the full filter** — they could reach the deliverable through no route except this one.
+  decides which real cells survive. On the calibration cohort's such droplets: a small fraction of the
+  population's median genes and UMI, and **not one of them survived the full filter** — they could reach the deliverable through no route except this one.
 
 Deriving it over every called barcode instead produces ceilings materially higher, and looser on
 exactly the cells the ceiling is supposed to police.

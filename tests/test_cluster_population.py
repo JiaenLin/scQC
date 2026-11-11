@@ -1,8 +1,8 @@
 """Step 6 must cluster the cells that reach the deliverable, not the droplet matrix.
 
 The defect this guards: `_op_cluster` read the denoised FULL DROPLET object, while
-`cluster_flags.py` specifies "the step-5 object: quality-filtered". On one cohort that left 1,398
-of 1,531 clusters holding no cell that reached the deliverable, under-resolved the real cells, and
+`cluster_flags.py` specifies "the step-5 object: quality-filtered". On one cohort that left nearly
+every cluster holding no cell that reached the deliverable, under-resolved the real cells, and
 - because every criterion is a cluster median - made the libraries with the MOST droplet noise
 raise the FEWEST flags.
 

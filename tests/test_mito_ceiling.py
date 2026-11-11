@@ -195,7 +195,8 @@ check("a library is never counted in both directions",
       not (set(w["clamped_lower"]) & set(w["clamped_upper"])))
 
 # Spread of the APPLIED ceiling - not implied by the design differential, and the property that
-# went unmeasured while a 6.12% library and a 25.00% library sat in one deliverable.
+# went unmeasured while a library with a low ceiling and one with a ceiling several times higher
+# sat in one deliverable.
 check("ceiling spread is reported", isinstance(w["ceiling_spread"], float))
 check("ceiling spread is max/min of the applied ceilings",
       abs(w["ceiling_spread"]
@@ -208,7 +209,7 @@ check("a spread above the review line is called out",
 
 # --- the differential check -----------------------------------------------------------------------
 print("\nassess_mito_removal()")
-design = {"diet": {f"lib{i}": ("chow" if i % 2 else "hfd") for i in range(6)}}
+design = {"diet": {f"lib{i}": ("std" if i % 2 else "alt") for i in range(6)}}
 a = quality.assess_mito_removal(tight, d, design=design, assay="snrna")
 check("reports an overall removal rate", 0.0 <= a["overall_rate"] <= 1.0)
 check("reports a per-arm ratio", "diet" in a["arms"] and a["arms"]["diet"]["ratio"] is not None)

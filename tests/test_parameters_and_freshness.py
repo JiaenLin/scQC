@@ -51,7 +51,7 @@ def fake(decisions=None, tools=None, samples=None, project=None):
         project=Path(project) if project else Path("."),
         results_by_key={
             "05_quality": SimpleNamespace(metrics={"umi_proposed": 350, "genes_proposed": 260}),
-            "07_apply": SimpleNamespace(metrics={"ceilings": "10.00-20.51% across 10 libraries"}),
+            "07_apply": SimpleNamespace(metrics={"ceilings": "5.00-9.50% across 6 libraries"}),
         })
 
 

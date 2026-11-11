@@ -13,24 +13,24 @@ sys.path.insert(0, str(HERE.parent / "modules" / "01_ambient"))
 from lr_policy import assess_cohort, compare_after_halving # noqa: E402
 
 # The cohort experiment: all ten libraries at the package default 1e-4. treat_02 is the
-# degenerate fit - 8.3% of counts removed against 11-18% elsewhere, convergence 1.71 against
-# 0.35-0.73. The other nine are spread across the recorded ranges.
+# degenerate fit - a clearly smaller share of counts removed than elsewhere, a convergence
+# indicator several times the others'. The rest are spread across ordinary ranges (synthetic).
 COHORT_DEFAULT = {
-    "ctrl_01": {"fraction_removed": 0.184, "convergence_indicator": 0.52},
-    "ctrl_02": {"fraction_removed": 0.155, "convergence_indicator": 0.44},
-    "treat_01": {"fraction_removed": 0.171, "convergence_indicator": 0.61},
-    "treat_02": {"fraction_removed": 0.083, "convergence_indicator": 1.71}, # degenerate
-    "ctrl_03": {"fraction_removed": 0.167, "convergence_indicator": 0.35},
-    "ctrl_04": {"fraction_removed": 0.155, "convergence_indicator": 0.49},
-    "ctrl_05": {"fraction_removed": 0.130, "convergence_indicator": 0.58},
-    "treat_03": {"fraction_removed": 0.143, "convergence_indicator": 0.73},
-    "treat_04": {"fraction_removed": 0.128, "convergence_indicator": 0.66},
-    "treat_05": {"fraction_removed": 0.113, "convergence_indicator": 0.55},
+    "ctrl_01": {"fraction_removed": 0.18, "convergence_indicator": 0.5},
+    "ctrl_02": {"fraction_removed": 0.16, "convergence_indicator": 0.45},
+    "treat_01": {"fraction_removed": 0.17, "convergence_indicator": 0.6},
+    "treat_02": {"fraction_removed": 0.08, "convergence_indicator": 1.8},  # degenerate
+    "ctrl_03": {"fraction_removed": 0.165, "convergence_indicator": 0.4},
+    "ctrl_04": {"fraction_removed": 0.155, "convergence_indicator": 0.5},
+    "ctrl_05": {"fraction_removed": 0.13, "convergence_indicator": 0.55},
+    "treat_03": {"fraction_removed": 0.14, "convergence_indicator": 0.7},
+    "treat_04": {"fraction_removed": 0.125, "convergence_indicator": 0.65},
+    "treat_05": {"fraction_removed": 0.115, "convergence_indicator": 0.55},
 }
 # At half the rate, 5e-5, the outlier becomes ordinary.
 COHORT_HALF = {k: dict(v) for k, v in COHORT_DEFAULT.items()}
-COHORT_HALF["treat_02"] = {"fraction_removed": 0.148, "convergence_indicator": 0.62}
-COHORT_HALF["treat_03"] = {"fraction_removed": 0.131, "convergence_indicator": 0.61}
+COHORT_HALF["treat_02"] = {"fraction_removed": 0.15, "convergence_indicator": 0.60}
+COHORT_HALF["treat_03"] = {"fraction_removed": 0.135, "convergence_indicator": 0.60}
 
 fails = []
 print("Step 1b - learning-rate policy\n" + "=" * 74)

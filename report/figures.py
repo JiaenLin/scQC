@@ -19,7 +19,7 @@ THE RULES EVERY FUNCTION HERE OBEYS, AND THE READING EACH ONE PREVENTS
   never-examined         Its own colour AND its own hatch, never merged into a negative. A
                          barcode nobody scored is not a barcode that passed.
   denominators           Every rate carries the population it is a rate OF, in the axis label.
-                         5.70% of all cells and 7.52% of scored cells are both true and only one
+                         A rate over all cells and a rate over scored cells are both true and only one
                          of them is comparable with a published band.
   one scale              Panels meant for comparison share limits. A per-panel scale makes a 4x
                          difference look identical to a 4% one.

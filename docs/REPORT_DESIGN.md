@@ -85,10 +85,11 @@ raised it. Not an appendix. If a run has an unresolved contradiction, the reader
 the figures.
 
 ```
-DELIVERABLE   127,050 of 244,968 called cells   (48.1% removed)
+(illustrative numbers)
+DELIVERABLE   N of M called cells   (x% removed)
 REFUSE        none
 REVIEW        step 2  one library lost 5.0% of aligner calls to the denoiser
-              step 7  41 nuclei survive inside a cluster that is 74.4% doublet
+              step 7  n nuclei survive inside a cluster that is mostly doublets
 OPEN          tier-2 tolerance UNMEASURED - run-to-run spread never quantified
 ```
 
@@ -229,7 +230,7 @@ cannot be tested, which is why it is reported here instead. The panel beside the
 the samplesheet as a grid, so the classification can be checked by eye.
 
 **Arms.** Where factors are aliased, the arm is the partition they share, and its label carries
-every aliased factor's level — `aged / GEXSCOPE-V2 / batch A`. F17 and F18 compare arms.
+every aliased factor's level — `arm-1 / chem-v2 / batch-A`. F17 and F18 compare arms.
 
 **F17 — every QC metric across the arms.** One panel per metric, drawn over the nuclei the filter
 kept. Each panel shows:

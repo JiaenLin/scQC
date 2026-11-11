@@ -10,18 +10,18 @@ from light_floor import FloorRefusal, assess # noqa: E402
 fails = []
 print("Step 3 - light floor and coverage bookkeeping\n" + "=" * 74)
 
-print("A. the calibration cohort's coverage, as run")
-c = assess(n_total=244968, n_scored=185646, floor=200, quality_floor=350,
+print("A. a synthetic cohort's coverage, as run")
+c = assess(n_total=200000, n_scored=150000, floor=200, quality_floor=350,
            max_unscored_umi=199, min_scored_umi=200, n_kept_unscored=0)
 print(c)
-if c.n_unscored != 59322 or round(c.pct_scored, 2) != 75.78:
-    fails.append("A: the calibration cohort's coverage does not reproduce")
+if c.n_unscored != 50000 or round(c.pct_scored, 2) != 75.0:
+    fails.append("A: the coverage bookkeeping does not add up (200,000 in, 150,000 scored)")
 
-print("\nB. the denominator must travel with the rate (22,656 called)")
-print(" " + c.rate(22656, "scored"))
-print(" " + c.rate(22656, "all"))
+print("\nB. the denominator must travel with the rate (18,000 called)")
+print(" " + c.rate(18000, "scored"))
+print(" " + c.rate(18000, "all"))
 try:
-    c.rate(22656, denominator="")
+    c.rate(18000, denominator="")
     fails.append("B: a rate with no denominator must be refused")
 except ValueError as e:
     print(f" [REFUSED] bare rate: {e}")
@@ -29,7 +29,7 @@ except ValueError as e:
 print("\n" + "-" * 74)
 print("C. the light floor creeping up to the quality floor")
 try:
-    assess(n_total=244968, n_scored=150000, floor=350, quality_floor=350)
+    assess(n_total=200000, n_scored=150000, floor=350, quality_floor=350)
     fails.append("C: floor == quality floor must refuse")
 except FloorRefusal as e:
     print(f"[REFUSED] {str(e)[:190]}...")
@@ -42,8 +42,8 @@ except FloorRefusal as e:
     print(f"[REFUSED] {str(e)[:170]}...")
 
 print("\nE. retained nuclei that were never examined")
-c2 = assess(n_total=244968, n_scored=185646, floor=200, quality_floor=250,
-            n_kept_unscored=4127)
+c2 = assess(n_total=200000, n_scored=150000, floor=200, quality_floor=250,
+            n_kept_unscored=4000)
 print(c2)
 if "UNKNOWN, not negative" not in str(c2):
     fails.append("E: retained-unscored nuclei must be marked UNKNOWN, not negative")
@@ -51,7 +51,7 @@ if "UNKNOWN, not negative" not in str(c2):
 print("\n" + "=" * 74)
 if fails:
     print("FAILED:"); [print(" -", x) for x in fails]; raise SystemExit(1)
-print("proved: coverage reproduces at 185,646 of 244,968 scored, the floor boundary is clean")
+print("proved: the coverage bookkeeping adds up, the floor boundary is clean")
 print("and no retained nucleus went unscored - and a rate refuses to be quoted without its")
-print("denominator, because 5.70% and 7.52% are BOTH true of the same count and comparing")
+print("denominator, because a rate over all cells and one over scored cells are BOTH true and comparing")
 print("either against a published band means nothing until you know which one it is")

@@ -15,7 +15,7 @@ debris+debris, which are not doublets, and the null is calibrated on the wrong t
 the tools puts a number on it:
 
     scDblFinder: "it might be necessary to remove cells with a very low coverage
-                  (e.g. <200 reads) to avoid errors."
+                  [...] to avoid errors." (its example is two hundred reads)
 
 The same vignette records the hard failure behind it - a 'Size factors should be positive' error
 "if you have some cells that have zero reads (or a very low read count, leading to zero after
@@ -37,12 +37,12 @@ TWO FAILURES THIS STEP CAUSES IF NOBODY WATCHES IT
 
   1  "NOT CALLED" IS NOT "NOT EXAMINED". Colour the never-scored nuclei the same grey as nuclei
      the tools looked at and cleared, and absence of a call reads as evidence of absence. In the
-     calibration cohort that is 59,322 nuclei, 24% of the set. The unscored set is therefore
+     calibration cohort that was a large share of the set. The unscored set is therefore
      carried as its own state and is never folded into the negatives.
 
   2  A RATE WITHOUT ITS DENOMINATOR IS NOT COMPARABLE. In the calibration cohort the doublet
-     rate is 5.70% against all denoised cells and 7.52% against the nuclei actually scored,
-     because 24% of the first denominator had never been examined. Both numbers are true;
+     rate against all denoised cells was markedly lower than against the nuclei actually scored,
+     because part of the first denominator had never been examined. Both numbers are true;
      quoting one against a published band without saying which it is, is not. So a rate
      computed downstream carries its denominator with it and cannot be printed without one.
 """

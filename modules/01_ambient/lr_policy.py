@@ -14,12 +14,12 @@ The same diagnostics answer different questions depending on how many libraries 
 Testing the learning rate on a single library is not merely weak, it misleads. CellBender's own
 report can advise halving because of a period of motion in the wrong direction near some epoch;
 the half-rate run can repeat the same complaint a few epochs earlier; the two denoised matrices
-can agree at r = 0.9999; and the half rate can call thousands FEWER cells. Every one of those
+can agree almost perfectly; and the half rate can call many FEWER cells. Every one of those
 observations is equally compatible with the default being right and with it being wrong.
 
-Beside its siblings the same evidence is legible. One library removing 8.3% of its counts where
-the other nine remove 11-18%, with a convergence indicator of 1.71 against 0.35-0.73, is a
-degenerate fit; at half the rate it becomes ordinary. On its own that library produced a matrix,
+Beside its siblings the same evidence is legible. One library removing a clearly smaller share of
+its counts than every other library of its run, with a convergence indicator several times
+theirs, is a degenerate fit; at half the rate it becomes ordinary. On its own that library produced a matrix,
 a report and a plausible cell count - it looked exactly like a result.
 
 Two lessons the pipeline has to encode, and they pull in opposite directions:

@@ -1,67 +1,67 @@
 # The calibration cohort
 
-Every threshold in this pipeline that is not a published default was measured against one real
-dataset. This file says what that dataset was, what it can support, and — more importantly — what
-it cannot.
+Every threshold in this pipeline that is not a published default was first measured against one
+real dataset. This file says what kind of dataset that was, what was calibrated on it and how, what
+it can support, and - more importantly - what it cannot.
 
 ## What it was
 
-Ten single-nuclei RNA-seq libraries of a solid tissue, in a two-factor design with five libraries
-per arm of the factor used in the differential checks. Droplet-based 3' chemistry, two chemistry
-versions within the cohort, intron-inclusive quantification. 305,425 droplets analysed, 244,968
-called cells before QC.
+Single-nuclei RNA-seq libraries of a solid tissue, in a two-factor design with replicate libraries
+in each arm of the factor used in the differential checks. Droplet-based 3' chemistry, two
+chemistry versions within the cohort, intron-inclusive quantification.
 
-It is **unpublished**, so it is not named here: its identifying details — the study, the sample
-names, the species, the tissue, and what its design factor actually was — are absent from this
-repository. The libraries are referred to as `ctrl_01…ctrl_05` and `treat_01…treat_05`, and the
-design factor is a generic two-level `condition`. That renaming is cosmetic: the measured values
-below are the real ones.
+It is **unpublished**, so it is not named here, and nothing of it is carried: its study, sample
+names, species, tissue, design levels and MEASURED VALUES are all absent from this repository.
 
 One thing that does name a species is the worked registry row in `docs/TOOLS_AND_REFERENCES.md`,
 and it is worth saying what it is so it is not read as a leak. It is an **example of a registry
-entry** — it shows what a complete one has to record: species, build, the command that built it,
+entry** - it shows what a complete one has to record: species, build, the command that built it,
 the aligner version, the gene count and whether introns are retained. No registry ships with scQC:
 each project passes its own with `--registry`, and the tool falls back to none.
 
-## Why the numbers are here and the identity is not
+## Why the numbers are not here
 
-Removing the measurements along with the identity would have left the test suite asserting against
-invented values — and a test with fabricated fixtures passes exactly like a real one, which is the
-worst of both worlds. What identifies a study is its name, its samples, its species and tissue and
-its design semantics. A cell count attached to `treat_02` identifies nothing.
+Until 2026-11-11 this file and the test suite carried the cohort's real measurements - its cell
+and droplet counts, per-library ceilings, rates and spreads - on the argument that a cell count
+attached to an anonymous library identifies nothing. It does: a generated word list made from the
+cohort's own records finds those numbers, and a value that belongs to one dataset is exactly what
+a portable tool must not carry (harness autodev W048). The measurements are the calibration
+cohort's and live in its records; this file keeps what was calibrated, how, and what the
+measurement showed, in words. The tests assert against synthetic values whose expected results
+are computed, not against one cohort's numbers.
 
 The design *structure* is kept, as a generic two-level factor, because two of the pipeline's gates
 exist specifically to catch a loss that falls on one arm of a design and cannot be exercised by a
 fixture that has no arms.
 
-## What was measured, and how stable it was
+## What was calibrated, and how stable it was
 
-| parameter | value here | varied across libraries | class |
+| parameter | how it is set | how it varied across the cohort's libraries | class |
 |---|---|---|---|
-| ambient learning rate | 5e-5 | one cohort-wide decision | DERIVED per cohort |
-| UMI floor | 350 | **274–473** per library | DERIVED per dataset |
-| gene floor | 250 | bimodal in every library | DERIVED per dataset |
-| mito ceiling | **per library, 5.00–10.00%** | **4× spread in Q3** | **DERIVED per library**; bound and, on snRNA, `k` both DECLARED |
-| doublet `dbr.sd` | 0.06 | default was prior-driven | DERIVED per dataset |
-| cluster A / B / C | 0.5× / 15% / 50% | proposed against distributions | **ADJUDICATED** |
-| cell-call REVIEW / REFUSE | 5% / 10% | one library at 5.0% | DECLARED |
-| design differential refusal | 3× | observed 1.04–1.08× | DECLARED |
+| ambient learning rate | one cohort-wide decision from the per-library fits | - | DERIVED per cohort |
+| UMI floor | the density valley | substantially, per library | DERIVED per dataset |
+| gene floor | the density valley | bimodal in every library | DERIVED per dataset |
+| mito ceiling | **per library**, inside a declared bound | **severalfold in Q3** | **DERIVED per library**; bound and, on snRNA, `k` both DECLARED |
+| doublet `dbr.sd` | the sweep | the default was prior-driven | DERIVED per dataset |
+| cluster A / B / C | 0.5x / 15% / 50% | proposed against distributions | **ADJUDICATED** |
+| cell-call REVIEW / REFUSE | 5% / 10% | one library on the REVIEW line | DECLARED |
+| design differential refusal | 3x | observed far below it | DECLARED |
 
 The column that matters is the last one. **Only the DECLARED rows are safe to carry to another
 dataset unchanged.** Everything marked DERIVED must be re-derived, and the per-library spread in
-column three is why: a UMI floor that ranged 274–473 *within a single cohort* has no business
+column three is why: a UMI floor that moved that much *within a single cohort* has no business
 being a constant across cohorts.
 
 ### The mitochondrial ceiling changed class, and it is worth saying why
 
-It was **ADJUDICATED — "not derivable, no valley"** until the calibration cohort was measured
-against its own delivered object. The fixed 40% ceiling in use there removed **zero** nuclei: the
+It was **ADJUDICATED - "not derivable, no valley"** until the calibration cohort was measured
+against its own delivered object. The fixed 40% ceiling in use there removed **no** nuclei: the
 count floors had already taken every nucleus it would have taken. A ceiling that removes nothing
 is not permissive, it is absent, and it had been reported as protection.
 
 "No valley" was true and the conclusion drawn from it was wrong. The valley route does not apply
-to a unimodal distribution — but that rules out *one* derivation, not all of them. Each library's
-own upper Tukey fence, `Q3 + 1.5 × IQR`, needs no valley and no free parameter.
+to a unimodal distribution - but that rules out *one* derivation, not all of them. Each library's
+own upper Tukey fence, `Q3 + 1.5 x IQR`, needs no valley and no free parameter.
 
 What remains adjudicated is narrower and more honest: whether a mitochondria-high **population**
 is damage or a mitochondria-rich cell type. That needs an identity, so the pipeline emits
@@ -69,32 +69,32 @@ cluster-level medians and stops.
 
 Two things this row should teach a reader of another cohort:
 
-- **No ceiling range here is transferable.** Each is what ten libraries of one cohort produced
-  under one rule. The **procedure** ships; the numbers do not.
-- **The bound is DECLARED and must be re-declared** in the analyst's own words — and on snRNA so is
+- **No ceiling range is transferable.** Each is what the libraries of one cohort produced under
+  one rule. The **procedure** ships; the numbers do not.
+- **The bound is DECLARED and must be re-declared** in the analyst's own words - and on snRNA so is
   `k`. See the 2026-08-13 note below: what stays adjudicated differs by assay, because on nuclei a
   mitochondria-high population is not a cell type question at all.
 
-### Revised 2026-08-11 — Tukey calibrates, MAD applies, and `k` is derived
+### Revised 2026-08-11 - Tukey calibrates, MAD applies, and `k` is derived
 
-The account above describes the fence as `Q3 + 1.5 × IQR` applied directly. That is no longer what
+The account above describes the fence as `Q3 + 1.5 x IQR` applied directly. That is no longer what
 is applied, and the reasoning for the change is worth more than the change itself.
 
-**What was wrong with applying Tukey.** Nothing statistically — it is the better estimator for a
-right-skewed tail, and on this cohort it gave the most even *removal* of anything tested (1.09×
-across the interaction arm, unbounded). The objection is biological. Tukey adapts without limit to
-a wide tail, and on one library it adapted to **25.88%**. A ceiling that high is a statement about
-that prep, not about what a nucleus can be. Where a tissue's dominant cell type is also an
-unusually mitochondria-rich and fragile one — common in solid tissue — letting the ceiling track a
-library's own tail that far means the filter's severity is set by prep quality, and set loosest
-exactly where the population at risk is largest.
+**What was wrong with applying Tukey.** Nothing statistically - it is the better estimator for a
+right-skewed tail, and on this cohort it gave the most even *removal* of anything tested
+(unbounded). The objection is biological. Tukey adapts without limit to a wide tail, and on one
+library it adapted far past any bound. A ceiling that high is a statement about that prep, not
+about what a nucleus can be. Where a tissue's dominant cell type is also an unusually
+mitochondria-rich and fragile one - common in solid tissue - letting the ceiling track a library's
+own tail that far means the filter's severity is set by prep quality, and set loosest exactly where
+the population at risk is largest.
 
 **Why the spread is prep, not biology.** The decisive measurement is available because the design
-has replicates: the fence varied **more between two animals of the same group (3.87×) than between
-the design groups (2.59×)**. A biological replicate cannot differ by more than the design and
-still have that variation be the design. The UMI valley is the control and behaves oppositely —
-within-group 1.33× against between-group 1.52× — which is why *it* collapses safely to one cohort
-constant and the mitochondrial fence does not.
+has replicates: the fence varied **more between two animals of the same group than between the
+design groups**. A biological replicate cannot differ by more than the design and still have that
+variation be the design. The UMI valley is the control and behaves oppositely - it varied less
+within a group than between groups - which is why *it* collapses safely to one cohort constant and
+the mitochondrial fence does not.
 
 **Tukey is retained as the *calibration instrument* and never applied:**
 
@@ -105,69 +105,69 @@ k   = round(median(k_i))                                     scRNA: ONE cohort c
 raw = median + k * 1.4826 * MAD                              applied
 ```
 
-On this cohort `k_i` ran **3.44 to 6.56** (1.90×) for a median of **4.26**. The per-library k is a
-perfect monotone function of skew (`IQR / 1.4826·MAD`, which is 1.349 for a normal distribution and
-ran 1.59–2.82 here) — which is also why no single k reproduces Tukey, and why a derived cohort
-value is rounded to an integer rather than carried to a decimal it cannot support.
+On this cohort the per-library `k_i` spread widely. The per-library k is a perfect monotone
+function of skew (`IQR / 1.4826*MAD`, which is 1.349 for a normal distribution and ran well above
+it here) - which is also why no single k reproduces Tukey, and why a derived cohort value is
+rounded to an integer rather than carried to a decimal it cannot support.
 
 > **What this cohort calibrated is no longer what snRNA applies.** On **2026-08-13** the two assays
-> were separated: `snrna` moved to a **5–10% bound at a DECLARED k = 3**, `scrna` kept 10–30% with k
+> were separated: `snrna` moved to a **5-10% bound at a DECLARED k = 3**, `scrna` kept 10-30% with k
 > derived. A nucleus contains no mitochondria, so `pct_counts_mt` on that assay measures
-> cytoplasmic carry-over rather than the cell — deriving k from the tail would widen the fence for
+> cytoplasmic carry-over rather than the cell - deriving k from the tail would widen the fence for
 > exactly the cohorts whose preparations were dirtiest. See `docs/FILTERS.md`. **Everything below
 > describes the retired rule and is kept because it is the evidence the change was made against.**
 
-**Under the retired rule** — k = 4, bound 10–25% — this cohort gave ceilings **10.00–20.51%
-(2.05×)**, the bound binding in 4 of 10 libraries, all lower, so the result classified as `derived`
-rather than `bound_dominated`. Tukey flagged **the most skewed library** as the one place the two
-independent routes disagreed by more than 1.5×.
+**Under the retired rule** - k = 4, bound 10-25% - the bound bound in a minority of this cohort's
+libraries, all lower, so the result classified as `derived` rather than `bound_dominated`. Tukey
+flagged **the most skewed library** as the one place the two independent routes disagreed by more
+than 1.5x.
 
-**Under the applied rule** — k = 3, bound 5–10%, with the `mt < 50%` derivation cut also in place —
-the same ten libraries give ceilings **5.00–10.00% (2.00×)**, the bound binding in **5 of 10**
-(4 upper, 1 lower), still classified `derived` by one library. The Tukey-implied k is **4.15**,
-1.38× the applied 3, inside the 2× review line. Delivered nuclei fall by **5.9%** against the
-unbounded fence.
+**Under the applied rule** - k = 3, bound 5-10%, with the `mt < 50%` derivation cut also in place -
+the bound binds in about half of the same libraries, at both ends, and the result is still
+classified `derived`, by a margin of one library. The Tukey-implied k stays inside the 2x review
+line of the applied 3. Delivered nuclei fall by a few per cent against the unbounded fence.
 
 ### The trade this makes, measured, because it is not visible from the number
 
 Threshold evenness and removal evenness pull against each other, monotonically, across every rule
-tested on this cohort:
+tested on this cohort (in this order; the measured values are the cohort's):
 
 | rule | ceiling spread | removal differential (interaction arm) |
 |---|---|---|
-| cohort constant 12.65% | 1.00× | 2.77× |
-| **MAD k=3, bound 5–10 — applied (snRNA)** | **2.00×** | **1.58×** |
-| MAD k=4, bound 10–25 — *retired 2026-08-13* | 2.05× | 1.75× |
-| MAD k=5, bound 10–25 | 2.46× | 1.60× |
-| Tukey, bound 10–25 | 2.50× | 1.37× |
-| Tukey, unbounded | 4.23× | 1.09× |
+| one constant for the cohort | none | the largest |
+| **MAD k=3, bound 5-10 - applied (snRNA)** | moderate | moderate |
+| MAD k=4, bound 10-25 - *retired 2026-08-13* | moderate | moderate |
+| MAD k=5, bound 10-25 | larger | moderate |
+| Tukey, bound 10-25 | larger | smaller |
+| Tukey, unbounded | the largest | the smallest |
 
 The applied row carries the `mt < 50%` derivation cut and the rows below it do not, so it is not
 exactly comparable with them; it is shown in the same table because the trade is the point.
 
 Every step toward a more uniform *threshold* costs a less uniform *effect*. The reason is that the
-quantity being fenced genuinely varies — Q3 spreads 3.91× and IQR 4.75× across these libraries —
-so an estimator whose output spreads less is not being more consistent, it is under-adapting. The
-choice of where to sit on that curve is the analyst's, and it is a judgement about which error is
-worse for the study at hand. Here it was made deliberately in favour of the biological ceiling.
+quantity being fenced genuinely varies - Q3 and the IQR themselves spread severalfold across these
+libraries - so an estimator whose output spreads less is not being more consistent, it is
+under-adapting. The choice of where to sit on that curve is the analyst's, and it is a judgement
+about which error is worse for the study at hand. Here it was made deliberately in favour of the
+biological ceiling.
 
-**Two costs recorded rather than smoothed over.** The nuclei a ~6–7% ceiling was removing were
-indistinguishable from those it kept in three of four affected libraries (median depth 0.88–0.96×
-that of retained nuclei) — which is what motivated the floor. But in the fourth the band *did*
-look damaged (0.52×), so the floor admits ~173 questionable nuclei there. And because
-nuclei above 10% also carry normal depth in this cohort, nothing here establishes that 10% is
-where to stop — only that 6% was too low.
+**Two costs recorded rather than smoothed over.** The nuclei a ceiling just above the old 5% bound
+was removing were indistinguishable from those it kept in most of the affected libraries (nearly
+the median depth of retained nuclei) - which is what motivated the floor. But in one the band
+*did* look damaged, so the floor admits some questionable nuclei there. And because nuclei above
+10% also carry normal depth in this cohort, nothing here establishes that 10% is where to stop -
+only that the old floor was too low.
 
 ## What one cohort cannot establish
 
 Stated plainly, because this is the section that is usually omitted:
 
 - **Whether any of it generalises.** n = 1 cohort, one tissue, one species, one platform. Every
-  number above is an existence proof that the method works somewhere, not evidence of a range.
-- **The tier-2 tolerance.** The stochastic steps — ambient correction, doublet scoring — have a
+  result above is an existence proof that the method works somewhere, not evidence of a range.
+- **The tier-2 tolerance.** The stochastic steps - ambient correction, doublet scoring - have a
   run-to-run spread that has **never been measured**. Until a repeat run exists, the pipeline
   records that tolerance as `UNMEASURED` and will not assert one.
-- **Whether the gate thresholds are correctly placed.** The 5% / 10% cell-call lines and the 3×
+- **Whether the gate thresholds are correctly placed.** The 5% / 10% cell-call lines and the 3x
   design-differential line were set against distributions from this cohort and one accepted
   outcome. A threshold that has never fired in anger is a hypothesis.
 - **Anything about single-cell (as opposed to single-nuclei) data.** CellBender is mandatory for
@@ -194,29 +194,24 @@ implemented, line by line.
 0.3.0. Both had existed since 0.2.0. A document describing software that has moved on is the same
 defect this pipeline exists to catch, arriving in prose.)*
 
-## The clustering resolution — measured, 2026-08-13
+## The clustering resolution - measured, 2026-08-13
 
 The applied resolution is **2.0**, and the reason is criterion D. A doublet pocket is small; at a
 coarse resolution it dissolves into the lineage cluster around it and its doublet frequency is
-diluted to the library average. Swept over five resolutions on the calibration cohort:
-
-| resolution | 1.0 | 1.5 | **2.0** | 2.5 | 3.0 |
-|---|---|---|---|---|---|
-| clusters, all libraries | 126 | 156 | **188** | 233 | 279 |
-| clusters D flagged | 0 | 0 | **2** | 2 | 2 |
-
-The two D clusters at 2.0 are 74.5% and 72.3% doublet, deep, and mitochondria-poor — the
-heterotypic signature, invisible one step coarser. Nothing else in the check changed with
-resolution in a way that argued for a different default.
+diluted to the library average. Swept over five resolutions (1.0, 1.5, 2.0, 2.5, 3.0) on the
+calibration cohort, criterion D flagged nothing below 2.0 and the same pockets from 2.0 up, while
+the number of clusters grew with every step. The pockets D found at 2.0 are mostly doublets, deep,
+and mitochondria-poor - the heterotypic signature, invisible one step coarser. Nothing else in the
+check changed with resolution in a way that argued for a different default.
 
 **What the sweep did NOT support**, recorded because it was proposed and tested:
 
 - **A stopping rule on marker strength.** "Split until a cluster has no gene above AUC 0.6", used
-  by two published workflows for this tissue, fails in only 1 of 10 libraries anywhere below resolution
-  3.0 on this cohort. It does not constrain, and it is not adopted.
+  by two published workflows for this tissue, almost never fires anywhere below resolution 3.0 on
+  this cohort. It does not constrain, and it is not adopted.
 - **Higher resolution as a way to flag less.** It flags *more*: the share of the deliverable in a
-  flagged cluster rose from 3.50% at 1.0 to 5.57% at 3.0. Resolution redistributes flagging into
-  smaller units; it does not shrink it.
+  flagged cluster rose from the coarsest resolution to the finest. Resolution redistributes
+  flagging into smaller units; it does not shrink it.
 
-At 2.0 the smallest cluster in this cohort is exactly 3 cells, and `cluster_profile()` refuses
-below 3. It passes narrowly, and a different seed could put a library under that line.
+At 2.0 the smallest cluster in this cohort sits right at the line below which `cluster_profile()`
+refuses. It passes narrowly, and a different seed could put a library under that line.

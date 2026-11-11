@@ -473,7 +473,7 @@ def called_barcodes(path) -> list:
 
     Step 2 compares the aligner's cell call with the denoiser's, and the number that decides the
     gate is how many the aligner called that the denoiser did NOT - which needs the SETS, not two
-    counts. Two callers can agree on 21,000 cells and disagree about which 21,000.
+    counts. Two callers can agree on N cells and disagree about which N.
 
     Accepts what the two callers actually emit:
       * a directory holding `barcodes.tsv[.gz]` - CeleScope `outs/filtered`, CellRanger

@@ -251,8 +251,8 @@ class Pipeline:
 
         READ-ONLY. It builds a new list on each access, so `pipeline.findings.append(...)`
         appends to a throwaway and vanishes without error. Two callers did exactly that and
-        lost four findings between them - including the one saying 21,395 delivered nuclei sat
-        inside a flagged cluster. Use `record_findings()`, or `gate()` when there is a verdict.
+        lost findings between them - including the one saying how many delivered nuclei sat inside
+        a flagged cluster. Use `record_findings()`, or `gate()` when there is a verdict.
         """
         return [f for step in sorted(self._findings_by_step)
                 for f in self._findings_by_step[step]]
@@ -622,7 +622,7 @@ class Pipeline:
                     "jobs": self.jobs},
             # WHAT THE RUN PRODUCED, from the step that produced it. This said "no deliverable
             # was written; this run measured and did not apply" on every run that did not stop -
-            # including an apply run that had just written 117,021 nuclei to disk, because the
+            # including an apply run that had just written its deliverable to disk, because the
             # text was chosen from `stopped_after` alone and never consulted step 7 at all. The
             # counts are what the report's first block is built from, so a run's headline figure
             # was a sentence denying the run had produced anything.

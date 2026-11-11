@@ -9,11 +9,11 @@ WHY STEP 6 FEEDS THIS STEP AT ALL
 
 Built naively, step 6 is a dead end: it flags clusters, removes nothing, and step 7 applies
 per-cell criteria that never consult it. Measured on the calibration cohort, the gap that leaves
-is not small - 7,188 of the 7,734 nuclei in flagged clusters survive into the deliverable, 5.7%
-of it.
+is not small - nearly all of the nuclei in flagged clusters survive into the deliverable, a
+visible share of it.
 
-The sharpest case is 41 nuclei in a cluster that is 74.4% doublet and were NOT called doublets
-individually. That is precisely the residual the cited method's cluster rule exists to catch -
+The sharpest case is nuclei in a cluster that is mostly doublets and that were NOT called
+doublets individually. That is precisely the residual the cited method's cluster rule exists to catch -
 doublets that cluster TOGETHER and so escape a per-cell test - and the per-cell criteria cannot
 see it by construction.
 
@@ -22,7 +22,7 @@ uses it three ways:
 
   1 PRE-FLIGHT. A cluster-level contradiction blocks a clean report. If a >70%-doublet cluster
      has survivors, the per-cell doublet call is under-removing where doublets cluster together,
-     and saying "127,050 kept" without that is saying less than is known.
+     and saying "N kept" without that is saying less than is known.
   2 CARRIED FORWARD. Every retained nucleus keeps its cluster's flags. It costs nothing, and
      without it the next stage recomputes a clustering to ask a question already answered.
   3 OFFERED, NOT TAKEN. A cluster-level removal is prepared in full - what it removes, listed;
@@ -141,8 +141,8 @@ def preflight(cluster_profile, kept_total, d_cluster=D_CLUSTER) -> list:
                 f"the deliverable is unknown too"))
         # The share needs a denominator, and `max(kept_total, 1)` is not one. Called with a
         # retained total of zero - which is what a run that has written no deliverable has - it
-        # printed "21,395 of 0 retained nuclei (2139500.0%)". Nothing raised, and a percentage in
-        # the six figures is a number no file on disk contains.
+        # printed "N of 0 retained nuclei" with a percentage of N times a hundred. Nothing raised, and
+        # a percentage that size is a number no file on disk contains.
         share = (f"{surv:,} of {kept_total:,} retained nuclei "
                  f"({100 * surv / kept_total:.1f}%)"
                  if isinstance(kept_total, (int, float)) and kept_total > 0 else

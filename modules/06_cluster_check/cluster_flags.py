@@ -38,11 +38,11 @@ C alone is not a QC failure. In the calibration cohort every C-alone cluster was
 mitochondrial-marker-driven at normal-to-deep coverage - the signature of a mitochondria-rich
 cell type rather than of damage. A alone is low depth with INFORMATIVE markers, i.e. a genuine
 low-RNA population: some cell types carry less RNA by biology. The conjunction removes both
-false-positive classes - 22 clusters became 8.
+false-positive classes, and the flagged set shrank to the clusters that fail both.
 
 The cost is that the result now depends on two cut-points at once. In the calibration cohort one
-cluster sat at 15.67% mito (over B) and 45% markers (under C) and dropped out by five points on
-a single axis. So the continuous values ship beside the boolean, always: a FLAG column is a
+cluster sat over B on mito and under C on markers and dropped out by a few points on a single
+axis. So the continuous values ship beside the boolean, always: a FLAG column is a
 summary of two thresholds and a reader cannot see from it which one a cluster failed.
 
 C, FLAG AND WATCH ARE MISSING WHERE MARKERS WERE NOT COMPUTED - NEVER FALSE

@@ -1793,7 +1793,7 @@ def _quality_stage(task, pipeline, log):
     # drift apart, and this criterion adds no threshold anyone has to justify separately.
     #
     # ONE NUMBER FOR THE COHORT, the median of the per-library medians - equal weight per LIBRARY.
-    # Pooling every cell instead lets a 16,000-cell library outvote a 7,500-cell one, and the floor
+    # Pooling every cell instead lets a large library outvote a small one, and the floor
     # becomes a statement about how many nuclei each animal yielded rather than about nuclear
     # fractions. A PER-LIBRARY floor would be worse: it ADAPTS, so the library whose fractions run
     # low gets the loosest floor, keeps what a stricter library loses, and the criterion applies a
@@ -1898,7 +1898,7 @@ def _mito_ceiling_stage(task, pipeline, mito_stats, out, mito_pop=None):
         w = csv.writer(fh)
         # `pop_floor_umi` and `pop_n_all` are not decoration. A ceiling means nothing without the
         # population it was taken over: two implementations of the same published rule, applied to
-        # the same libraries, disagreed on 7 of 10 ceilings for no other reason than this column
+        # the same libraries, disagreed on their ceilings for no other reason than this column
         # being absent on both sides, and neither could tell which one was different.
         # `derived` is the APPLIED fence (MAD route); `tukey` is the independent cross-check and is
         # never applied. Both are written, with the skew ratio that explains any gap between them,

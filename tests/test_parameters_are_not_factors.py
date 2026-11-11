@@ -26,7 +26,7 @@ from engine import steps  # noqa: E402
 rows = [{"sample": s, "platform": "10x", "species": "homo_sapiens", "reference": "r", "assay": "scrna",
          "matrix": f"/d/{s}", "genotype": g, "dbr": d, "dbr_sd": d, "mt_prefix": "MT-",
          "ribo_pattern": "^RP[SL]", "aligner_cells": f"/d/{s}_f"}
-        for s, g, d in (("A1", "WT", "0.05"), ("A2", "WT", "0.06"), ("B1", "Mut", "0.05"), ("B2", "Mut", "0.06"))]
+        for s, g, d in (("A1", "REF", "0.05"), ("A2", "REF", "0.06"), ("B1", "ALT", "0.05"), ("B2", "ALT", "0.06"))]
 got = sorted(steps._design(rows))
 if got != ["genotype"]:
     fails.append(f"Q7: the design discovered is {got}; a per-library parameter is not a factor")

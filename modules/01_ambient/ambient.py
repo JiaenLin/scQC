@@ -219,7 +219,7 @@ def plan_ambient(sample, assay, skip=False, skip_reason="", intronic_fraction=No
             f"DECLARED with a reason and a named approver - this one lacks {missing}. A nucleus "
             f"holds roughly an order of magnitude less RNA than its cell and the ambient pool IS "
             f"the lysed cytoplasm, so the background is a far larger fraction of the signal - "
-            f"measured at 15.5-23.7% of all counts across ten solid-tissue libraries. Skipping "
+            f"measured as a large share of all counts in solid-tissue libraries. Skipping "
             f"it analyses a mixture, and a person has to say so, in writing, before it is done.")
 
     return AmbientPlan(sample, assay, True, mandatory, "ambient correction will run", p)

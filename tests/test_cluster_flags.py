@@ -142,7 +142,7 @@ with tempfile.TemporaryDirectory() as _d:
 
     # A FLAGGED profile, written and read back, must still answer `is True`. Step 7 selects with
     # `[c for c in profile if c.get("FLAG") is True]`, and `"True" is True` is False - so a
-    # verdict left as text does not raise, it reports a table of 126 flagged clusters as having
+    # verdict left as text does not raise, it reports a table of flagged clusters as having
     # none, and the deliverable is described as sitting in no flagged cluster at all.
     _fp = write_profile_csv(f.rows, Path(_d) / "flagged.csv")
     _fb = read_profile_csv(_fp)

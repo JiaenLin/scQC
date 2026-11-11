@@ -20,20 +20,17 @@ tool chosen for denoising.
 
 THRESHOLDS, CALIBRATED ON A REAL COHORT RATHER THAN CHOSEN
 
-Measured across the calibration cohort's ten libraries (CALIBRATION.md), CeleScope EmptyDrops_CR
-against CellBender:
+They were read off a calibration cohort's libraries (CALIBRATION.md says how; the measured values
+are that cohort's and live in its own records), comparing the aligner's cell call (CeleScope
+EmptyDrops_CR) against CellBender's: the ratio of cells called, and the share of the aligner's
+cells that CellBender LOST. Two things follow, and they are why the gate has two tiers rather
+than one:
 
-    cells called, CellBender / aligner    1.22 - 1.84    cohort 1.60
-    aligner cells LOST by CellBender      0.0% - 5.0%    cohort 0.4%, 617 of 152,653
-
-Two things follow, and they are why the gate has two tiers rather than one:
-
-  * A 10% REFUSE line leaves the whole accepted cohort clear by a factor of two. Nothing in that
-    cohort would ever have tested it, and a gate that has never fired on the only data available
-    is a gate nobody knows works.
-  * A 5% REVIEW line puts exactly one library on it: treat_03, at 5.0% - the same library whose
-    two callers disagree over 6,183 droplets and which therefore needed a written decision
-    anyway. Flagging the sample that already needed one is the gate behaving correctly, not a
+  * A 10% REFUSE line left the whole accepted cohort clear. Nothing in that cohort would ever have
+    tested it, and a gate that has never fired on the only data available is a gate nobody knows
+    works.
+  * A 5% REVIEW line put on it the one library whose two callers disagreed over many droplets
+    and which therefore needed a written decision anyway. Flagging the sample that already needed one is the gate behaving correctly, not a
     false positive.
 
 So: REVIEW at 5%, REFUSE at 10%. The first is where a human looks; the second is where the run
@@ -43,9 +40,9 @@ starting point and not as a measurement.
 
 THE THIRD CHECK, WHICH THE THRESHOLDS DO NOT COVER
 
-A loss can be small and still be structured. In the calibration cohort all 617 lost cells fall on
-one level of the condition factor and none on the other - 0.4% overall, and entirely on one arm of
-the design. No per-sample percentage catches that; it is only visible when the losses are grouped
+A loss can be small and still be structured. In the calibration cohort every lost cell fell on
+one level of the condition factor and none on the other - well under 1% overall, and entirely on
+one arm of the design. No per-sample percentage catches that; it is only visible when the losses are grouped
 by the design. The removal checklist, question 3 (docs/PRINCIPLES.md), applies to the cell call
 exactly as it applies to a filter.
 

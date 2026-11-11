@@ -173,9 +173,9 @@ with tempfile.TemporaryDirectory() as tmp:
     # while batch cuts across all three. A fixture whose factors were all aliased would pass
     # whether or not the classification worked.
     sheet = [{"sample": s, "age": a, "diet": d, "chemistry": c, "batch": b}
-             for s, a, d, c, b in (("libA", "young", "chow", "v2", "A"),
-                                   ("libB", "aged", "hfd", "v3", "A"),
-                                   ("libC", "young", "chow", "v2", "B"))]
+             for s, a, d, c, b in (("libA", "early", "std", "v2", "A"),
+                                   ("libB", "late", "alt", "v3", "A"),
+                                   ("libC", "early", "std", "v2", "B"))]
     # CONSTANT, so `_design` excludes them as factors - and present, so F17 can print the pattern
     # behind each percentage on the axis that carries it. A ribosomal percentage whose pattern is
     # not on the page is a number no reader can check, and this one has matched a ribosomal
@@ -354,18 +354,18 @@ check("...and nesting alone leaves no arm to compare - `arms` is None, not an in
       design_relations(nested_rows)["arms"] is None,
       str(design_relations(nested_rows)["arms"]))
 
-crossed_rows = [{"sample": "s1", "age": "young", "diet": "chow"},
-                {"sample": "s2", "age": "young", "diet": "hfd"},
-                {"sample": "s3", "age": "aged", "diet": "chow"},
-                {"sample": "s4", "age": "aged", "diet": "hfd"}]
+crossed_rows = [{"sample": "s1", "age": "early", "diet": "std"},
+                {"sample": "s2", "age": "early", "diet": "alt"},
+                {"sample": "s3", "age": "late", "diet": "std"},
+                {"sample": "s4", "age": "late", "diet": "alt"}]
 check("a fully crossed 2x2 is CROSSED", rel_of(crossed_rows).get(("age", "diet")) == "crossed",
       str(rel_of(crossed_rows)))
 check("...and a clean design yields no arms, so F17 and F18 report an absence rather than a "
       "contrast nobody asked for", design_relations(crossed_rows)["arms"] is None)
 
 check("one factor cannot be confounded with itself",
-      design_relations([{"sample": "s1", "age": "young"}, {"sample": "s2", "age": "aged"},
-                        {"sample": "s3", "age": "young"}])["relations"] == [])
+      design_relations([{"sample": "s1", "age": "early"}, {"sample": "s2", "age": "late"},
+                        {"sample": "s3", "age": "early"}])["relations"] == [])
 check("a samplesheet with no rows produces a design with no factors and does not raise",
       design_relations([]) == {"factors": [], "levels": {}, "relations": [], "arms": None,
                                "aliased_group": [], "samples": []})

@@ -33,7 +33,7 @@ WHAT IS DECLARED AND WHAT IS NOT
 infer them and a wrong guess is silent. The platform names the aligner that would rebuild a matrix
 from FASTQ, so it must be one this pipeline can align only on that route; a verified supplied matrix
 from any declared platform is accepted, and the record says no processor was involved. The doublet-rate model is platform-specific: applying one
-platform's loading formula to another platform's run imported a 19.65% against 14.98% condition
+platform's loading formula to another platform's run imported a spurious condition
 differential into the calibration cohort's primary readout. Gene-class patterns are equally
 specific - the regex that selects mitochondrial or ribosomal genes depends on the naming
 convention of the annotation, and one written for a different reference silently matches nothing

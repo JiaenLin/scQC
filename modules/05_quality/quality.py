@@ -4,17 +4,15 @@
 
 THE CLEAREST CASE IN THE PIPELINE OF A PROCEDURE TRANSFERRING WHERE A NUMBER CANNOT
 
-Across ten libraries of ONE cohort - one sample type, one platform, one operator - the measured
-density valley between the debris mode and the nucleus mode ranged:
+Across the libraries of ONE cohort - one sample type, one platform, one operator - the measured
+density valley between the debris mode and the nucleus mode moved substantially from library to
+library, on UMI and on detected genes alike (the measurements are that cohort's, in its records).
 
-    UMI              274 - 473   (median 346)
-    detected genes   184 - 352   (median 261)
-
-A 1.7-fold spread inside a single experiment. A fixed floor of 500 UMI and 300 genes - a common
-published choice, and the obvious one to reach for - sits ABOVE the measured valley in all ten of
-those libraries on UMI and in nine of ten on genes, so it cuts into the nucleus mode rather than
-the debris below it. No fixed floor is right for most libraries even within one study, which is
-why what ships is the KDE-valley PROCEDURE and not the pair of numbers it produced here.
+A fixed pair of floors - a common published choice of a few hundred UMI and a few hundred genes,
+and the obvious one to reach for - sat ABOVE the measured valley in nearly every one of those
+libraries, so it cut into the nucleus mode rather than the debris below it. No fixed floor is
+right for most libraries even within one study, which is why what ships is the KDE-valley
+PROCEDURE and not the pair of numbers it produced there.
 
 BIMODALITY IS TESTED, NOT ASSUMED
 
@@ -206,7 +204,7 @@ def derive(valleys, metric, light_floor=None, *, assay) -> Proposal:
     serious per-cell QC happens after clustering, within cell types.
 
     THE BOUNDS ARE THE GUARD. A valley outside them is still refused, and that is what catches
-    the real failure: on the same cohort, two libraries' minima wandered to ~1,040 UMI under a
+    the real failure: on the same cohort, two libraries' minima wandered far above the valley under a
     narrower kernel, which the upper bound rejects on sight. Depth is not needed to catch those.
 
     So `bimodal` now classifies rather than gates. Nothing is loosened - `min_valley_depth` is
@@ -391,9 +389,9 @@ def mito_ceiling_note(assay: str) -> str:
 #
 # THIS REVERSES A CHANGE MADE ON 2026-08-11, AND THE EARLIER REASONING IS RECORDED RATHER THAN
 # DELETED, because it was not wrong about its own evidence. The snRNA lower bound was 5.0 until
-# then and was raised to 10.0 on this argument: at 5.0 a library's ceiling fell to 6.12%, the
-# nuclei that cut removed had a median depth 0.88-0.96x that of retained nuclei in three of the
-# four affected libraries - ordinary cells, not debris - and where a tissue's dominant cell type is
+# then and was raised to 10.0 on this argument: at 5.0 a library's ceiling fell close to the bound,
+# the nuclei that cut removed had nearly the median depth of retained nuclei in most of the
+# affected libraries - ordinary cells, not debris - and where a tissue's dominant cell type is
 # also its most mitochondria-rich, a 6% ceiling preferentially removes the cell type the study is
 # about.
 #
@@ -456,33 +454,35 @@ MITO_MAD_K = {"snrna": 3, "scrna": None}
 # median 4.26), and on a cohort with different skew it will land elsewhere, which is the point.
 #
 # Why not simply apply Tukey, if Tukey selects k. Because the two do different jobs. Tukey adapts
-# without limit to a wide tail - to 25.88% on one calibration library - and adapting that far is a
+# without limit to a wide tail - far past the bound on one calibration library - and adapting that far is a
 # statement about that prep, not about what a nucleus can be. The MAD fence at the calibrated k
 # tracks the same cohort-level scale while compressing the extremes, so the applied ceiling stays
 # inside a biologically defensible range. Tukey decides HOW FAR out the fence should sit; MAD
 # decides how much any single library is allowed to differ in getting there.
 #
-# k is rounded to an integer deliberately. The per-library k values span 1.9x, so the cohort
-# summary is not precise to a decimal, and a k of 4.26 would imply a resolution the spread does
-# not support.
+# k is rounded to an integer deliberately. The per-library k values spread widely, so the
+# cohort summary is not precise to a decimal, and a k with decimals would imply a resolution the
+# spread does not support.
 #
 # WHAT IT COSTS, measured, and recorded because it is not visible from the number: threshold
 # evenness and removal evenness trade off monotonically, across every rule tested.
 #
 #     rule                          ceiling spread   removal differential (interaction arm)
-#     cohort constant 12.65%             1.00x                 2.77x
-#     MAD k=3, bound 5-10                2.00x                 1.58x   <- APPLIED (snrna)
-#     MAD k=4, bound 10-25               2.05x                 1.75x   retired 2026-08-13
-#     MAD k=5, bound 10-25               2.46x                 1.60x
-#     Tukey,   bound 10-25               2.50x                 1.37x
-#     Tukey,   unbounded                 4.23x                 1.09x
+#     one constant for the cohort   none             the largest
+#     MAD k=3, bound 5-10           moderate         moderate         <- APPLIED (snrna)
+#     MAD k=4, bound 10-25          moderate         moderate         retired 2026-08-13
+#     MAD k=5, bound 10-25          larger           moderate
+#     Tukey,   bound 10-25          larger           smaller
+#     Tukey,   unbounded            the largest      the smallest
+#
+# (in that order, on the calibration cohort; its measured values are in that cohort's records)
 #
 # The applied row is measured on the same cohort with the mt<50 derivation cut in place, so it is
 # not exactly comparable with the rows below it; the retired row is what this pipeline shipped
 # until 2026-08-13 and is kept so the change has a before to be read against.
 #
 # Every step toward a more uniform THRESHOLD costs a less uniform EFFECT. The reason is that the
-# quantity being fenced genuinely varies: Q3 spreads 3.91x and IQR 4.75x across those libraries,
+# quantity being fenced genuinely varies: Q3 and the IQR themselves spread severalfold across those libraries,
 # so an estimator whose output spreads less than that is not being more consistent, it is
 # under-adapting. `ceiling_spread` reports the first property, the design differential the second,
 # and a reader needs both.
@@ -650,7 +650,7 @@ def derive_mito_ceiling(per_library, assay, bounds=None, mult=IQR_MULT,
     percentages. It must be measured on the SAME population the doublet caller sees - cells at or
     above the light floor, BEFORE any quality threshold. Deriving a fence on an already-filtered
     set measures the previous fence, not the data: on the calibration cohort that mistake moved
-    the ceilings by up to 39% and capped the observed maximum at 47.8% against a true 99.5%.
+    the ceilings substantially and capped the observed maximum far below the true one.
 
     `declared_by` is the analyst's own words for why the bound is what it is. It is REQUIRED when
     the bound is not an assay default, because a bound with no recorded reasoning is indis-
@@ -837,8 +837,9 @@ def derive_mito_ceiling_from_quartiles(stats, assay, bounds=None, mult=IQR_MULT,
     # Spread of the APPLIED ceiling. This is not the same property as the design differential and
     # is not implied by it: the differential asks whether removal falls evenly across the arms of
     # the design, this asks whether one filter is treating samples of one experiment alike at all.
-    # A cohort can pass the differential while its ceiling varies fourfold, which is how a 6.12%
-    # library and a 25.00% library sat in one deliverable without either check objecting.
+    # A cohort can pass the differential while its ceiling varies severalfold, which is how a library
+    # with a low ceiling and one with a ceiling several times higher sat in one deliverable without
+    # either check objecting.
     ceilings = [m.ceiling for m in out.values()]
     spread = (max(ceilings) / min(ceilings)) if ceilings and min(ceilings) > 0 else None
     if spread is not None:

@@ -9,7 +9,7 @@ mode - everything the operator supplies - and not the code.
 
 A DERIVED threshold is a function of the inputs AND of the code that derives it. So the promise
 had a hole in exactly the case that matters most, and the 2026-08-13 mitochondrial change walked
-straight into it: same samplesheet, same parameters, same mode, a deliverable 5.9% smaller. A
+straight into it: same samplesheet, same parameters, same mode, a deliverable a few per cent smaller. A
 re-run would have resolved to the previous directory, found every task complete, skipped all of
 them, and republished the old numbers under the new code - exit zero, report renders, nothing
 anywhere says the deliverable is not what the current code produces.
