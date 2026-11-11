@@ -292,7 +292,7 @@ make_env() {
         # EXISTING IS NOT COMPLETE. A build killed mid-transaction leaves the directory with a
         # conda-meta/ and no interpreter, and this used to say "[skip] already exists" and then
         # die on the missing bin/python one line later, with exit 127 and no word about why - on
-        # every rerun, for ever (single-cell-harness ADR-0027, PBS 720421). Refused by default:
+        # every rerun, for ever (single-cell-harness ADR-0027). Refused by default:
         # an installer does not delete what it did not verify it made. With --repair (harness
         # autodev W020, B1-108) the one shape an interrupted build leaves - conda-meta/ present,
         # the interpreter absent - is removed and rebuilt, and the removal is printed; the refusal
