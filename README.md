@@ -189,6 +189,9 @@ All enforced today:
   subcommands exit 2 on refusal. Reporting and enforcing are separate calls. A REFUSE can be
   accepted in `decisions.yml` (`accept: [{step, check, approved_by, verbatim}]`), by a named person
   in their own words; it is then recorded as an accepted REVIEW and in STATUS.json's `escapes`.
+  A check that compares the run's own records with each other cannot fire on a correct run and is
+  never accepted: step 7's ledger count, the count of the object written, and the removal audit's
+  integrity checks (docs/WORKFLOW.md, "How a refusal is delivered").
 - **Every removal is recoverable with the criterion that made it.** Removed observations are paired
   with the criteria that fired; the removal refuses if that record and the mask disagree on the
   count. Persisted as CSV, readable with the standard library alone.
