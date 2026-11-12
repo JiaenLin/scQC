@@ -175,6 +175,11 @@ The two forms are not interchangeable, and the diagram marks the difference.
   matrix look already cell-called.
 - **A full queue is waited for.** A `qsub` refused for a queue's per-user limit backs off and
   retries (up to `SCQC_QSUB_LIMIT_WAIT_S`, 6 h); any other refusal fails at once.
+- **Step 3's refusal in the diagram is the module's; a run checks the ordering at step 7.**
+  `light_floor.check_floor` raises `FloorRefusal` when the light floor is not strictly below the
+  quality floor, and no step of `scqc run` calls it: the quality floor is not known until step 5. A
+  run meets the same rule as the removal audit's "step 3: the light floor is strictly below the
+  quality floor", at step 7, where it refuses and can be accepted by name.
 
 - **A single cell is not a nucleus, and the route says so from step 1.** The assay decides
   whether CellBender runs (`modules/01_ambient`, `CELLBENDER_RUNS`): nuclei always - unless a skip
@@ -236,7 +241,7 @@ The two forms are not interchangeable, and the diagram marks the difference.
 flowchart LR
     subgraph E["--mode evidence"]
         direction TB
-        E1["Run every step"] --> E2["Derive every<br/>DERIVED parameter"]
+        E1["Run steps 0 to 6<br/>(step 7 is not in the graph)"] --> E2["Derive every<br/>DERIVED parameter"]
         E2 --> E3["Write the report"]
         E4["Removes nothing.<br/>Applies nothing."]
     end
@@ -256,11 +261,11 @@ Apply mode is the **default**, and a `decisions.yml` is **optional** — without
 applies the thresholds it derived (and the ones declared) and records them as `DERIVED` or
 `DECLARED`, never as `ADJUDICATED`. Evidence mode is there to look before cutting; it is not a
 required first phase. Who decided each threshold is what is recorded, in the report's parameter
-table and in STATUS.json.
+table; an ADJUDICATED one is also in STATUS.json's `escapes`.
 
 ## Parameter classes
 
-Every parameter the pipeline uses carries one of four classes, and the report prints it.
+Every row of the report's parameter table carries one of four classes.
 
 ```mermaid
 flowchart TD

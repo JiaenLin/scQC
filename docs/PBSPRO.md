@@ -221,8 +221,9 @@ then the products it names.
 **Comparing two runs.** `tables/<sample>.percell.csv` carries `barcode` and `keep`, so barcode
 identity is a text comparison — no `anndata`, no script, seconds on a login node.
 
-> **scQC writes CSV through Python's `csv` module, whose default line terminator is `\r\n`.** Every
-> table is CRLF, including on Linux. A comparison that does not strip it fails **silently**:
+> **scQC writes most CSV through Python's `csv` module, whose default line terminator is `\r\n`.**
+> Those tables are CRLF, including on Linux, and the per-cell table is one of them; the removal
+> ledger and the doublet calls are written with `\n`. A comparison that does not strip it fails **silently**:
 >
 > ```bash
 > grep -c ',True$' tables/<sample>.percell.csv                        # 0 — WRONG
@@ -253,8 +254,8 @@ writing which one the deliverable is.
   than by asking about the file. Repeated `exists()` calls therefore re-read one cached answer. It
   needs the orchestrator to be on a different node from the task — the normal condition under
   `--executor pbs`, and never reproduced by a local-executor test. If you see *"PBS job N finished
-  but <log> does not exist"* while the log is plainly on disk, this is it. Listing the parent
-  directory on each attempt is what makes the retry a retry.
+  but <log> is not visible after ...s"* while the log is plainly on disk, this is it. Listing the
+  parent directory on each attempt is what makes the retry a retry, and the executor does so.
 - **`pgrep -f '<pattern>'` issued over SSH matches its own command line**, so a check for "is scQC
   running on a login node" reports a violation every time. Put such checks in a script file and
   exclude `$$`.

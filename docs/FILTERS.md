@@ -25,7 +25,7 @@ input would otherwise turn into a silent clearance.
 | [Gene floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley (`snrna`); declared (`scrna`) | one cohort constant |
 | [Mitochondrial ceiling](#mitochondrial-ceiling) | 5 | derived per library, bounded | per library |
 | [Doublets](#doublets) | 4 | the detector's call | per library |
-| [Cluster check](#cluster-check) | 6 | proposed from the cohort | per cluster, flags only |
+| [Cluster check](#cluster-check) | 6 | B and C proposed from the cohort; A a convention | per cluster, flags only |
 
 ---
 
@@ -222,7 +222,7 @@ than 10–25% did, so the ceiling will frequently be reported as `bound_dominate
 `k` is rounded to an integer where it is derived, because the per-library `k_i` typically span far
 more than a decimal's worth (on the calibration cohort far more; the values are in its records).
 `MAD_K_BOUNDS = (2, 10)` are sanity limits; a cohort landing outside them is
-reported, not silently clamped to the edge. A library with `MAD = 0` is excluded from the
+clamped to the edge and reported as a REVIEW, never clamped silently. A library with `MAD = 0` is excluded from the
 calibration, because its implied k is undefined and a library that cannot contribute must not be
 able to change the answer by being counted as a default.
 
@@ -367,10 +367,11 @@ detector:
 | unstable | spread > 5× |
 | design-differential | worst arm / best arm ≥ 3×, **and** the worst arm calls ≥ 1% |
 
-The lines are declared per assay (`ZERO_RATE`, `DESIGN_REFUSE`, `MATERIAL` in
+Three of the lines are declared per assay (`ZERO_RATE`, `DESIGN_REFUSE`, `MATERIAL` in
 `modules/04_doublets/doublet_health.py`, and likewise the cell-call gate's lines and the
 clustering resolution): the same values on `snrna` and `scrna` today, every one set against
-nuclei, and the single-cell entry says so (`LINES_SOURCE`). A library under the silence line is
+nuclei, and the single-cell entry says so (`LINES_SOURCE`). The two spread lines (`SPREAD_IMPOSED`,
+`SPREAD_UNSTABLE`) are one constant each, with no per-assay entry. A library under the silence line is
 refused only where its own declared rate predicted at least one doublet among the cells it
 scored; otherwise the silence is what the declaration predicts, and it is reported.
 
@@ -436,7 +437,8 @@ a percentage supplied there would silently never fire.
 
 ### Where the thresholds come from
 
-**Proposed from the cohort in hand**, not inherited. B is the p95 of cluster mitochondrial
+**B and C are proposed from the cohort in hand**, not inherited. A is not: it is a convention, 0.5× the
+sample's own median, and the proposal says so (`cluster_flags.propose`). B is the p95 of cluster mitochondrial
 content. C is the midpoint of the gap between the bulk and the tail *if the distribution is
 bimodal*, and the p95 otherwise — with the proposal stating which, because a percentile is a
 weaker basis than a valley. Anything declared in `decisions.yml` overrides by name, and the
@@ -502,8 +504,8 @@ a criterion nobody evaluated has not been judged, and the ledger refuses one.
 The applied criteria are, in ledger order:
 
 On single cells the first criterion is `fail_not_aligner_cell` — not called by the aligner —
-and the per-cell table and the ledger cover the **called cells only**: the two million droplets
-the aligner did not call are one number in the metrics, not two million "removals". In the
+and the per-cell table and the ledger cover the **called cells only**: the droplets
+the aligner did not call are one number in the metrics, not one "removal" each. In the
 deliverable a cell is named `<sample>_<barcode>` (the aligner's barcode kept in `obs["barcode"]`),
 since libraries from one aligner share a barcode whitelist.
 

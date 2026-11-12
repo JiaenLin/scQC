@@ -64,7 +64,7 @@ Every parameter carries a class, and the class determines who may set it.
 |---|---|---|
 | **FIXED** | true regardless of dataset | the pipeline; changing it is a code change |
 | **DERIVED** | procedure fixed, value computed per dataset | the data — never a command-line argument |
-| **DECLARED** | platform, species, design | you, in advance; no default exists |
+| **DECLARED** | platform, species, design | you, in advance; no default exists for these (three declared flags have one: `--light-floor` 200, `--seed` 0, `--extra-resolutions` 1.0,3.0) |
 | **ADJUDICATED** | not derivable; needs judgement | you, after reading the evidence, in your own words |
 
 Adjudicated parameters have no defaults. A value recorded without an approver and their reasoning
@@ -93,7 +93,7 @@ threshold afterwards and they no longer apply.
 | 4 | doublets | score per sample, before quality filtering; flag only | — |
 | 5 | quality | derive count floors and the per-library mitochondrial ceiling | — |
 | 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet fraction | — |
-| 7 | **apply** | measure, write the ledger, audit the removal (a failed check refuses), then write the filtered objects | **yes — only here** |
+| 7 | **apply** | measure, write the ledger, audit the removal (a failed check refuses; two of its ten checks only REVIEW), then write the filtered objects | **yes — only here** |
 
 Single nuclei and single cells take different routes, decided by the declared `assay`.
 Nuclei are denoised by CellBender (mandatory, unless a skip is declared in the samplesheet with
@@ -157,7 +157,7 @@ objects written before 0.4.0.
 Per-library objects are primary; the cohort object is derived from them, since each library is
 filtered on its own mitochondrial ceiling and cluster-checked on its own clustering.
 
-📄 **[Output reference](docs/OUTPUTS.md)** — every file, every column.
+📄 **[Output reference](docs/OUTPUTS.md)** — the files a run writes and their columns.
 
 ### What a run leaves behind
 
@@ -199,11 +199,12 @@ All enforced today:
   approver and their own words — in the report's parameter table (`reports/report.json`); each
   adjudicated one is also in `STATUS.json`, and step 7 records who authorised the removal in the
   run's state. The removal ledger and the delivered objects do not carry it.
-- **Reports carry the commit and tool versions**, obtained by asking each tool rather than reading
-  a lockfile, and audit themselves: anything the run should have recorded and did not is counted
-  as a defect on the front page.
-- **A report older than its inputs is flagged, not refused.** Freshness is computed, printed on
-  the report's face, counted as a defect when stale, and recorded as True, False or **None** —
+- **`report.json` carries the commit and tool versions**, the versions obtained by asking each tool
+  rather than reading a lockfile (the HTML's Provenance section prints the invocation and the
+  generation time, not these), and a report audits itself: anything the run should have recorded
+  and did not is a defect, listed in the document's last section and counted in the JSON.
+- **A report older than its inputs is flagged, not refused.** Freshness is computed; a stale report
+  says so in its defects section and counts it as a defect, and the result is recorded as True, False or **None** —
   never False by default, because unchecked is not a pass. Nothing in scQC publishes a report, so
   nothing refuses one.
 
@@ -280,7 +281,7 @@ renamed — code that asks for a role passes both, code that knows a column name
 | [QUICKSTART](docs/QUICKSTART.md) | install, samplesheet, run, reading the report |
 | [USER_GUIDE](docs/USER_GUIDE.md) | every command, run keys, resuming, approvals, refusals |
 | [FILTERS](docs/FILTERS.md) | how each filter is calculated and what it cannot establish |
-| [OUTPUTS](docs/OUTPUTS.md) | every file a run writes, and the `obs` schema |
+| [OUTPUTS](docs/OUTPUTS.md) | the files a run writes, and the `obs` schema |
 | [RATIONALE](docs/RATIONALE.md) | why each step exists and what goes wrong without it |
 | [PRINCIPLES](docs/PRINCIPLES.md) | the four enforced rules |
 | [WORKFLOW](docs/WORKFLOW.md) | diagrams of the pipeline, phases and parameter classes |
@@ -302,8 +303,8 @@ Read [KNOWN_ISSUES.md](KNOWN_ISSUES.md) before quoting a number from a run.
 
 ## Citing
 
-If scQC contributes to published work, cite the repository and the version you ran. Every report
-carries the commit.
+If scQC contributes to published work, cite the repository and the version you ran. Every run's
+`report.json` carries the commit (`provenance.pipeline`).
 
 ## License
 

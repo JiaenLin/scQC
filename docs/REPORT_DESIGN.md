@@ -53,10 +53,16 @@ removal ratio any gate measured between arms of the design. That last figure lea
 the one a conventional QC report does not carry, and the one that decides whether a technical
 gradient has been laid down where the biology is measured.
 
-Then **what quality control did**: one row per criterion, each showing the distribution before the
-cut and what survived it, with the threshold and how it was arrived at (DERIVED / DECLARED, per
-library / cohort constant) on a rule down the right. A criterion with no figure states the cut
-anyway and says no figure was produced for that axis.
+Then **the design itself** (the confounding block: F16, F17 and F18), and **where each count floor
+came from** (F6 and F13).
+
+Then **what quality control did**: five fixed rows - the UMI floor (F7), the gene floor (F14), the
+mitochondrial ceiling (F15), the doublet call (F10) and the survivors on the same embedding (F11) -
+each showing the distribution before the cut and what survived it, with the threshold and how it
+was arrived at (DERIVED / DECLARED / ADJUDICATED, per library / cohort constant) on a rule down the
+right. The page's own sub-heading reads "one row per criterion"; the rows are four of the applied
+criteria, not all of them (see "The spine holds five fixed rows" under Figures). A row whose figure
+was not produced states the cut anyway, beside a NOT PRODUCED note carrying the reason.
 
 After the spine: the same distributions on a linear axis; what each criterion removed uniquely;
 what went in and what was examined; the cluster check; every threshold per library; what was
@@ -73,16 +79,21 @@ and nobody should have to scan the whole table for it. `fired` and `alone` are b
 only the first makes every criterion look load-bearing, only the second makes a criterion that
 agrees with its neighbours look inert.
 
-**A section is never omitted because it is empty.** An absent block reads exactly like a block
-nobody needed, so each states what it could not establish instead.
+**A figure is never omitted because it is empty.** An absent block reads exactly like a block
+nobody needed, so a figure that was not produced is a bordered NOT PRODUCED note carrying the
+reason. Sections are not all held to that: the per-library thresholds and the parameter table are
+left out of the page when the run supplied nothing for them, and so is the confounding block when
+the design was not stated; the absence is then a row of the defects section at the foot.
 
 The sections below specify the content each block carries.
 
 ### 1 · Verdict
 
 The deliverable in one line, then every REFUSE and REVIEW raised by any gate, with the step that
-raised it. Not an appendix. If a run has an unresolved contradiction, the reader meets it before
-the figures.
+raised it. This block is `verdict.lines` in `report.json`. On the page the masthead's chip carries
+the run's overall verdict and the decision strip the deliverable's counts, so a reader meets a
+REFUSE or a REVIEW before the figures; the findings themselves, each with its step, are the
+Findings section, which sits below the figures and the limits.
 
 ```
 (illustrative numbers)
@@ -98,36 +109,43 @@ only record of why the run stopped.
 
 ### 2 · What was decided, and by whom
 
-One row per parameter. **The class column is the point of this report.** (Illustrative rows: a
-report fills the value and the basis from its own run; the bounds are the tool's.)
+One row per parameter the run records. **The class column is the point of this report.**
+(Illustrative values; the rows are the ones `engine/pipeline.py`, `_parameters_block`, writes.)
 
 | parameter | value | class | basis |
 |---|---|---|---|
-| ambient learning rate | the package default, halved | DERIVED | default rejected: the cohort assessment halved it |
-| cell caller | denoiser output | FIXED | pipeline contract |
-| UMI floor | *u* | DERIVED | KDE valley; the per-library range and the cohort median |
-| gene floor | *g* | DERIVED | KDE valley; bounded to [100, 600] (the nuclear gene bounds) |
-| mito ceiling | *m*% | **ADJUDICATED** | the operator's words, quoted, with their date |
-| doublet `dbr.sd` | *s* | DERIVED | sweep; the default was prior-driven |
-| cluster A/B/C | *a*× / *b*% / *c*% | **ADJUDICATED** | proposed against the distributions, approved |
+| cell caller | the denoiser's output on nuclei; the aligner's call on single cells | FIXED | pipeline contract |
+| variable-gene selection | every gene, no class excluded | FIXED | no exclusion term exists |
+| removal point | step 7 only | FIXED | no other step drops an observation |
+| clustering resolution | 2.0 | FIXED | the assay's entry, where `--resolution` was not given |
+| each declared flag that was given: `--dbr`, `--dbr-sd`, `--dbr-sd-sweep`, `--light-floor`, `--resolution`, `--extra-resolutions`, `--seed`, `--cpu` | as given | DECLARED | the flag that supplied it |
+| UMI floor | *u* | DERIVED | step 5: the density valley per library, one cohort constant, bounded (DECLARED on single cells) |
+| gene floor | *g* | DERIVED | the same, on the gene axis: on nuclei bounded to [100, 600] |
+| mitochondrial ceiling | *m*% per library | DERIVED | step 5: median + k × 1.4826 × MAD, bounded (DECLARED where the bound decides most libraries) |
+| any of those three, overridden in `decisions.yml` | the override | **ADJUDICATED** | declared in `decisions.yml`; the row carries the approver and their words |
+
+The ambient learning rate and the cluster check's A/B/C thresholds have no row in this table
+today, and `dbr.sd` is a DECLARED row, not a derived one.
 
 - **FIXED** — the pipeline's own contract; changing it is changing the pipeline.
 - **DERIVED** — computed from this dataset. Reproducible from the data alone.
 - **DECLARED** — supplied by the operator up front, before seeing the result.
 - **ADJUDICATED** — a human decided, after seeing the result, and the row carries their own words.
 
-An ADJUDICATED row without verbatim text is a bug, and the report says so in place of the row.
+An ADJUDICATED row without verbatim text is a bug, and the row is withheld: its name stays, its cells are empty, and the defects section says why.
 
 ### 3 · The steps
 
-One section per step, each with the same four parts, always in this order:
+One record per step in `report.json` (`steps`), each with the same four parts:
 
-1. **What this step does** — two sentences.
-2. **The figure.**
-3. **What it found** — numbers, each traceable to a named file.
-4. **What this step cannot establish.**
+1. **What this step does** (`purpose`).
+2. **The figures** (`figures`).
+3. **What it found** (`found`) — numbers, with the files they came from (`sources`).
+4. **What this step cannot establish** (`cannot_establish`).
 
-That fourth part is required. A section that omits it renders as
+The page is not laid out by step (see Layout): it places the figures by question and prints the
+fourth part of every step in one section, "What this run could not establish". That fourth part
+is required. A step that ran and supplied none carries
 `cannot establish: NOT STATED — this is a defect in the report, not an absence of limits.`
 
 ### 4 · Provenance
@@ -142,15 +160,23 @@ input check     P1 raw VALUES: PASS    P2 raw DROPLETS: PASS
 generated       <ISO timestamp>   newest input: <ISO timestamp>
 ```
 
+These lines are `provenance.lines` in `report.json`, with the project, the runtime and a freshness
+line beside them. The page's Provenance section prints less today: the invocation, the generation
+time with its source, and the wall clock. The commit, the dirty flag, the decisions hash, the
+reference, the tools and the input check are in the JSON only.
+
 The last line is the freshness contract, and it is machine-checked: `generated` earlier than
-`newest input` is printed on the report's face and counted as a defect. The **refusal to publish**
+`newest input` is a row of the page's defects section and counted as a defect. The **refusal to publish**
 this specification asked for is not built — nothing in scQC publishes a report — and it stays the
 most load-bearing open item, because staleness has no symptom and nothing else will catch it.
 
 ### 5 · Open items
 
-Named, each with what would close it and who it is blocked on. A run with no open items says
-`none` explicitly, because a missing section and an empty one are not the same claim.
+Named, each with what would close it and who it is blocked on (`open_items.items` in
+`report.json`; `NOT STATED` where the run did not say). A run names the steps that were blocked,
+and a run with none says `none recorded` explicitly, because a missing section and an empty one
+are not the same claim. The page's Open items section does not print the items today: it prints
+the block's two field names (`stated`, `items`), so read them in the JSON, or in `verdict.lines`.
 
 ---
 
@@ -194,7 +220,7 @@ with no single assay is named in barcodes, never in nuclei by default.
 | F4 | 3 floor | what was never examined? | stacked bar: scored / below floor / **never scored** |
 | F5 | 4 doublets | is the rate a measurement or the prior? | sweep curve per library (a published band is shaded only if one is passed; a run passes none) |
 | F6 | 5 quality | where is the UMI cut and why there? | per-library density, valley marked, cut drawn |
-| F7 | 5 quality | what did the cut change? | before/after violins, log and linear |
+| F7 | 5 quality | what did the cut change? | before/after violins on a log axis (F12 is the linear one) |
 | F8 | 6 clusters | are any clusters technical? | depth × mito scatter, flags coloured, thresholds drawn |
 | F9 | 7 apply | what did each criterion remove *uniquely*? | unique vs shared contribution per criterion |
 | F10 | 4 doublets | where in the manifold did the doublets sit? | one embedding per library, doublet calls coloured |
@@ -268,10 +294,14 @@ and a single line across the panel would assert a cohort constant that was never
 with nothing on the page to say it is not one. Each library carries its own segment, and the
 panel states that the value is per library and gives its range.
 
-**The spine lists every applied criterion, so every applied criterion needs a figure.** The
-report's decision spine names the count floor, the gene floor and the mitochondrial ceiling.
-Two of those three rows read "no figure is produced for this axis" until F14 and F15 existed:
-a report showing a third of the filter while looking complete.
+**The spine holds five fixed rows, and they are not every applied criterion.** The report's
+decision spine names the count floor (F7), the gene floor (F14), the mitochondrial ceiling (F15)
+and the doublet call (F10), then shows the survivors on the same embedding (F11): four of the six
+criteria step 7 applies. The cell-call criterion (`fail_not_cellbender_cell`, or
+`fail_not_aligner_cell` on single cells) and the joint mitochondrial / nuclear-fraction criterion
+(`fail_mito_nf`) have no row; what they removed is in the section "What each criterion removed"
+(F9 and its per-library table). The gene-floor and ceiling rows read "no figure is produced for
+this axis" until F14 and F15 existed: a report showing a third of the filter while looking complete.
 
 **F13 exists because step 5 applies TWO floors.** `cut` is one cohort constant per figure and the
 two floors are in different units, so a single density figure can carry only one of them — and the
@@ -302,9 +332,10 @@ Beyond version capture, four properties nf-core does not currently give you. The
 fourth are implemented; the third is computed and flagged, not enforced:
 
 1. **Decisions are an input, not an argument.** `decisions.yml` is hashed, and its
-   hash is in the report. Two runs with the same data and the same decisions file are the same
-   run; a command line does not have that property.
-2. **The commit is in the document.** A report from a dirty tree says `dirty: yes` on its face.
+   hash is in `report.json` (`provenance.decisions`). Two runs with the same data and the same
+   decisions file are the same run; a command line does not have that property.
+2. **The commit is in `report.json`.** A report from a dirty tree says `dirty: yes` there
+   (`provenance.pipeline`); the page's Provenance section prints neither today.
 3. **Freshness is enforced, not advised.** Stale artifacts have no symptom — they open, render
    and read exactly like correct ones. So this is machine-checked; blocking is not built.
 4. **Removal is recoverable** — *implemented*. Every removed observation keeps the criteria that
@@ -314,6 +345,6 @@ fourth are implemented; the third is computed and flagged, not enforced:
 
 ## Format
 
-Single-file HTML: inline CSS, inline JS, data URIs for figures, no external requests. It must
+Single-file HTML: inline CSS, no script, data URIs for figures, no external requests. It must
 open with no network and no server. A machine-readable `report.json` carrying every number in the
 document is written beside it — the HTML is for people, the JSON is for the next pipeline.

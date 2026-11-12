@@ -1,6 +1,8 @@
 # Output reference
 
-Every file a run writes, what is in it, and which files are meant to be read next.
+The files a run writes for a reader, what is in each, and which are meant to be read next. A run
+also leaves its tools' own side files beside them: the denoiser's native output under `objects/`,
+and an op's `.params.json` and `.metrics.json` beside what the op wrote.
 
 Read [FILTERS.md](FILTERS.md) for how the numbers in these files are calculated.
 
@@ -46,6 +48,7 @@ run lands beside the old one rather than over it; a changed `decisions.yml` does
 | file | written by | contents |
 |---|---|---|
 | `<sample>_ambient.h5` | step 1 | the denoised matrix for one library; on single cells, which are not denoised, the raw counts with the aligner's call. Every later step reads this. Unfiltered. |
+| `<sample>_cellbender.h5` | step 1 | the denoiser's native output, only where this run ran the denoiser; `<sample>_ambient.h5` is converted from it |
 | `cohort_per_sample/<sample>.filtered.h5ad` | step 7 | one library, filtered. **The primary deliverable.** |
 | `cohort.deliverable.h5ad` | step 7 | all libraries, filtered, merged |
 
@@ -154,7 +157,7 @@ trusts.
 
 ## tables/
 
-All CSV, all readable with the standard library alone.
+CSV, apart from the JSON records named below; all readable with the standard library alone.
 
 ### Per library
 
@@ -162,10 +165,10 @@ All CSV, all readable with the standard library alone.
 |---|---|---|
 | `<sample>_doublets.csv` | scored barcode | `barcode`, `doublet_score`, `doublet_class` |
 | `cell_calls.csv` | library | `aligner`, `denoiser`, `lost` |
-| `valleys_umi.csv`, `valleys_genes.csv` | library | `valley`, `bimodal`, `note` |
+| `valleys_umi.csv`, `valleys_genes.csv` | library | `metric`, `valley`, `bimodal` |
 | `<sample>.barcode_rank.csv` | **rank point** | the raw matrix's barcode-rank curve, downsampled log-uniformly: `rank`, `total_counts`, `n_barcodes`. Figure F1. Absent for a library rebuilt from FASTQ, which has no supplied matrix to measure, and for a cell-called input on single cells, which has no empty droplets and so no droplet curve |
 | `<sample>.valley_density.csv` | grid point × metric | the KDE the valley was read off: `grid`, `grid_log10`, `density`, `is_valley`, `is_mode`. Figures F6 and F13 |
-| `<sample>.embedding.csv` | **barcode** | the 2-D coordinates of every barcode the denoiser called, with `clustered` and `cluster` joined on: `x`, `y`. Figures F10 and F11 |
+| `<sample>.embedding.csv` | **barcode** | the 2-D coordinates of every called barcode (the denoiser's call on nuclei, the aligner's on single cells), with `clustered` and `cluster` joined on: `x`, `y`. Figures F10 and F11 |
 | `<sample>.light_floor.csv` | library | that library's export: how many barcodes cleared the floor, how many sat below it, how many were not selected |
 | `<sample>.doublet_sweep.csv` | setting | the called rate at each swept `dbr.sd` for that library. `--dbr-sd-sweep` only |
 | `mito_ceiling_per_sample.csv` | library | quartiles, `derived`, `ceiling`, `clamped`, and **the population it was derived over** |
@@ -177,7 +180,8 @@ All CSV, all readable with the standard library alone.
 `thresholds_per_sample.csv` carries a second header row giving each column's scope. It is the
 quickest answer to *which numbers differ because the libraries differ*.
 
-Beside `<sample>.percell.csv` you will find a small `<sample>.apply_measure.metrics.json`. It is
+Beside `<sample>.percell.csv` you will find `<sample>.apply_measure.params.json`, what the op was
+asked for, and a small `<sample>.apply_measure.metrics.json`. The second is
 not a result: it records the size and modification time of each output **as the process that wrote
 them finished writing**, which is how the caller tells a file this run produced from one that was
 already there under the same name. Left in place because a proof that is deleted proves
@@ -193,6 +197,7 @@ nothing.
 | `removal_by_criterion.csv` | (library, criterion) | `n_fired` — every observation the criterion removed, and `n_sole` — the ones no other criterion would have removed. The counts overlap, so `n_fired` sums to more than `n_removed_any`; `n_sole` is the number that says whether a threshold did work of its own. A `sample` of `ALL` is the cohort total, not one more library. Rendered as a table in the report beside figure F9 |
 | `ambient_summary.csv` | library | fraction removed, genes fully removed |
 | `ambient_supplied.json` | — | provenance of any denoised object supplied rather than produced here |
+| `nuclear_fraction.csv` | library | each library's median nuclear fraction with the cohort floor and the trigger: `nf_median`, `cohort_floor`, `trigger_pct`, and how many barcodes joined. Written only where the libraries carry a nuclear fraction (`cellreads_stats`), which is where `fail_mito_nf` is armed |
 | `count_floors.csv` | metric | the DECLARED count floors: `floor`, `provenance`, `declared_by`, `bounds`, `applied_to`. Written only where the floors are declared (single cells) |
 | `doublet_sweep.csv` | (library, setting) | the called rate at each swept `dbr.sd`, assembled from the per-library tables. Figure F5. Written **only** when `--dbr-sd-sweep` was given; it applies nothing and changes no deliverable |
 | `doublet_health.csv` | library | the rates the step-4 gate judged: `n_scored`, `n_called_doublet`, `rate_over_scored`. A gate whose evidence is not on disk cannot be re-checked |
@@ -200,7 +205,7 @@ nothing.
 
 > **The embedding is over the CELL-CALLED population, not the clustered one.** Step 6 clusters
 > the cells that reach the deliverable — otherwise its flags describe empty droplets — and embeds
-> every barcode the denoiser called, so the nuclei the count floors and the ceiling removed are
+> every called barcode (the denoiser's call; the aligner's on single cells), so the nuclei the count floors and the ceiling removed are
 > still in the picture. That is the only way F11 can answer whether a removal took a coherent
 > region. `clustered` is `False` for a barcode that was embedded and not clustered; it is never
 > blank, because "embedded and not clustered" is a fact about that barcode and a blank would read
@@ -225,11 +230,13 @@ nothing.
 | `report.json` | the same content as data. Every number in the HTML is in here beside it |
 | `payload.json` | what the document was built from; `scqc report` rebuilds from it |
 
-The report is organised by step. Each step block gives what the step does, **what it cannot
-establish**, the numbers it produced and the file each came from.
+`report.json` is organised by step: each record of `steps` gives what the step does, **what it
+cannot establish**, the numbers it produced and the files they came from. The HTML is organised by
+question, not by step ([REPORT_DESIGN.md](REPORT_DESIGN.md), Layout), and prints every step's limit
+in one section.
 
-**The report audits itself.** Anything the run should have recorded and did not is counted as a
-defect on the front page and listed in the JSON, because a report that silently omits a section
+**The report audits itself.** Anything the run should have recorded and did not is a defect, listed
+in the document's last section and counted in the JSON (`verdict.defect_count`), because a report that silently omits a section
 reads exactly like a complete one. A defect count above zero is normal and is not a failure of the
 run; it is the report saying what it was not given.
 
@@ -252,8 +259,9 @@ the task.
 
 ## What is not produced
 
-- **Figures are drawn by the report step**, eighteen of them, from the tables; a figure whose
-  table is missing is reported as an absence rather than omitted.
+- **Figures are drawn by the report step**, eighteen of them, from the run's tables and its
+  samplesheet (F16 from the samplesheet alone; F2, F17 and F18 read it beside their tables); a
+  figure whose data is missing is reported as an absence rather than omitted.
 - **Freshness is checked.** The payload carries the newest input's time and the report compares
   its own against it; a report older than its inputs says so.
 - **No modified inputs.** Nothing a run writes replaces anything it read. The denoised objects in

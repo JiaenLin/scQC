@@ -94,8 +94,10 @@ report carries the findings the original raised. A step that re-runs replaces it
 
 ## Modes
 
-**`evidence`** derives every threshold, writes every table and figure, and removes nothing. Use it
-to see what the data proposes before committing.
+**`evidence`** derives every threshold, writes the tables of steps 0 to 6 and the figures that need
+no per-cell table, and removes nothing. Step 7 is not in its task graph, so the per-cell tables, the
+removal ledger and the figures drawn from them (F4, F7, F9 to F12, F14, F15, F17, F18) are apply
+mode's. Use it to see what the data proposes before committing.
 
 **`apply`** does all of that and then writes the filtered objects. It is the default, and it is
 the only mode that removes anything. Before it writes, it:
@@ -166,7 +168,7 @@ too few cells scored to expect one, or a rate declared under the line, is a REVI
 Read what the refusal says before deciding it is wrong. Each one names the numbers behind it and
 what would have to be true for it to pass. The common ones:
 
-- **"the design differential exceeds 3×"** — a removal is falling much harder on one arm of the
+- **"design differential: <factor>"** — a removal is falling much harder on one arm of the
   design than another. This is the check that exists to catch a technical gradient being laid
   down where the biology is measured.
 - **"`mt_prefix` is not declared"** — species-specific and never guessed. See the quick start.

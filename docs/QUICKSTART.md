@@ -106,7 +106,7 @@ Outputs land under `results/<digest>/`:
 
 ```
 objects/   cohort.deliverable.h5ad and one filtered .h5ad per library
-tables/    every number the report quotes, as CSV
+tables/    the tables the report is built from, as CSV
 reports/   qc_report.html — open this
 figures/   (empty: every figure is embedded in the HTML)
 ```
@@ -128,14 +128,16 @@ Read it in this order — it is arranged as an argument, not as a log:
    libraries of the same arm is a library effect. Then the removal rate per arm, per criterion. A
    design with no aliased pair says so in one line.
 3. **Where each count floor came from, and what quality control did.** The density each valley
-   was read off; then one row per criterion — the distribution before the cut, what survived it,
-   and the threshold with how it was arrived at (DERIVED from this data, DECLARED before seeing
-   it, or ADJUDICATED by a person after reading the evidence; per library, or one cohort
-   constant).
-4. **Findings.** Every REFUSE and REVIEW, with the step that raised it. REVIEW does not stop a
-   run; it means a person has to look.
-5. **What this run could not establish.** Each step states its own limit. An omitted limit reads
+   was read off; then a row for each count floor, the mitochondrial ceiling and the doublet call —
+   the distribution before the cut, what survived it, and the threshold with how it was arrived at
+   (DERIVED from this data, DECLARED before seeing it, or ADJUDICATED by a person after reading
+   the evidence; per library, or one cohort constant). The cell call and the joint mitochondrial
+   criterion have no row there; the table of what each criterion removed, below it, holds all of
+   them.
+4. **What this run could not establish.** Each step states its own limit. An omitted limit reads
    as no limit.
+5. **Findings.** Every REFUSE and REVIEW, with the step that raised it. REVIEW does not stop a
+   run; it means a person has to look.
 
 A figure that could not be produced says so, in its place, with the reason. That is not the same
 as a figure nobody wanted, and the report does not let the two look alike.
@@ -156,4 +158,4 @@ number in it can change.
 - **[User guide](USER_GUIDE.md)** — every command, resuming, approvals, and what to do when a gate
   refuses.
 - **[How each filter is calculated](FILTERS.md)** — the exact procedure behind each threshold.
-- **[Output reference](OUTPUTS.md)** — every file and every column.
+- **[Output reference](OUTPUTS.md)** — the files a run writes and their columns.
