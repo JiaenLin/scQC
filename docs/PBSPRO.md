@@ -2,7 +2,8 @@
 
 How to run a multi-library cohort as PBS jobs, end to end.
 
-scQC's `--executor pbs` turns each per-library step into its own PBS job and waits for it. One
+scQC's `--executor pbs` turns each command a task runs (the aligner, the denoiser, the doublet
+script, each scanpy operation on an object) into its own PBS job and waits for it. One
 orchestrator job submits and supervises; the heavy per-library work fans out. This document is the
 procedure: what the environment must provide, how to size the allocation, what the job script has
 to do, and how to check the run afterwards.
@@ -42,12 +43,14 @@ The rest of the environment:
 
 ## 2. Size the orchestrator for the whole pipeline
 
-> **`--executor pbs` sends only the SHELL half of a task to PBS. The Python half runs in the
+> **`--executor pbs` sends only the COMMANDS a task runs to PBS. The rest of the task runs in the
 > orchestrator's allocation.**
 
-A task's declared `cpus`/`memory_gb`/`walltime_h` govern **the child job it submits**. Everything
-scQC does in Python runs where you submitted it: reading each `.h5ad`, exporting the matrix the R
-step consumes, every cohort-level step, and the whole report build.
+A task's declared `cpus`/`memory_gb`/`walltime_h` govern **the child job it submits**. A child job
+is one command: the aligner, the denoiser, the R doublet script, or one scanpy operation on an
+object (`qc`, `valley`, `cluster`, `apply_measure`, `apply_write`, `convert`: each a Python
+subprocess under `--python`). Everything else scQC does in Python runs where you submitted it:
+exporting the matrix the R step consumes, every cohort-level step, and the whole report build.
 
 So do not submit the orchestrator as a one-core helper.
 
@@ -91,7 +94,7 @@ Start from your site's PBS template if it has one. Every job script needs these 
 #PBS -N scqc_run
 #PBS -q <your-queue>                       # from `qstat -Q`, not from a guess
 #PBS -l select=1:ncpus=<N>:mem=<M>gb      # per CHUNK; check against the queue ceiling
-#PBS -l walltime=<HH:MM:SS>              # the server default is 5 minutes
+#PBS -l walltime=<HH:MM:SS>              # set it: a site's default can be minutes
 #PBS -j oe
 
 set -euo pipefail            # without it a failed step runs on and PBS records exit 0
@@ -195,8 +198,8 @@ qsub -v RUNDIR="$RUNDIR",TOOLHEAD="$(git -C <tool> rev-parse HEAD)" \
      <job>.pbs
 ```
 
-**Record the job id the same day.** PBS keeps job history for 24 hours; after that the log file in
-the run directory is the only evidence the job existed.
+**Record the job id the same day.** PBS keeps a finished job's history for a limited time (a site
+setting); after that the log file in the run directory is the only evidence the job existed.
 
 Note also that a **compute node has no `git`** — pass the commit in with `-v` and write it into the
 run directory rather than resolving it inside the job.

@@ -44,19 +44,25 @@ detector that fails on one arm imports that failure into every count downstream 
 do so while every per-sample number looks unremarkable, which is why the check is on the ratio
 across arms rather than on any library's own rate.
 
-All three bound the ratio by materiality, for the reason set out under rule 3, and all three
-report rather than refuse when one arm is at zero: a ratio against zero is **undefined**, not
-infinite, and manufacturing a huge number out of it refuses runs that removed almost nothing.
-A one-sided loss is still raised — as a REVIEW, with the arms printed — because it is exactly
-the shape the check exists to catch even when the ratio cannot express it.
+All three bound the ratio by materiality, for the reason set out under rule 3, and none divides
+by an arm at zero: a ratio against zero is **undefined**, not infinite, and manufacturing a huge
+number out of it refuses runs that removed almost nothing. What happens then differs by step. The
+ambient audit lets materiality decide: one arm at zero and another removing at least 1% is a
+REFUSE, because that is the most one-sided a removal can be, and under 1% it is a REVIEW. The
+cell-call gate raises a one-sided loss as a REVIEW, with the arms printed, because it is exactly
+the shape the check exists to catch even when the ratio cannot express it. The doublet check
+records a REVIEW on the differential, and a library that called nothing is judged by its
+silent-library check.
 
 **Reporting a refusal and enforcing one are separate calls.** These three modules build findings
 and reduce them with `verdict()` to `REFUSE`, `REVIEW` or `PASS`. Returning the string `"REFUSE"`
 does not stop anything — the caller does: the `scqc` subcommand exiting 2, and in a run
-`Pipeline.gate` raising before the next step. The modules that stop a run themselves are the ones that would otherwise hand back a
+`Pipeline.gate` raising before the next step. The modules that raise themselves are the ones that would otherwise hand back a
 usable value alongside the verdict: a derived threshold (`modules/05_quality/quality.py`) or a
 removal (`modules/07_apply/apply.py`) raise, because returning a number and a complaint together
-is an invitation to take the number and drop the complaint.
+is an invitation to take the number and drop the complaint. In a run, step 5 records a refused
+count-floor derivation as a REVIEW and carries no floor forward; the stop comes at step 7, which
+refuses to apply without one.
 
 Two corollaries:
 
@@ -89,8 +95,8 @@ you cannot enumerate afterwards is a removal nobody can question.
 
 ## 3 · A gate that fires on correct behaviour gets switched off
 
-Every refusal in this pipeline is bounded so it cannot fire on a legitimate run. Three concrete
-forms that bound takes:
+A refusal in this pipeline is meant to be bounded so that it does not fire on a legitimate run.
+Three concrete forms that bound takes:
 
 - **Bound a ratio by materiality.** A tenfold differential computed from 10 observations against 1
   (an illustration) is arithmetic, not evidence. Gates carry a materiality floor as well as a ratio, so a run is not
@@ -129,8 +135,7 @@ recognisable shapes, and all three have been found in this pipeline:
   deviations.
 
 Each looked exactly like a correct result. The pipeline now reports never-examined as its own
-category everywhere it appears — in the tables, in the gates, and as its own colour in the
-figures.
+category: in the tables, in the gates, and as its own colour in the figures.
 
 ---
 

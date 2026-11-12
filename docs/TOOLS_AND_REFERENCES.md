@@ -26,7 +26,7 @@ filtered by `celescope utils mkgtf` with its **default attributes, which retain 
 release from `SPECIES`, `ASSEMBLY` and `ENSEMBL_RELEASE`, and refuses to start without all three: none
 has a default.
 
-That row records **the index's gene count**, and the count is the point of recording it. A gene count is the
+A complete row's notes record **the index's gene count** (elided above), and the count is the point of recording it. A gene count is the
 cheapest available check that an index is the one the registry claims: rebuild from the same
 release with the same `mkgtf` attributes and it must come out identical. A different count means
 the release, the filter attributes or the annotation differs from what was declared, and every
@@ -35,7 +35,9 @@ downstream matrix inherits that difference without saying so.
 **Intron retention is the reference's most consequential property.** For single-nuclei data most
 reads are intronic; an exon-only reference silently discards the majority of the signal and still
 produces a matrix that looks like data. Any reference added to the registry must record whether
-introns are retained, because it cannot be recovered from the index by inspection.
+introns are retained, because it cannot be recovered from the index by inspection. That is a rule
+for whoever writes the row: scQC reads its first three columns (species, build, path) and checks
+none of the others.
 
 ## Tools — the recipe is owned, the environment is not
 
@@ -59,7 +61,7 @@ conf/env/
   install_cellbender.sh       the denoiser, from its lock: cellbender 0.3.2, torch 2.5.1, numpy 1.26.4
   install_cs_cb.sh            celescope 2.7.3; its cellbender component calls install_cellbender.sh
   install_rdoublet.sh         R 4.3.3, scDblFinder 1.16.0, xgboost, Matrix — the supported route
-  install_scdblfinder.sh      superseded: the same packages built from source
+  install_scdblfinder.sh      superseded: scDblFinder and scds built from source, xgboost unpinned
   build_reference.sh          the reference build, start to finish
   conda_pkgs_v2.7.3.txt       the celescope solve
 ```
@@ -83,7 +85,8 @@ A pinned R package is checked as R reports it, which is not always conda's numbe
 
 ## One version fact worth carrying
 
-STAR **2.7.11a**, supplied by the celescope conda environment. It is not pinned independently
-anywhere, which means a rebuilt environment could silently arrive with a different STAR. The
-registry records the version each reference was built with, so an index and an aligner that no
-longer match can at least be detected.
+STAR **2.7.11a**, supplied by the celescope conda environment. It is pinned in one place, the
+shipped solve (`conf/env/conda_pkgs_v2.7.3.txt`, `star=2.7.11a`), and `conf/env/install_cs_cb.sh`
+ends by reading `STAR --version` and fails the build on any other. The registry records the
+version each reference was built with, so an index and an aligner that no longer match can be
+detected.

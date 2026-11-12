@@ -1,7 +1,8 @@
 # The calibration cohort
 
-Every threshold in this pipeline that is not a published default was first measured against one
-real dataset. This file says what kind of dataset that was, what was calibrated on it and how, what
+The nucleus thresholds in this pipeline that are not published defaults were first measured against
+one real dataset; the single-cell count bounds and floors are declared, not measured
+(`docs/FILTERS.md`). This file says what kind of dataset that was, what was calibrated on it and how, what
 it can support, and - more importantly - what it cannot.
 
 ## What it was
@@ -23,7 +24,7 @@ keeps should say what it is: a default, a bound with its reason, a published val
 One thing that does name a species is the worked registry row in `docs/TOOLS_AND_REFERENCES.md`,
 and it is worth saying what it is so it is not read as a leak. It is an **example of a registry
 entry** - it shows what a complete one has to record: species, build, the command that built it,
-the aligner version, the gene count and whether introns are retained. No registry ships with scQC:
+the aligner version and, in its notes, the gene count and whether introns are retained. No registry ships with scQC:
 each project passes its own with `--registry`, and the tool falls back to none.
 
 ## Why the numbers are not here
@@ -36,7 +37,9 @@ a portable tool must not carry (harness autodev W048). The measurements are the 
 cohort's and live in its records; this file keeps what was calibrated, how, and what the
 measurement showed, in words. The tests assert against synthetic values whose expected results
 are computed, not against one cohort's numbers; the last test still running on the cohort's own
-valleys (`tests/test_quality.py`) moved to synthetic ones in W048's fix round.
+valleys (`tests/test_quality.py`) moved to synthetic ones in W048's fix round. One suite still
+reads a cohort, and only one you hold: `tests/test_audit_ambient.py` audits the directory
+`COHORT_DIR` names, and skips without it.
 
 The design *structure* is kept, as a generic two-level factor, because two of the pipeline's gates
 exist specifically to catch a loss that falls on one arm of a design and cannot be exercised by a
@@ -46,12 +49,12 @@ fixture that has no arms.
 
 | parameter | how it is set | how it varied across the cohort's libraries | class |
 |---|---|---|---|
-| ambient learning rate | one cohort-wide decision from the per-library fits | - | DERIVED per cohort |
-| UMI floor | the density valley | substantially, per library | DERIVED per dataset |
-| gene floor | the density valley | bimodal in every library | DERIVED per dataset |
+| ambient learning rate | one cohort-wide decision, a person's, from the per-library fits the tool compares | - | decided per cohort; the tool assesses the fits, it derives no rate |
+| UMI floor | the density valley (nuclei; declared on cells) | substantially, per library | DERIVED per dataset |
+| gene floor | the density valley (nuclei; declared on cells) | bimodal in every library | DERIVED per dataset |
 | mito ceiling | **per library**, inside a declared bound | **severalfold in Q3** | **DERIVED per library**; bound and, on snRNA, `k` both DECLARED |
-| doublet `dbr.sd` | the sweep | the default was prior-driven | DERIVED per dataset |
-| cluster A / B / C | proposed from the cohort's own cluster distributions | the values are the cohort's | **ADJUDICATED** |
+| doublet `dbr.sd` | declared (`--dbr-sd`, or `dbr_sd` per library); the sweep (`--dbr-sd-sweep`) shows what each setting would call and applies nothing | the default was prior-driven | DECLARED per run: it describes this cohort's loading and is re-declared, not carried |
+| cluster A / B / C | B and C proposed from the cohort's own cluster distributions; A a convention (0.5) | the values are the cohort's | proposed, not approved; a value in `decisions.yml` replaces it |
 | cell-call REVIEW / REFUSE | 5% / 10% | a library on the REVIEW line | DECLARED |
 | design differential refusal | 3x | observed far below it | DECLARED |
 
@@ -177,16 +180,18 @@ Stated plainly, because this is the section that is usually omitted:
 - **Whether any of it generalises.** n = 1 cohort, one tissue, one species, one platform. Every
   result above is an existence proof that the method works somewhere, not evidence of a range.
 - **The tier-2 tolerance.** The stochastic steps - ambient correction, doublet scoring - have a
-  run-to-run spread that has **never been measured**. Until a repeat run exists, the pipeline
-  records that tolerance as `UNMEASURED` and will not assert one.
+  run-to-run spread that has **never been measured**. Until a repeat run exists, no tolerance
+  is asserted: the code holds none and the report prints none.
 - **Whether the gate thresholds are correctly placed.** The 5% / 10% cell-call lines and the 3x
   design-differential line were set against distributions from this cohort and one accepted
   outcome. A threshold that has never fired in anger is a hypothesis.
-- **Anything about single-cell (as opposed to single-nuclei) data.** CellBender is mandatory for
-  nuclei and never run on cells (`CELLBENDER_RUNS`); the single-cell route has run on one real cell
-  cohort only, and every nucleus-calibrated line it uses (the resolution, the doublet and cell-call
-  lines, the design-differential line) is a per-assay table whose single-cell entry says it was
-  calibrated on nuclei and is unmeasured on cells.
+- **Anything about single-cell (as opposed to single-nuclei) data.** CellBender runs on nuclei
+  (unless a library declares its correction skipped) and never on cells (`CELLBENDER_RUNS`); the
+  single-cell route has run on one real cell cohort only, and the nucleus-calibrated lines it reads
+  from per-assay tables (the resolution, the doublet silence line, the cell-call lines, the
+  design-differential line) carry a single-cell entry that says it was calibrated on nuclei and is
+  unmeasured on cells. Two more were set on nuclei and are single constants on both assays: the
+  doublet step's spread lines (`SPREAD_IMPOSED`, `SPREAD_UNSTABLE`), which only REVIEW.
 - **Droplet-free or plate-based protocols.** Not supported and not tested.
 
 ## How to calibrate on your own data
@@ -195,7 +200,8 @@ Run `--mode evidence` to see what the data proposes: it derives every DERIVED pa
 nothing, and writes the report described in `docs/REPORT_DESIGN.md`. Apply mode, the default,
 applies the DERIVED and DECLARED values and records them as such. Where you disagree with one, write
 an ADJUDICATED override into `decisions.yml` - the value, who approved it and their own words - and
-run apply again; the report then shows the override beside what the data proposed.
+run apply again; the report's parameter table then shows the override as ADJUDICATED (who approved
+it, and their words, are in `report.json` and in STATUS.json's `escapes`).
 
 Both modes are built and run end to end, locally or on a scheduler. The per-step subcommands remain
 for judging tables you produced elsewhere — `scqc quality --valleys … --metric umi --assay snrna` will

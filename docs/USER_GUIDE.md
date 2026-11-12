@@ -82,8 +82,8 @@ results/8f2a91c4d7e0/INPUTS.json   ← what that digest was computed from
 Same inputs → same directory, and completed work is reused. Change a declared parameter, or the
 code, and the digest changes with it, so the new run writes **beside** the old one rather than
 over it. **The decisions file is the exception:** it is not in the digest, so an apply run with a
-changed `decisions.yml` runs in the same directory, re-runs the tasks that carry it (steps 5 to 7)
-and replaces their outputs.
+changed `decisions.yml` runs in the same directory, re-runs the tasks that carry it (steps 5 to 7,
+and the gate of step 1, 2 or 4 an `accept` entry names) and replaces their outputs.
 
 A task is skipped when all three hold: it completed before, its signature is unchanged, and every
 output it recorded is still on disk. **Delete an output to force its task to re-run** — deleting
@@ -162,8 +162,9 @@ uncalled droplet or unexamined cell kept, no doublet call outside the examined s
 can fire on a correct run. An accept entry naming an integrity check is refused by name, and that
 refusal says how to measure the library again. Of the removal audit, only "step 3: the light floor is strictly below
 the quality floor" can be accepted (docs/WORKFLOW.md, "How a refusal is delivered"). A library
-under the doublet "silent" line is refused only where its own declared rate predicted doublets -
-too few cells scored to expect one, or a rate declared under the line, is a REVIEW.
+under the doublet "silent" line is refused where its own declared rate predicted doublets (or
+where no declared rate reached the check) - too few cells scored to expect one, or a rate declared
+under the line, is a REVIEW.
 
 Read what the refusal says before deciding it is wrong. Each one names the numbers behind it and
 what would have to be true for it to pass. The common ones:
@@ -208,8 +209,8 @@ the symbols are kept in `var["gene_symbol"]`. Symbol matching on a delivered obj
 
 ## Running on a cluster
 
-scQC's executor submits each task as its own job where a scheduler is configured, and each job
-writes its own log. On PBS Pro, `#PBS -o` resolves against the *submitting* host, so a job that
+scQC's executor submits each command a task runs as its own job where a scheduler is configured,
+and each job writes its own log. On PBS Pro, `#PBS -o` resolves against the *submitting* host, so a job that
 lands on another node can exit 0 having delivered nothing; scQC redirects inside the job script
 instead and treats the exit marker in the log as authoritative over `qstat`.
 

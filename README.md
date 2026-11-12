@@ -31,7 +31,8 @@ setup/install_env.sh --prefix ~/scqc-env --all
 
 Four environments, because the aligner, the denoiser and the analysis stack have mutually
 incompatible pins. Select with `--with-celescope`, `--with-cellbender`, `--with-doublet` or
-`--all`. Requires conda, mamba or micromamba. Each Python environment is built from a lock in
+`--all`. Uses micromamba, mamba or conda, and fetches micromamba into the prefix when none is
+found. Each Python environment is built from a lock in
 `conf/env/` — every package at one exact version, the interpreter's patch included — with
 `pip install --no-deps`, and every installed version is compared with the lock afterwards. The
 denoiser's lock must pin torch 2.5.1 and numpy 1.26.4; any other is refused before anything is built.
@@ -58,7 +59,8 @@ task.
 
 ## Parameter classes
 
-Every parameter carries a class, and the class determines who may set it.
+Every parameter in the report's parameter table carries a class, and the class determines who may
+set it.
 
 | class | meaning | set by |
 |---|---|---|
@@ -101,10 +103,11 @@ Nuclei are denoised by CellBender (mandatory, unless a skip is declared in the s
 denoiser's call is the cell call. **CellBender is never run on single cells** (the PI, 2026-10-02);
 no other ambient method is built for cells here yet, and one may be added per assay. On single
 cells the raw counts are the object, the aligner's call (`aligner_cells`) is the cell call, and the
-count bounds and the cluster check are the whole-cell ones. Every line calibrated on nuclei - the
+count bounds and the cluster check are the whole-cell ones. Four lines calibrated on nuclei - the
 clustering resolution, the doublet silence line, the cell-call gate lines, the design-differential
-line - is a per-assay table with its provenance; the single-cell entries carry the same values and
-say they were calibrated on nuclei. Apply mode runs on single cells too: step 7's cell criterion is
+line - are per-assay tables with their provenance; the single-cell entries carry the same values and
+say they were calibrated on nuclei (the doublet step's two spread lines, which only REVIEW, are
+single constants on both assays). Apply mode runs on single cells too: step 7's cell criterion is
 `fail_not_aligner_cell`, over the aligner's called cells. A single-cell library may also arrive
 as called cells only - the authors' filtered matrix, as most public single-cell data is published:
 it is accepted as a **cell-called input**, its own barcodes are the cell call, and the run records,
@@ -183,8 +186,9 @@ All enforced today:
   declared parameters, the mode and a digest of the pipeline's output-bearing code - a commit that
   changes only docs or tests keeps it, and the commit itself is recorded beside it. A directory
   records the inputs it was claimed for and refuses a run described differently. `decisions.yml` is NOT in the digest: an
-  apply run with a changed decisions file runs in the same directory, re-runs the tasks of steps 5
-  to 7 that carry it, and replaces their outputs.
+  apply run with a changed decisions file runs in the same directory, re-runs the tasks that carry
+  it (those of steps 5 to 7, and the gate of step 1, 2 or 4 an `accept` entry names), and replaces
+  their outputs.
 - **Gates return a verdict, not a warning.** Each reduces to `REFUSE`, `REVIEW` or `PASS`, and the
   subcommands exit 2 on refusal. Reporting and enforcing are separate calls. A REFUSE can be
   accepted in `decisions.yml` (`accept: [{step, check, approved_by, verbatim}]`), by a named person

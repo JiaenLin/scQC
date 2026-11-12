@@ -46,7 +46,7 @@ number read as calibrated.
 
 ## 3. A parameter carries a class
 
-Every parameter is FIXED, DERIVED, DECLARED or ADJUDICATED — see the table in
+Every parameter must be FIXED, DERIVED, DECLARED or ADJUDICATED — see the table in
 [README.md](README.md). A new parameter without a class, or an ADJUDICATED parameter with a
 default, is a defect. DERIVED means the procedure is fixed and the value is computed per dataset;
 if you find yourself adding a command-line argument for a value the data can produce, it belongs in

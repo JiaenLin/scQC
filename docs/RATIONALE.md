@@ -14,7 +14,9 @@ Three failures motivated this pipeline. Each is quiet, each survives review, and
 by a run that completes successfully.
 
 - **A delivered matrix that was already filtered.** Pre-filtered input cannot be un-filtered, and
-  nothing downstream can tell. scQC verifies that its input is raw and refuses otherwise.
+  nothing downstream can tell. scQC verifies that a supplied matrix is raw; one that is not is
+  rebuilt from FASTQ where reads were given and refused where they were not (on single cells a
+  cell-called matrix is accepted, and named: step 0 below).
 - **A doublet rate set by its prior rather than by the data.** The detector's default expected rate
   dominated the call. scQC checks whether the rate is a measurement, and sweeps that parameter on request.
 - **A threshold that transferred badly.** Across the libraries of a single cohort — one tissue, one
@@ -63,7 +65,8 @@ rather than by preference.
   to a non-10x run tracked library size closely and would have imported a spurious condition
   differential onto the study's primary readout.
 - **5 · quality** — the clearest case in the pipeline of a procedure transferring where a number
-  cannot. The count floors are *measured* as the density valley between the debris and cell modes,
+  cannot. On nuclei the count floors are *measured* as the density valley between the debris and cell
+  modes (on single cells they are declared),
   and bimodality is tested rather than assumed, because a density minimum exists in any smooth
   curve. On snRNA the mitochondrial `k` is **declared**, not derived, and the reason is biology: a
   nucleus contains no mitochondria, so `pct_counts_mt` there measures cytoplasmic carry-over —

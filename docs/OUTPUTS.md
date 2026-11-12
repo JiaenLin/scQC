@@ -250,10 +250,11 @@ run; it is the report saying what it was not given.
 declared outputs, metrics and log path. It is what makes a re-run reuse completed work — delete it
 to force everything to run again.
 
-`work/<digest>/` also holds intermediates that no downstream step opens — the keep-lists and
-annotation tables step 7 hands to the writer. The per-barcode criteria tables are **not** here:
-they are a deliverable and live in `tables/`. `logs/<digest>/` holds one log per task, named for
-the task.
+`work/<digest>/` also holds intermediates that no downstream step opens. The keep-lists and
+annotation tables step 7 hands to the writer are scratch files: under `$SCQC_SCRATCH` where it is
+set, else under `work/<digest>/` on a scheduler run and under the temporary directory on a local
+one. The per-barcode criteria tables are **not** here: they are a deliverable and live in
+`tables/`. `logs/<digest>/` holds one log per task, named for the task.
 
 ---
 
@@ -264,5 +265,6 @@ the task.
   figure whose data is missing is reported as an absence rather than omitted.
 - **Freshness is checked.** The payload carries the newest input's time and the report compares
   its own against it; a report older than its inputs says so.
-- **No modified inputs.** Nothing a run writes replaces anything it read. The denoised objects in
-  `objects/` are the run's own copies; the matrices named in the samplesheet are never written to.
+- **No modified inputs.** A run's writers take their destinations from the run's own directories
+  (`results/<digest>/`, `work/<digest>/`, `logs/<digest>/` and its scratch). The denoised objects in
+  `objects/` are the run's own copies of what the samplesheet names.

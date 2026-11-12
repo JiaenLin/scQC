@@ -1,7 +1,8 @@
 # Known issues
 
-Defects that are measured, reproduced and not yet fixed. A pipeline that reports its own limits is
-the point of this project, so they are written here rather than left in a run log.
+Defects that were measured and reproduced: the open ones, and the fixed ones with what each fix
+taught. A pipeline that reports its own limits is the point of this project, so they are written
+here rather than left in a run log.
 
 ## 1. Step 6 clustered the wrong population — FIXED in `02a422d`, verified
 
@@ -247,7 +248,7 @@ environment is not pinned (section 7).
   other (`$TMPDIR/scqc_<folder name>`). Local and `SCQC_SCRATCH` scratch is named for the run;
   the PBS scratch path is unchanged. `tests/test_runs_do_not_share_scratch.py`.
 - **`refuse_if_stale` had no caller** while the README said a stale report is refused. It is
-  removed, and the documents say what is true: staleness is flagged on the report's face and
+  removed, and the documents say what is true: staleness is a row of the page's defects section and
   counted as a defect, never refused.
 
 ## 6. Open, found or confirmed while making W007
@@ -256,8 +257,8 @@ environment is not pinned (section 7).
   single-cell audit). Nothing estimates the ambient fraction on a library this pipeline does not
   denoise, and the report says NOT MEASURED. A capability, not a defect fixed here.
 - **`decisions.yml` is not in the run key.** An apply run with a changed decisions file runs in the
-  same `results/<digest>/`, re-runs the tasks of steps 5 to 7 that carry it and replaces their
-  outputs. Documented (README, user guide), not changed.
+  same `results/<digest>/`, re-runs the tasks that carry it (those of steps 5 to 7, and the gate of
+  step 1, 2 or 4 an `accept` entry names) and replaces their outputs. Documented (README, user guide), not changed.
 - **Step 6's declared thresholds need no attestation.** A `cluster_check` value in decisions.yml
   replaces step 6's proposal as written, with no `approved_by` or `verbatim`, unlike the quality
   thresholds step 7 applies.

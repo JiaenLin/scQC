@@ -10,7 +10,7 @@ data that will be discarded anyway. Where the two populations differ, the sectio
 why — the difference is deliberate in every case below, and the reason is never the same twice.
 
 **Unknown is never a value.** A quantity that could not be computed is emitted as missing (`None`;
-`pd.NA` or `NaN` on a delivered object), never as `0` or `False`. Every gate is three-valued, and a blank must not read as a pass. This
+`pd.NA` or `NaN` on a delivered object), never as `0` or `False`. Step 6's flags are computed in three-valued logic, a gate reports an undefined ratio as undefined, and a blank must not read as a pass. This
 matters most where it is least visible: `NaN >= 50` is `False` and nothing objects, so a missing
 input would otherwise turn into a silent clearance.
 
@@ -372,8 +372,9 @@ Three of the lines are declared per assay (`ZERO_RATE`, `DESIGN_REFUSE`, `MATERI
 clustering resolution): the same values on `snrna` and `scrna` today, every one set against
 nuclei, and the single-cell entry says so (`LINES_SOURCE`). The two spread lines (`SPREAD_IMPOSED`,
 `SPREAD_UNSTABLE`) are one constant each, with no per-assay entry. A library under the silence line is
-refused only where its own declared rate predicted at least one doublet among the cells it
-scored; otherwise the silence is what the declaration predicts, and it is reported.
+refused where its own declared rate predicted at least one doublet among the cells it
+scored, or where no declared rate or scored count reached the check; otherwise the silence is what
+the declaration predicts, and it is reported.
 
 The materiality condition on the last one is deliberate: a ratio between two near-zero rates is
 dominated by single libraries, and is reported rather than refused.

@@ -36,8 +36,9 @@ checked against it afterwards; `setup/install_env.sh --check --all` reads the lo
 setup/init_project.sh --dir ~/projects/my-study --assay snrna --samples 10
 ```
 
-scQC never writes inside its own directory. One installation serves any number of datasets, and
-upgrading the pipeline cannot disturb a result you already have.
+A run writes its results, work files and logs under the project, not under scQC's own directory
+(Python's byte-code cache, `__pycache__/`, is the one thing written there). One installation serves
+any number of datasets, and upgrading the pipeline cannot disturb a result you already have.
 
 ## 3 · Fill in the samplesheet
 

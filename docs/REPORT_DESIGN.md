@@ -309,19 +309,27 @@ UMI floor drawn over a gene density would be a line in the wrong units on every 
 that showed the derivation of one applied threshold and not the other would be showing half the
 filter while looking complete.
 
-### Rules every figure obeys
+### Rules the figures are built to
 
-Each of these exists because its absence produced a wrong reading at least once.
+Each of these exists because its absence produced a wrong reading at least once. They are rules for
+whoever draws a figure, kept by reading: no test enforces them, and where the eighteen figures
+depart from one it is said here.
 
-- **No legend states a number the code did not compute.** Every annotation is passed in, never
-  typed.
+- **No legend states a number the code did not compute.** The drawing functions take their cuts,
+  counts and denominators as arguments.
 - **Never-examined is its own colour.** Never merged into a negative.
-- **Every rate carries its denominator**, in the axis label or the annotation.
+- **A rate carries its denominator**, in the axis label or the annotation; F10 and F11 state
+  theirs in the figure's subtitle.
 - **Same scale across libraries** in any panel meant for comparison. A per-panel scale makes a
   4× difference look identical to a 4% one.
-- **n on every panel.** A figure with no n reads as universal whether or not that was meant.
-- **A threshold is drawn, never described.** If a cut is at a value, there is a line at that value.
-- **Colour is not the only encoding.** Every flag also has a shape or a label.
+- **n on the panel**, because a figure with no n reads as universal whether or not that was
+  meant: F1 to F6, F8, F9, F13, F16's map, F17 and F18's first panel print one. The before-and-after
+  violins (F7, F12, F14, F15) print each library's median and the cut, and the embeddings (F10,
+  F11) the share highlighted and the count never determined; neither prints an n.
+- **A threshold is drawn, never described.** If a cut is at a value the figure was given, there is
+  a line at that value.
+- **Colour is not the only encoding** where a flag marks few objects: F8's four states have four
+  markers and F4's never-scored bar a hatch. F10 and F11 separate their three states by colour.
 - **Log axes labelled in original units**, with real ticks.
 
 ---
