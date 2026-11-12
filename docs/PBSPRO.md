@@ -3,7 +3,7 @@
 How to run a multi-library cohort as PBS jobs, end to end.
 
 scQC's `--executor pbs` turns each command a task runs (the aligner, the denoiser, the doublet
-script, each scanpy operation on an object) into its own PBS job and waits for it. One
+script, the matrix statistics at ingest, each scanpy operation on an object) into its own PBS job and waits for it. One
 orchestrator job submits and supervises; the heavy per-library work fans out. This document is the
 procedure: what the environment must provide, how to size the allocation, what the job script has
 to do, and how to check the run afterwards.
@@ -47,9 +47,9 @@ The rest of the environment:
 > orchestrator's allocation.**
 
 A task's declared `cpus`/`memory_gb`/`walltime_h` govern **the child job it submits**. A child job
-is one command: the aligner, the denoiser, the R doublet script, or one scanpy operation on an
-object (`qc`, `valley`, `cluster`, `apply_measure`, `apply_write`, `convert`: each a Python
-subprocess under `--python`). Everything else scQC does in Python runs where you submitted it:
+is one command: the aligner, the denoiser, the R doublet script, the pass that takes a supplied
+matrix's statistics at ingest, or one scanpy operation on an object (`qc`, `valley`, `cluster`,
+`apply_measure`, `apply_write`, `convert`: each a Python subprocess under `--python`). Everything else scQC does in Python runs where you submitted it:
 exporting the matrix the R step consumes, every cohort-level step, and the whole report build.
 
 So do not submit the orchestrator as a one-core helper.
