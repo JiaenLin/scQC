@@ -9,7 +9,7 @@ here rather than left in a run log.
 `_op_cluster` opened the denoised FULL DROPLET matrix while `cluster_flags.py` specified the
 quality-filtered one. It now receives a `population` — cell call, count floors and the library's
 mitochondrial ceiling — and applies it before clustering. Doublets stay ATTACHED and NOT applied,
-because criterion D is only computable before a removal.
+because a cluster's doublet percentage is only computable before a removal.
 
 **Verified on the calibration cohort:** the `population clustered` REVIEW is gone; clusters per
 library fall in a much narrower range than when droplet contamination set them (the counts are in

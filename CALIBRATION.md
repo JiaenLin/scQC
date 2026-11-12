@@ -111,7 +111,9 @@ the mitochondrial fence does not.
 
 ```
 k_i = (Q3_i + 1.5*IQR_i - median_i) / (1.4826 * MAD_i)      per library
-k   = round(median(k_i))                                     scRNA: ONE cohort constant, DERIVED
+k   = round(median(k_i))                                     scRNA: ONE cohort constant, DERIVED,
+                                                               then held within 3 to 10; outside,
+                                                               the edge applies, said as a REVIEW
                                                              snRNA: computed and REPORTED, not used
 raw = median + k * 1.4826 * MAD                              applied
 ```
@@ -214,7 +216,11 @@ defect this pipeline exists to catch, arriving in prose.)*
 
 ## The clustering resolution - measured, 2026-08-13
 
-The applied resolution is **2.0**, and the reason is criterion D. A doublet pocket is small; at a
+The applied resolution is **2.0**, and the reason was criterion D: a cluster's doublet frequency
+above a threshold. **D was removed on 2026-08-15** (`tests/test_cluster_flags.py` keeps it out), so
+step 6 flags no doublet pocket today: the cluster's doublet percentage is reported, and no criterion
+reads it. The sweep is kept as the evidence the value was chosen on, and is still its recorded
+source (`cluster_flags.RESOLUTION_SOURCE`). A doublet pocket is small; at a
 coarse resolution it dissolves into the lineage cluster around it and its doublet frequency is
 diluted to the library average. Swept over five resolutions (1.0, 1.5, 2.0, 2.5, 3.0) on the
 calibration cohort, criterion D flagged nothing below 2.0 and the same pockets from 2.0 up, while

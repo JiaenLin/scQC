@@ -338,7 +338,10 @@ run per library, never pooled.
 
 ### The procedure
 
-Barcodes at or above the light floor are exported and scored. The detector is given:
+Barcodes at or above the light floor are exported and scored. On a library read raw, not
+denoised (the single-cell route), only the **called** barcodes are taken, the aligner's call:
+the rest are never scored, and are counted apart as not selected (`n_not_selected`, beside
+`n_below_floor`). The detector is given:
 
 | Parameter | Meaning |
 |---|---|
@@ -393,21 +396,25 @@ rather than the prior, and that it does not fall unevenly across the design.
 nothing. A cluster-level removal deletes a whole population and is the most destructive class of
 removal available; it requires an explicit human decision taken elsewhere.
 
-### The four criteria
+### The three criteria
 
 | | Criterion | Fires when |
 |---|---|---|
 | **A** | low RNA | cluster median UMI < *f* × that **sample's own** median |
 | **B** | high mitochondrial | cluster median `pct_counts_mt` above a threshold |
 | **C** | uninformative | share of the cluster's top-20 markers falling in the locked uninformative set: mt+ribo on `snrna`, **mt only** on `scrna` |
-| **D** | doublet | cluster doublet frequency above a threshold |
 
 ```
-FLAG  = (A and C) or (B and C) or D
+FLAG  = (A and C) or (B and C)
 WATCH = C alone
 ```
 
-A alone, B alone, and every continuous value are **reported, not flagged**.
+A alone, B alone, and every continuous value are **reported, not flagged**. The cluster's doublet
+percentage (`pct_doublet`, over the cells the detector scored) is one of those values: no
+criterion reads it. A fourth criterion, D, flagged a cluster above a doublet frequency; it was
+removed on 2026-08-15 and no D column is written (`tests/test_cluster_flags.py`, section F, keeps
+it out). Step 7's pre-flight still reads the percentage: the survivors of a cluster above 70%
+(`apply.D_CLUSTER`) are counted and reported as a REVIEW finding, and nothing is removed.
 
 **B's floor is per assay** (`cluster_flags.B_FLOOR_PCT`). B is the cohort's p95 of cluster
 medians, so one cluster in twenty is "high" whatever the values; on healthy whole cells (medians
@@ -416,7 +423,7 @@ per-cell ceiling applied to a cell. **When no cluster carries any uninformative 
 nothing to threshold and **cannot fire** — reported, not refused. A cluster too small to rank
 (under 3 cells) has C **unknown**; the others are still evaluated. A **library** whose own called
 cells are fewer than `MIN_CELLS_TO_CLUSTER` (50, `adapters/scanpy_ops.py`) is not clustered or
-embedded: it is profiled as **one group** (A, B and D measured, C unknown) and step 6 reports it
+embedded: it is profiled as **one group** (A, B and the doublet percentage measured, C unknown) and step 6 reports it
 as a REVIEW finding naming the library. A declared population that leaves fewer than 50 of a
 library that called at least 50, or no cell at all, is a mistake in the declaration and is refused.
 
@@ -450,10 +457,11 @@ distributions, and the module proposes rather than remembers.
 
 ### Which resolution, and why more than one
 
-The default is **2.0**. At 1.0 a droplet library resolves to major lineages only, and criterion D
-cannot fire — a doublet pocket is small and dissolves into the lineage cluster around it. Measured
-on the calibration cohort: D fired on nothing at 1.0 or 1.5, and fired at 2.0 on clusters that were
-mostly doublets.
+The default is **2.0**. At 1.0 a droplet library resolves to major lineages only, and a doublet
+pocket, being small, dissolves into the lineage cluster around it. The value was measured on the
+calibration cohort with criterion D, since removed (above): D fired on nothing at 1.0 or 1.5, and
+fired at 2.0 on clusters that were mostly doublets. Nothing at step 6 flags such a pocket today;
+its doublet percentage is reported.
 
 `--extra-resolutions` (default `1.0,3.0`) profiles and flags further resolutions into **sibling
 tables** named `cluster_profile.res<r>.csv`. They change no deliverable and nothing downstream
@@ -470,13 +478,13 @@ run. The default's outputs are written first and are never at risk from a diagno
 
 Where markers were not computed C is **unknown** — and an
 unknown must never be written as `False`. `NaN >= 50` is `False` and nothing objects, which would
-quietly turn `FLAG` into the full rule at one resolution and "D alone" at every other, under one
-name. The flag counts would then differ across a sweep because of what was *calculated*, not
+quietly turn `FLAG` into the full rule at one resolution and a rule that cannot fire at every
+other, under one name. The flag counts would then differ across a sweep because of what was *calculated*, not
 because of anything in the data.
 
 The same holds inside the conjunction: `A and C` with A unknown is **unknown**, not False. Where
-markers are absent, C, FLAG and WATCH are all withheld rather than reduced to their D term — D
-itself is still reported, so nothing is hidden.
+markers are absent, C, FLAG and WATCH are all withheld rather than partially evaluated — A, B and
+every continuous value are still reported, so nothing is hidden.
 
 **Cannot establish:** whether a flagged cluster is technical. A cluster flagged for mitochondrial
 content cannot be told from a mitochondria-rich cell type without an identity.
@@ -542,7 +550,7 @@ Every retained nucleus carries what step 6 found about its cluster:
 | `sample` | the library it came from |
 | `cluster` | its cluster in that library's clustering, as a **label** — a cluster id reads as a number and is not one |
 | `cluster_FLAG`, `cluster_WATCH` | that cluster's verdicts, as `True` / `False` / **absent** |
-| `cluster_pct_doublet`, `cluster_median_pct_mt` | the continuous values behind them |
+| `cluster_pct_doublet`, `cluster_median_pct_mt` | two of the cluster's continuous values: the doublet percentage, which no verdict reads, and the median behind B |
 
 Absent is a third state and is preserved as such. A barcode step 6 never labelled, or a cluster
 missing from the profile, leaves these missing (`pd.NA`, `NaN`) — not `False` and not `0`. *"This cluster was not
@@ -551,7 +559,8 @@ conflates them claims a cluster check that did not happen.
 
 Carrying the flags forward is not a convenience. Without them the next stage has to re-cluster to
 ask a question step 6 already answered — and re-clustering a *filtered* object does not give the
-same answer, because criterion D is a tautology once the doublets have been removed.
+same answer: step 6 clusters the cells before the doublets are removed, and afterwards every
+cluster's doublet percentage is 0% by construction.
 
 Each threshold is recorded as **ADJUDICATED** (set in `decisions.yml`, with an approver and
 their own words), **DERIVED** (what the pipeline measured) or **DECLARED** (the single-cell count

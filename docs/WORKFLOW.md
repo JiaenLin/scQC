@@ -84,7 +84,7 @@ flowchart TD
     Q2 -- "yes" --> S6
 
     subgraph S6["Step 6 — Cluster check"]
-        L1["Cluster · profile · flag<br/>A low depth · B high mito<br/>C uninformative markers · D doublet"]
+        L1["Cluster · profile · flag<br/>A low depth · B high mito<br/>C uninformative markers<br/>doublet percentage reported, not flagged"]
     end
     L1 --> S7
 

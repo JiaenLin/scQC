@@ -94,7 +94,7 @@ threshold afterwards and they no longer apply.
 | 3 | light floor | technical floor for doublet scoring — not a quality filter | — |
 | 4 | doublets | score per sample, before quality filtering; flag only | — |
 | 5 | quality | derive count floors and the per-library mitochondrial ceiling | — |
-| 6 | cluster check | per-cluster flags: depth, mitochondrial, markers, doublet fraction | — |
+| 6 | cluster check | per-cluster flags: depth, mitochondrial, markers; the doublet fraction is reported, not flagged | — |
 | 7 | **apply** | measure, write the ledger, audit the removal (a failed check refuses; two of its ten checks only REVIEW), then write the filtered objects | **yes — only here** |
 
 Single nuclei and single cells take different routes, decided by the declared `assay`.

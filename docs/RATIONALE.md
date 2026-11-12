@@ -72,9 +72,9 @@ rather than by preference.
   nucleus contains no mitochondria, so `pct_counts_mt` there measures cytoplasmic carry-over —
   deriving `k` from the cohort's own tail would let a badly-prepared cohort earn itself a wider
   licence.
-- **6 · cluster check** — this is the **only** point at which the doublet-fraction criterion is
-  computable. After step 7 every cluster is 0% doublet by construction and that flag becomes a
-  tautology which passes for the wrong reason. The flags are a conjunction rather than a
+- **6 · cluster check** — this is the **only** point at which a cluster's doublet fraction is
+  computable: after step 7 every cluster is 0% doublet by construction. It is reported and flags
+  nothing (the criterion that read it was removed). The flags are a conjunction rather than a
   disjunction because a mitochondrial-marker cluster at normal coverage is the signature of a
   mitochondria-rich cell type, not of damage (what the change did on the calibration cohort is in its
   records, not here).

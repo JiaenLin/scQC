@@ -110,7 +110,7 @@ without returning to the matrix, and because report figure F17 draws it across t
 > that conflates them claims a check that did not happen. Test with `.isna()`, not `== False`.
 
 The flags are carried rather than recomputed because **re-clustering a filtered object does not
-reproduce them**: criterion D is a doublet fraction, and once the doublets have been removed every
+reproduce them**: step 6 clusters the cells before the doublets are removed, and afterwards every
 cluster is 0% doublet by construction.
 
 ### uns
@@ -191,7 +191,7 @@ nothing.
 
 | file | one row per | notes |
 |---|---|---|
-| `cluster_profile.csv` | (sample, cluster) | the profile and the A/B/C/D/FLAG/WATCH verdicts at the **applied** resolution (default 2.0). This is the one step 7 reads and the only one whose verdicts reach the object. Not joinable to barcodes — use the `cluster` column on the object |
+| `cluster_profile.csv` | (sample, cluster) | the profile and the A/B/C/FLAG/WATCH verdicts at the **applied** resolution (default 2.0). This is the one step 7 reads and the only one whose verdicts reach the object. Not joinable to barcodes — use the `cluster` column on the object |
 | `cluster_profile.res<r>.csv` | (sample, cluster) | the same columns and the same rule at each `--extra-resolutions` value. **Nothing downstream reads these.** They exist so a flag can be read across resolutions: one that fires at every resolution is a statement about the cells, one that fires at a single resolution is a statement about the clustering |
 | `removal_ledger.csv` | **removed** barcode | every criterion that fired on it, not just the first |
 | `removal_by_criterion.csv` | (library, criterion) | `n_fired` — every observation the criterion removed, and `n_sole` — the ones no other criterion would have removed. The counts overlap, so `n_fired` sums to more than `n_removed_any`; `n_sole` is the number that says whether a threshold did work of its own. A `sample` of `ALL` is the cohort total, not one more library. Rendered as a table in the report beside figure F9 |
