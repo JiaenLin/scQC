@@ -51,7 +51,7 @@ fixture that has no arms.
 | gene floor | the density valley | bimodal in every library | DERIVED per dataset |
 | mito ceiling | **per library**, inside a declared bound | **severalfold in Q3** | **DERIVED per library**; bound and, on snRNA, `k` both DECLARED |
 | doublet `dbr.sd` | the sweep | the default was prior-driven | DERIVED per dataset |
-| cluster A / B / C | 0.5x / 15% / 50% | proposed against distributions | **ADJUDICATED** |
+| cluster A / B / C | proposed from the cohort's own cluster distributions | the values are the cohort's | **ADJUDICATED** |
 | cell-call REVIEW / REFUSE | 5% / 10% | a library on the REVIEW line | DECLARED |
 | design differential refusal | 3x | observed far below it | DECLARED |
 
@@ -198,9 +198,9 @@ an ADJUDICATED override into `decisions.yml` - the value, who approved it and th
 run apply again; the report then shows the override beside what the data proposed.
 
 Both modes are built and run end to end, locally or on a scheduler. The per-step subcommands remain
-for judging tables you produced elsewhere — `scqc quality --valleys … --metric umi` will propose the
-count floor above, or refuse to. The Status table in [README.md](README.md) says what is and is not
-implemented, line by line.
+for judging tables you produced elsewhere — `scqc quality --valleys … --metric umi --assay snrna` will
+propose the count floor above, or refuse to. The Status section of [README.md](README.md) says what
+is implemented.
 
 *(This paragraph said "at `0.0.1-dev` there is no `--mode` driver and no report writer" until
 0.3.0. Both had existed since 0.2.0. A document describing software that has moved on is the same

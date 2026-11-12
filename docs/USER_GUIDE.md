@@ -18,9 +18,12 @@ New here? Start with the **[quick start](QUICKSTART.md)**.
 | `scqc doublet-health` | is a doublet rate a measurement, or the prior it was given? |
 | `scqc quality` | propose a count floor from per-library valleys |
 | `scqc cluster-preflight` | contradictions to settle before a removal is applied |
+| `scqc stamp <objects>` | add the `uns["scqc"]` declaration to objects already written |
+| `scqc describe` | print what the tool declares, as JSON |
+| `scqc fixture-run` | the development suite's fixture object, run through the pipeline |
 | `scqc selftest` | run the bundled suites |
 
-The middle five take numbers you already have and answer one question each. They exist so a
+The five from `verify` to `cluster-preflight` take numbers you already have and answer one question each. They exist so a
 decision can be checked without running a pipeline — and so the same check gives the same answer
 whether it is reached through the pipeline or by hand.
 
@@ -101,7 +104,7 @@ the only mode that removes anything. Before it writes, it:
    barcode naming the criteria that removed it;
 2. runs an audit over the completed decision (does each criterion remove anything uniquely? does
    `removed` decompose exactly into the recorded criteria? is anything unexamined reaching the
-   deliverable?). A check that fails REFUSES: the run stops there, no object is written, and the
+   deliverable?). A check that fails REFUSES (the first only REVIEWs): the run stops there, no object is written, and the
    ledger says what would have been removed;
 3. writes one object per library, then builds the cohort object by **reading those files back**.
 
@@ -169,8 +172,8 @@ what would have to be true for it to pass. The common ones:
 - **"`mt_prefix` is not declared"** — species-specific and never guessed. See the quick start.
 - **"the declared `cellbender_barcodes` disagrees with the object"** — the CSV and the denoised
   object are from different runs, so comparing the aligner against either says nothing.
-- **"a criterion removes nothing another does not"** — not necessarily wrong, but that criterion
-  is not carrying its own weight, and the report says so rather than leaving it to be noticed.
+- **"every applied criterion removes something no other does"** — a REVIEW, not a refusal: that
+  criterion is not carrying its own weight, and the report says so rather than leaving it to be noticed.
 
 ## Reading the outputs
 

@@ -16,7 +16,7 @@ by a run that completes successfully.
 - **A delivered matrix that was already filtered.** Pre-filtered input cannot be un-filtered, and
   nothing downstream can tell. scQC verifies that its input is raw and refuses otherwise.
 - **A doublet rate set by its prior rather than by the data.** The detector's default expected rate
-  dominated the call. scQC sweeps that parameter and reports whether the rate is a measurement.
+  dominated the call. scQC checks whether the rate is a measurement, and sweeps that parameter on request.
 - **A threshold that transferred badly.** Across the libraries of a single cohort — one tissue, one
   platform, one operator — the measured density valley moved substantially from library to
   library. A hard-coded `--min_umi` of the usual published size sat above the valley in nearly

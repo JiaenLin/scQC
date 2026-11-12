@@ -13,10 +13,12 @@ Outputs are stored under a name derived from what produced them:
 ```
 <project>/
 ├── results/
-│   ├── INDEX.tsv                 one line per run: digest, mode, samples, parameters, first seen
+│   ├── INDEX.tsv                 one line per run: digest, mode, samples, code, parameters, first_seen, note
 │   ├── latest ->                 a pointer to the newest run
 │   └── <digest>/
 │       ├── INPUTS.json           what this directory was claimed for
+│       ├── STATUS.json           the outcome: partial, then ok, refused or failed
+│       ├── SEALED.txt            or FAILED.txt: the seal (RUNNING.txt while the run is alive)
 │       ├── objects/              matrices
 │       ├── tables/               CSV, small enough to open
 │       ├── reports/              the rendered report and its JSON companion
@@ -25,10 +27,10 @@ Outputs are stored under a name derived from what produced them:
 └── logs/<digest>/                one log per task
 ```
 
-The digest is computed from the samplesheet's **content**, the declared parameters and the mode.
-The same inputs go to the same directory, which is what lets a re-run reuse completed work. Change
-a threshold and the digest changes with it, so the new run lands beside the old one rather than
-over it.
+The digest is computed from the samplesheet's **content**, the declared parameters, the mode and
+the bytes of the output-bearing code. The same inputs go to the same directory, which is what lets a
+re-run reuse completed work. Change a declared parameter and the digest changes with it, so the new
+run lands beside the old one rather than over it; a changed `decisions.yml` does not move it.
 
 `INDEX.tsv` is the file to read first — a directory of digests answers *where is it* and not
 *which one do I want*.
@@ -43,7 +45,7 @@ over it.
 
 | file | written by | contents |
 |---|---|---|
-| `<sample>_ambient.h5` | step 1 | the denoised matrix for one library. Every later step reads this. Unfiltered. |
+| `<sample>_ambient.h5` | step 1 | the denoised matrix for one library; on single cells, which are not denoised, the raw counts with the aligner's call. Every later step reads this. Unfiltered. |
 | `cohort_per_sample/<sample>.filtered.h5ad` | step 7 | one library, filtered. **The primary deliverable.** |
 | `cohort.deliverable.h5ad` | step 7 | all libraries, filtered, merged |
 
@@ -100,7 +102,7 @@ without returning to the matrix, and because report figure F17 draws it across t
 > installed.
 
 > **Absent is a third state and is preserved as one.** A barcode step 6 never labelled, or a
-> cluster missing from the profile, leaves these `None` — never `False`, never `0`. *"This cluster
+> cluster missing from the profile, leaves these missing (`pd.NA`, `NaN`) — never `False`, never `0`. *"This cluster
 > was not flagged"* and *"this barcode was never examined"* are different facts, and a deliverable
 > that conflates them claims a check that did not happen. Test with `.isna()`, not `== False`.
 
@@ -170,6 +172,7 @@ All CSV, all readable with the standard library alone.
 | `<sample>.percell.csv` | **barcode** | every barcode the library held: the measured values (`total_counts`, `n_genes`, `pct_counts_mt`, `pct_counts_ribo`, `nuclear_fraction`), the doublet score and class, and which of the criteria fired. Apply mode only. `pct_counts_ribo` is **present only where it was measured** — the column is absent, never blank, when the object arrived with QC metrics that did not include it |
 | `ambient_lr_diagnostics.csv` | library | `fraction_removed`, `convergence_indicator`, `measured` |
 | `thresholds_per_sample.csv` | library | every threshold the run derived, each column marked *per library* or *cohort constant* |
+| `<sample>.nuclear_fraction.csv` | barcode | `nuclear_fraction` per barcode. Only where the library declares `cellreads_stats` |
 
 `thresholds_per_sample.csv` carries a second header row giving each column's scope. It is the
 quickest answer to *which numbers differ because the libraries differ*.
@@ -187,9 +190,10 @@ nothing.
 | `cluster_profile.csv` | (sample, cluster) | the profile and the A/B/C/D/FLAG/WATCH verdicts at the **applied** resolution (default 2.0). This is the one step 7 reads and the only one whose verdicts reach the object. Not joinable to barcodes — use the `cluster` column on the object |
 | `cluster_profile.res<r>.csv` | (sample, cluster) | the same columns and the same rule at each `--extra-resolutions` value. **Nothing downstream reads these.** They exist so a flag can be read across resolutions: one that fires at every resolution is a statement about the cells, one that fires at a single resolution is a statement about the clustering |
 | `removal_ledger.csv` | **removed** barcode | every criterion that fired on it, not just the first |
-| `removal_by_criterion.csv` | (library, criterion) | `n_fired` — every observation the criterion removed, and `n_sole` — the ones no other criterion would have removed. The counts overlap, so `n_fired` sums to more than `n_removed_any`; `n_sole` is the number that says whether a threshold did work of its own. A `sample` of `ALL` is the cohort total, not an eleventh library. Rendered as a table in the report beside figure F9 |
+| `removal_by_criterion.csv` | (library, criterion) | `n_fired` — every observation the criterion removed, and `n_sole` — the ones no other criterion would have removed. The counts overlap, so `n_fired` sums to more than `n_removed_any`; `n_sole` is the number that says whether a threshold did work of its own. A `sample` of `ALL` is the cohort total, not one more library. Rendered as a table in the report beside figure F9 |
 | `ambient_summary.csv` | library | fraction removed, genes fully removed |
 | `ambient_supplied.json` | — | provenance of any denoised object supplied rather than produced here |
+| `count_floors.csv` | metric | the DECLARED count floors: `floor`, `provenance`, `declared_by`, `bounds`, `applied_to`. Written only where the floors are declared (single cells) |
 | `doublet_sweep.csv` | (library, setting) | the called rate at each swept `dbr.sd`, assembled from the per-library tables. Figure F5. Written **only** when `--dbr-sd-sweep` was given; it applies nothing and changes no deliverable |
 | `doublet_health.csv` | library | the rates the step-4 gate judged: `n_scored`, `n_called_doublet`, `rate_over_scored`. A gate whose evidence is not on disk cannot be re-checked |
 | `light_floor.csv` | library | what the light floor left out: `n_exported`, `n_below_floor`, `n_not_selected`. The two reasons a barcode was never scored are kept apart — only the first is explained by a threshold |
@@ -219,6 +223,7 @@ nothing.
 |---|---|
 | `qc_report.html` | the rendered report, self-contained — no request leaves the file |
 | `report.json` | the same content as data. Every number in the HTML is in here beside it |
+| `payload.json` | what the document was built from; `scqc report` rebuilds from it |
 
 The report is organised by step. Each step block gives what the step does, **what it cannot
 establish**, the numbers it produced and the file each came from.

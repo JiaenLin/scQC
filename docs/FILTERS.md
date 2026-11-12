@@ -9,8 +9,8 @@ Two conventions run through all of them and are worth stating once.
 data that will be discarded anyway. Where the two populations differ, the section says so and says
 why — the difference is deliberate in every case below, and the reason is never the same twice.
 
-**Unknown is never a value.** A quantity that could not be computed is emitted as `None`, never as
-`0`, `False` or `NaN`. Every gate is three-valued, and a blank must not read as a pass. This
+**Unknown is never a value.** A quantity that could not be computed is emitted as missing (`None`;
+`pd.NA` or `NaN` on a delivered object), never as `0` or `False`. Every gate is three-valued, and a blank must not read as a pass. This
 matters most where it is least visible: `NaN >= 50` is `False` and nothing objects, so a missing
 input would otherwise turn into a silent clearance.
 
@@ -21,8 +21,8 @@ input would otherwise turn into a silent clearance.
 | Filter | Step | Threshold is | Scope |
 |---|---|---|---|
 | [Light floor](#light-floor) | 3 | declared, default 200 (counts) | cohort |
-| [UMI floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley | one cohort constant |
-| [Gene floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley | one cohort constant |
+| [UMI floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley (`snrna`); declared (`scrna`) | one cohort constant |
+| [Gene floor](#umi-floor-and-gene-floor) | 5 | derived from a density valley (`snrna`); declared (`scrna`) | one cohort constant |
 | [Mitochondrial ceiling](#mitochondrial-ceiling) | 5 | derived per library, bounded | per library |
 | [Doublets](#doublets) | 4 | the detector's call | per library |
 | [Cluster check](#cluster-check) | 6 | proposed from the cohort | per cluster, flags only |
@@ -85,7 +85,7 @@ p-value.
 |---|---|---|
 | 1 | two interior modes exist at the reference bandwidth | — |
 | 2 | a grid point lies strictly between them | — |
-| 3 | both modes carry mass — the smaller side holds ≥ 0.1% of observations *and* ≥ 8 of them | `min_mode_mass`, `min_mode_observations` |
+| 3 | both modes carry mass — the smaller side holds ≥ 0.1% of observations *and* ≥ 8 of them, *and* is dispersed (its IQR ≥ 0.10) | `min_mode_mass`, `min_mode_observations`, `min_mode_spread` |
 | 4 | the valley is deep enough relative to the lower peak | `min_valley_depth = 0.10` |
 | 5 | the modes are separated on the log axis | `min_mode_separation_log10 = 0.30` |
 | 6 | the answer is stable under a bandwidth change | `bw_stability_factor = 1.5` |
@@ -514,6 +514,8 @@ fail_umi_floor             below the applied UMI floor
 fail_gene_floor            below the applied gene floor
 fail_mito_ceiling          above that library's mitochondrial ceiling
 fail_doublet               called a doublet by the detector
+fail_mito_nf               above the lower mitochondrial bound AND under the cohort's nuclear-fraction
+                           floor; armed only where the libraries declare `cellreads_stats` (nuclei)
 ```
 
 ### What apply mode writes
@@ -540,7 +542,7 @@ Every retained nucleus carries what step 6 found about its cluster:
 | `cluster_pct_doublet`, `cluster_median_pct_mt` | the continuous values behind them |
 
 Absent is a third state and is preserved as such. A barcode step 6 never labelled, or a cluster
-missing from the profile, leaves these `None` — not `False` and not `0`. *"This cluster was not
+missing from the profile, leaves these missing (`pd.NA`, `NaN`) — not `False` and not `0`. *"This cluster was not
 flagged"* and *"this barcode was never examined"* are different facts, and a deliverable that
 conflates them claims a cluster check that did not happen.
 
@@ -548,6 +550,7 @@ Carrying the flags forward is not a convenience. Without them the next stage has
 ask a question step 6 already answered — and re-clustering a *filtered* object does not give the
 same answer, because criterion D is a tautology once the doublets have been removed.
 
-Each threshold is recorded as **ADJUDICATED** (declared in `decisions.yml`, with an approver and
-their own words) or **DERIVED** (what the pipeline measured). A run without a decisions file uses
-the derived values and says so; a proposal is never later read as a decision.
+Each threshold is recorded as **ADJUDICATED** (set in `decisions.yml`, with an approver and
+their own words), **DERIVED** (what the pipeline measured) or **DECLARED** (the single-cell count
+floors, a declared bound). A run without a decisions file uses the derived and declared values and
+says so; a proposal is never later read as a decision.

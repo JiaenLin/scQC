@@ -2,10 +2,10 @@
 
 > **This document specified a report that was not built. It is built now, and this note is kept
 > because the header outlived the fact by several releases.** `report/build.py` writes the HTML
-> and the JSON, `report/figures.py` draws all fifteen figures and `report/collect.py` assembles
-> their data from a finished run's tables. What is still NOT fed is the freshness check: nothing
-> supplies a newest-input time, so every report says `NOT CHECKED` rather than claiming to be
-> current — see [KNOWN_ISSUES.md](../KNOWN_ISSUES.md). The Status table in
+> and the JSON, `report/figures.py` draws all eighteen figures and `report/collect.py` assembles
+> their data from a finished run's tables. The freshness check is fed: the run supplies its newest
+> input's time (`engine/pipeline.py`, `_newest_input_block`), and a report says `NOT CHECKED` only
+> where a time cannot be read or compared. The Status section of
 > [README.md](../README.md) remains the inventory.
 
 What the pipeline is to hand a human: one self-contained HTML file, no external requests, openable
@@ -99,7 +99,7 @@ only record of why the run stopped.
 ### 2 · What was decided, and by whom
 
 One row per parameter. **The class column is the point of this report.** (Illustrative rows: a
-report fills the value and the basis from its own run; the bounds and A/B/C are the tool's.)
+report fills the value and the basis from its own run; the bounds are the tool's.)
 
 | parameter | value | class | basis |
 |---|---|---|---|
@@ -109,7 +109,7 @@ report fills the value and the basis from its own run; the bounds and A/B/C are 
 | gene floor | *g* | DERIVED | KDE valley; bounded to [100, 600] (the nuclear gene bounds) |
 | mito ceiling | *m*% | **ADJUDICATED** | the operator's words, quoted, with their date |
 | doublet `dbr.sd` | *s* | DERIVED | sweep; the default was prior-driven |
-| cluster A/B/C | 0.5× / 15% / 50% | **ADJUDICATED** | proposed against the distributions, approved |
+| cluster A/B/C | *a*× / *b*% / *c*% | **ADJUDICATED** | proposed against the distributions, approved |
 
 - **FIXED** — the pipeline's own contract; changing it is changing the pipeline.
 - **DERIVED** — computed from this dataset. Reproducible from the data alone.
@@ -142,10 +142,10 @@ input check     P1 raw VALUES: PASS    P2 raw DROPLETS: PASS
 generated       <ISO timestamp>   newest input: <ISO timestamp>
 ```
 
-The last line is the freshness contract, and it is to be machine-checked: `generated` earlier than
-`newest input` must be a **refusal to publish**, not a warning. No such check exists in the code
-yet — this is the single most load-bearing unimplemented item in this specification, because
-staleness has no symptom and so nothing else will catch it.
+The last line is the freshness contract, and it is machine-checked: `generated` earlier than
+`newest input` is printed on the report's face and counted as a defect. The **refusal to publish**
+this specification asked for is not built — nothing in scQC publishes a report — and it stays the
+most load-bearing open item, because staleness has no symptom and nothing else will catch it.
 
 ### 5 · Open items
 
@@ -192,7 +192,7 @@ with no single assay is named in barcodes, never in nuclei by default.
 | F2 | 1 ambient | how much was removed, from what, and evenly? | removal per library + per gene; **removal rate by design level** |
 | F3 | 2 cell call | did the denoiser drop cells the aligner kept? | aligner vs denoiser per library, gate lines drawn |
 | F4 | 3 floor | what was never examined? | stacked bar: scored / below floor / **never scored** |
-| F5 | 4 doublets | is the rate a measurement or the prior? | sweep curve per library, published band shaded |
+| F5 | 4 doublets | is the rate a measurement or the prior? | sweep curve per library (a published band is shaded only if one is passed; a run passes none) |
 | F6 | 5 quality | where is the UMI cut and why there? | per-library density, valley marked, cut drawn |
 | F7 | 5 quality | what did the cut change? | before/after violins, log and linear |
 | F8 | 6 clusters | are any clusters technical? | depth × mito scatter, flags coloured, thresholds drawn |
@@ -298,15 +298,15 @@ Each of these exists because its absence produced a wrong reading at least once.
 
 ## Reproducibility
 
-Beyond version capture, four properties nf-core does not currently give you. The first three are
-requirements on the report writer and are not implemented; the fourth is:
+Beyond version capture, four properties nf-core does not currently give you. The first, second and
+fourth are implemented; the third is computed and flagged, not enforced:
 
-1. **Decisions are an input, not an argument.** `decisions.yml` is versioned, hashed, and its
+1. **Decisions are an input, not an argument.** `decisions.yml` is hashed, and its
    hash is in the report. Two runs with the same data and the same decisions file are the same
    run; a command line does not have that property.
 2. **The commit is in the document.** A report from a dirty tree says `dirty: yes` on its face.
 3. **Freshness is enforced, not advised.** Stale artifacts have no symptom — they open, render
-   and read exactly like correct ones. So this is machine-checked and blocking.
+   and read exactly like correct ones. So this is machine-checked; blocking is not built.
 4. **Removal is recoverable** — *implemented*. Every removed observation keeps the criteria that
    removed it, written beside the deliverable as CSV by `modules/07_apply/apply.py`, so any
    question of the form "what if we had not dropped those" is answerable without a re-run. The

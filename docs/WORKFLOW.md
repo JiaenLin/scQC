@@ -70,7 +70,7 @@ flowchart TD
         D2["Health checks on the CALLS<br/>step 4 removes nothing"]
     end
     D1 --> D2 --> V4{"Is the call rate silent,<br/>imposed, or uneven<br/>across the design?"}
-    V4 -- "a library calls <0.5%" --> X4["REFUSE<br/>a collapsed threshold returns silence,<br/>which is not the same as<br/>finding no doublets"]
+    V4 -- "a library calls <0.5% where its<br/>declared rate predicted a doublet" --> X4["REFUSE<br/>a collapsed threshold returns silence,<br/>which is not the same as<br/>finding no doublets"]
     V4 -- "≥3× AND worst arm ≥1%" --> X4
     V4 -- "≥3× but under 1%<br/>· spread too flat or too wide<br/>· nuclei never scored" --> R4["REVIEW"] --> S5
     V4 -- "ok" --> S5
@@ -204,25 +204,28 @@ The two forms are not interchangeable, and the diagram marks the difference.
   no materiality bound at all: a library that loses more than a tenth of the aligner's calls to the
   denoiser stops the run whatever the absolute numbers, and a two-cell library losing one cell
   refuses exactly as a large one does.
-- **"No valley" is a hard stop, not an amber one.** Step 5 raises rather than handing back a number
-  for an operator to sanity-check. A density minimum exists in any smooth curve; without two modes
-  it is the flank of the only one, and returning it would dress an arbitrary cut as a measurement.
+- **"No valley" derives no floor, and it is an amber stop.** Step 5 hands back no number for an
+  operator to sanity-check: a density minimum exists in any smooth curve, and without two modes it is
+  the flank of the only one. The refusal is a REVIEW; a floor attested in `decisions.yml` applies as
+  ADJUDICATED, and without one apply mode refuses at step 7.
 - **The mitochondrial ceiling takes the other route, and "no valley" does not make it
   underivable.** Its distribution *is* unimodal, so the valley method genuinely does not apply —
-  but that rules out one derivation, not all of them. Step 5 derives each library's own upper
-  Tukey fence, `Q3 + 1.5 × IQR`, which needs no valley and has no free parameter to tune. The
-  **bound** on that fence is DECLARED, in the analyst's own words, because it is a statement about
-  what a nucleus can be rather than a property of the cohort — and the derivation refuses if that
-  bound binds in most libraries, since a declared number overriding most of the data has become
-  the threshold while still being reported as derived.
+  but that rules out one derivation, not all of them. Step 5 derives each library's own fence,
+  `median + k × 1.4826 × MAD`, which needs no valley; Tukey's `Q3 + 1.5 × IQR` calibrates `k` and is
+  never applied. The **bound** on that fence is DECLARED, in the analyst's own words, because it is a
+  statement about what a nucleus can be rather than a property of the cohort — and where that bound
+  binds in more than half the libraries the result is reclassified `bound_dominated` with a REVIEW,
+  not refused: a declared number overriding most of the data must not be reported as derived.
 - **Per library here, cohort-constant for the floors — and the difference is not arbitrary.** The
   valley is the *same physical boundary* in every library (debris against nuclei), so one constant
   is a defensible summary of one estimate per library of one quantity. Mitochondrial content is
   not one boundary measured once per library; libraries genuinely differ in it (severalfold in Q3
   on the calibration cohort), and averaging that produces a number describing no library. The objection to
   per-library thresholds — that they make the filter a technical property varying across the
-  design — is real, so it is **measured** rather than argued: `assess_mito_removal` refuses at a
-  3× design differential. On the calibration cohort it came out close to 1×, far under that line.
+  design — is real, so it is **measured** rather than argued: `quality.assess_mito_removal` refuses
+  at a 3× design differential, though no step of `scqc run` calls it today (a run reports the removal
+  per library and criterion, `removal_by_criterion.csv`). On the calibration cohort it came out close
+  to 1×, far under that line.
 - **What stays ADJUDICATED is narrower than it was.** Not the ceiling, but whether a
   mitochondria-high *population* is damage or a mitochondria-rich cell type. That needs an
   identity; the pipeline emits cluster-level medians and stops.
@@ -234,7 +237,7 @@ flowchart LR
     subgraph E["--mode evidence"]
         direction TB
         E1["Run every step"] --> E2["Derive every<br/>DERIVED parameter"]
-        E2 --> E3["Write report +<br/>decisions.template.yml"]
+        E2 --> E3["Write the report"]
         E4["Removes nothing.<br/>Applies nothing."]
     end
     E3 --> H["Optional: the operator reads the report<br/>and writes an override into decisions.yml<br/>(value, approved_by, verbatim)"]
@@ -282,7 +285,10 @@ Only **DECLARED** values are safe to carry to another dataset unchanged. See
 ```
 scQC/
 ├── bin/scqc           entry point for a clone that has not been pip-installed
-├── scqc_cli.py        the command-line surface: one subcommand per gate
+├── scqc_cli.py        the command-line surface: `run`, `report`, and one subcommand per gate
+├── engine/            the task graph, the executors, the run key, the run's state and status files
+├── adapters/          the code that reads matrices and calls the external tools
+├── report/            the report builder and its figures
 ├── conf/env/          environment recipes and pinned locks
 ├── docs/              design documents
 ├── lib/               shared code (input verification)

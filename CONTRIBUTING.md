@@ -9,9 +9,10 @@ exists because its absence produces a defect that a passing test suite cannot se
 ./bin/scqc selftest        # every tests/test_*.py + the adversarial suite; non-zero exit if any failed
 ```
 
-Every suite but one runs on the standard library alone; `tests/test_audit_ambient.py` needs pandas
-and a `COHORT_DIR`, and reports **SKIP** without them. Read a SKIP as what it is: that suite has
-not been checked, which is not the same as passing.
+The decision-layer suites run on the standard library alone; the suites that drive the CLI, read
+matrices or draw figures need the analysis stack, and `tests/test_audit_ambient.py` a `COHORT_DIR`
+too. Each reports **SKIP** without what it needs. Read a SKIP as what it is: that suite has not been
+checked, which is not the same as passing.
 
 Do not weaken a test to make it pass. If a test fails because the code is wrong, the code is what
 changes.
@@ -61,7 +62,7 @@ in the tables, in the gates and in the figures.
 
 Documentation that describes behaviour the code does not have is the same defect class as a stale
 report: it reads exactly like a correct document. If you add a claim to README.md or to `docs/`,
-either point at the code that implements it or mark it as specification. The Status table in
+either point at the code that implements it or mark it as specification. The Status section in
 README.md is the honest inventory and is expected to be updated by the pull request that changes
 what is true.
 

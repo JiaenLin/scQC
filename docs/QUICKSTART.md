@@ -16,9 +16,9 @@ pip install -e .
 ./bin/scqc selftest
 ```
 
-`selftest` runs the bundled suites. It needs no cohort and no third-party package: the decision
-layer is standard library only, deliberately, because a gate you cannot install is a gate that
-gets skipped.
+`selftest` runs the bundled suites. The decision-layer suites need no cohort and no third-party
+package (the rest report SKIP without the analysis stack): that layer is standard library only,
+deliberately, because a gate you cannot install is a gate that gets skipped.
 
 To *run* a cohort you also need the tools the pipeline invokes:
 
@@ -63,6 +63,7 @@ S2	singleron	mus_musculus	mus_musculus/ensembl_112	snrna	/data/S2/outs/raw	mt-	^
 | `ambient_h5` | if already denoised | a CellBender object you produced elsewhere |
 | `ambient_skip_reason`, `ambient_skip_approved_by` | to skip CellBender on a **nucleus** library | both, or the run is refused: the reason and the person who approved it. The library then takes the not-denoised route (raw counts, `aligner_cells` required); the skip is DECLARED in the report and STATUS.json. Never needed on `scrna`, where CellBender is never run |
 | `aligner_cells` | for step 2; **required for `scrna` with a raw matrix** | the aligner's filtered matrix (CellRanger `filtered_feature_bc_matrix`, CeleScope `outs/filtered`). On nuclei it is compared with the denoiser's call; on single cells, which this pipeline does not denoise, it **is** the cell call, and a raw-droplet run without it is refused before anything is submitted. A single-cell `matrix` that holds called cells only - the authors' filtered matrix, as most public data is published - needs none: it is accepted as a **cell-called input**, its own barcodes are the cell call, and the run records that it has no empty droplets (no ambient estimate, no empty-droplet model, no F1) |
+| `dbr`, `dbr_sd`, `expected_genes`, `cellbender_barcodes`, `cellreads_stats`, `nf_antisense`, `ambient_tool`, `ambient_version`, `ambient_params`, `ambient_produced_by` | no | read under these names and never design factors (`engine/steps.py`, `NOT_FACTORS`). `dbr` / `dbr_sd` are a library's own doublet rate, over `--dbr` / `--dbr-sd`; `cellreads_stats` (the aligner's per-barcode read summary, nuclei only) arms the joint criterion `fail_mito_nf`; the `ambient_*` four are a supplied `ambient_h5`'s provenance |
 | anything else | no | a **design factor**, discovered automatically |
 
 `mt_prefix` and `ribo_pattern` have no defaults on purpose. Mouse and human differ in case alone
@@ -107,7 +108,7 @@ Outputs land under `results/<digest>/`:
 objects/   cohort.deliverable.h5ad and one filtered .h5ad per library
 tables/    every number the report quotes, as CSV
 reports/   qc_report.html — open this
-figures/   (figures are embedded in the HTML; this holds any written separately)
+figures/   (empty: every figure is embedded in the HTML)
 ```
 
 ## 5 · Read the report

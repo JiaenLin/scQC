@@ -52,8 +52,8 @@ the shape the check exists to catch even when the ratio cannot express it.
 
 **Reporting a refusal and enforcing one are separate calls.** These three modules build findings
 and reduce them with `verdict()` to `REFUSE`, `REVIEW` or `PASS`. Returning the string `"REFUSE"`
-does not stop anything — the caller does, and in the shipped caller that is the `scqc` subcommand
-exiting 2. The modules that stop a run themselves are the ones that would otherwise hand back a
+does not stop anything — the caller does: the `scqc` subcommand exiting 2, and in a run
+`Pipeline.gate` raising before the next step. The modules that stop a run themselves are the ones that would otherwise hand back a
 usable value alongside the verdict: a derived threshold (`modules/05_quality/quality.py`) or a
 removal (`modules/07_apply/apply.py`) raise, because returning a number and a complaint together
 is an invitation to take the number and drop the complaint.
@@ -110,7 +110,7 @@ A check that compares the run's own records with each other is not a gate in thi
 fire on a correct run, so the reason for the escape does not apply to it, and an escape would let
 the pipeline deliver an object that contradicts its own ledger. Such a check is never accepted:
 step 7's ledger count, the count of the object written, and seven of the removal audit's eight
-checks (`modules/07_apply/audit_removal.py`, `INTEGRITY`; only the floor ordering, which compares
+refusing checks (`modules/07_apply/audit_removal.py`, `INTEGRITY`; only the floor ordering, which compares
 two parameters, is a gate). A module raises it, so no accept entry lifts it (an entry naming one
 of the audit's checks is refused by name), and its remedy is never blocked: for the audit, measuring
 the library again. The list of what can and cannot be

@@ -116,6 +116,7 @@ module load <pbs-module> 2>/dev/null || true
 
 "$PY" "$TOOL/scqc_cli.py" run \
     --project "$RUNDIR" --samplesheet "$RUNDIR/samplesheet.csv" \
+    --registry "$RUNDIR/registry.tsv" \
     --mode apply \
     --executor pbs --queue <child-queue> \
     --rscript "$RSCRIPT" --cpu \
@@ -187,7 +188,7 @@ Three things this encodes:
 ```bash
 RUNDIR=<project>/runs/scqc/<stage>/<UTCSTAMP>__scqc-<commit>__<stage>
 mkdir "$RUNDIR"; mkdir "$RUNDIR/logs"      # bare mkdir: a key collision must abort, not merge
-cp <samplesheet> "$RUNDIR/samplesheet.csv"
+cp <samplesheet> "$RUNDIR/samplesheet.csv"; cp <registry> "$RUNDIR/registry.tsv"
 
 qsub -v RUNDIR="$RUNDIR",TOOLHEAD="$(git -C <tool> rev-parse HEAD)" \
      -o "$RUNDIR/logs/driver.log" \
@@ -225,14 +226,15 @@ identity is a text comparison — no `anndata`, no script, seconds on a login no
 >
 > ```bash
 > grep -c ',True$' tables/<sample>.percell.csv                        # 0 — WRONG
-> cut -d, -f16 tables/<sample>.percell.csv | tr -d '\r' | grep -cx True   # right
+> tr -d '\r' < tables/<sample>.percell.csv | grep -c ',True$'           # right: keep is the last column
 > ```
 >
 > The first form reports zero kept barcodes in every library and raises nothing.
 
 **What should be identical between two runs of the same commit** — the kept-barcode set. The apply
-criteria are `fail_not_cellbender_cell`, `fail_umi_floor`, `fail_gene_floor`, `fail_mito_ceiling`
-and `fail_doublet`; they read counts, genes, mitochondrial percentage and a seeded doublet call, and
+criteria are `fail_not_cellbender_cell` (on single cells `fail_not_aligner_cell`), `fail_umi_floor`,
+`fail_gene_floor`, `fail_mito_ceiling`, `fail_doublet` and `fail_mito_nf`; they read counts, genes,
+mitochondrial percentage, the nuclear fraction where one is declared and a seeded doublet call, and
 the count valleys and Tukey-calibrated MAD k are deterministic. None of them depends on the
 executor. **A one-barcode difference between two runs of the same commit is a finding, not noise.**
 
